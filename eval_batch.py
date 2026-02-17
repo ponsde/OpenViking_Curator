@@ -30,7 +30,8 @@ for q in QUESTIONS:
       'ok': '===== FINAL ANSWER =====' in out,
       'external': '触发外部搜索' in out,
       'ingested': '✅ 已入库:' in out,
-      'coverage': next((ln for ln in out.splitlines() if 'STEP 3 完成:' in ln), '')[:220]
+      'coverage': next((ln for ln in out.splitlines() if 'STEP 3 完成:' in ln), '')[:220],
+      'router_line': next((ln for ln in out.splitlines() if ln.startswith('router_model_used=')), '')
     })
 
 summary={

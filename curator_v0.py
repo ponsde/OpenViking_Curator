@@ -7,6 +7,7 @@ from pathlib import Path
 
 import requests
 import openviking as ov
+from metrics import Metrics
 
 """
 OpenViking Curator v0 (pilot)
@@ -196,46 +197,71 @@ def answer(query: str, local_ctx: str, external_ctx: str):
 
 
 def run(query: str):
+    m = Metrics()
     validate_config()
     os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
     print("STEP 1/6 初始化...")
     client = ov.SyncOpenViking(path=DATA_PATH)
     client.initialize()
+    m.step('init', True)
     print("✅ STEP 1 完成")
 
     print("STEP 2/6 范围路由...")
     scope = route_scope(query)
+    m.step('route', True, {'domain': scope.get('domain'), 'confidence': scope.get('confidence')})
+    m.score('router_confidence', scope.get('confidence', 0))
     print("✅ STEP 2 完成:", json.dumps(scope, ensure_ascii=False))
 
     print("STEP 3/6 本地检索(OpenViking)...")
     local_txt, coverage, meta = local_search(client, query, scope)
+    m.step('local_search', True, {'coverage': coverage, 'kw_cov': meta.get('kw_cov'), 'domain_hit': meta.get('domain_hit')})
+    m.score('coverage_before_external', round(coverage, 3))
     print(
         f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
         f"domain_hit={meta['domain_hit']}, target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
     )
 
     external_txt = ""
+    ingested = False
     if coverage < 0.65:
+        m.flag('external_triggered', True)
         print("STEP 4/6 覆盖不足，触发外部搜索(Grok)...")
         external_txt = external_search(query, scope)
+        m.step('external_search', True, {'len': len(external_txt)})
         print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
 
         print("STEP 5/6 审核并尝试入库...")
         j = judge_and_pack(query, external_txt)
+        m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
         print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags"]}, ensure_ascii=False))
         if j.get("pass") and j.get("markdown"):
             ing = ingest_markdown(client, "curated", j["markdown"])
+            ingested = True
+            m.step('ingest', True, {'uri': ing.get('root_uri', '')})
             print("✅ 已入库:", ing.get("root_uri", ""))
         else:
+            m.step('ingest', False)
             print("⚠️ 未入库")
     else:
+        m.flag('external_triggered', False)
         print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
 
     print("STEP 6/6 生成回答...")
     ans = answer(query, local_txt, external_txt)
+    m.step('answer', True, {'answer_len': len(ans)})
+    m.flag('ingested', ingested)
+    m.score('answer_len', len(ans))
+    report = m.finalize()
+
     print("\n===== FINAL ANSWER =====\n")
     print(ans)
+    print("\n===== EVAL METRICS =====\n")
+    print(json.dumps({
+        'duration_sec': report['duration_sec'],
+        'flags': report['flags'],
+        'scores': report['scores']
+    }, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
