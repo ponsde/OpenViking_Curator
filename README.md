@@ -1,19 +1,50 @@
-# OpenViking Curator (Pilot)
+# OpenViking Curator
 
-A rough pilot for a curator layer on top of OpenViking:
+Curator is an **upper-layer intelligence module** for [OpenViking](https://github.com/volcengine/OpenViking).
 
-- Scope routing (Gemini 3 Flash fallback)
+OpenViking is great at storage/retrieval, but it is passive: what you put in is what you get out.
+Curator adds active knowledge governance:
+
+- **Search**: fetch missing external knowledge when local coverage is low
+- **Review**: AI quality-check before ingest
+- **Score**: assign trust signals for ranking
+- **Conflict**: detect contradictory sources (planned)
+
+## Why this project
+
+We want an Agent knowledge base that is:
+
+1. **Self-growing** (learns from real queries)
+2. **Quality-controlled** (not just dump everything)
+3. **Traceable** (sources and confidence)
+4. **Practical** (fast enough for daily use)
+
+## Current status (Pilot)
+
+Implemented in rough v0:
+
+- Scope routing (router model + fallback)
 - Local retrieval via OpenViking
-- External search fallback via Grok
-- AI quality review
-- Optional ingest-back to OpenViking
+- External fallback search via Grok
+- AI review and optional ingest-back into OpenViking
 
-## Status
+Not yet implemented:
 
-Pilot / experimental. We'll iterate step by step.
+- Feedback-driven ranking updates
+- Full conflict detection workflow
+- Long-term data decay/cleanup policy
 
-## Next milestones
+## Repo structure
 
-- v0.1 stabilize routing + coverage checks
-- v0.2 feedback-driven ranking
-- v0.3 conflict detection
+- `curator_v0.py` – current pilot script
+
+## Roadmap
+
+- **v0.1**: stabilize routing + coverage check + external fallback
+- **v0.2**: feedback-driven priority/ranking
+- **v0.3**: conflict detection
+- **v0.4**: memory cleanup and freshness re-scan
+
+## Disclaimer
+
+This is an experimental project under active iteration.
