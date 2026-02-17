@@ -184,6 +184,23 @@ def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
     return [x[4] for x in scored[:topn]], scored[:min(5, len(scored))]
 
 
+def deterministic_relevance(query: str, scope: dict, txt: str, uris: list, domain_hit: bool, kw_cov: float):
+    txt_l = (txt or "").lower()
+    q_terms = [x for x in re.findall(r"[a-z0-9_\-]{3,}", query.lower()) if x not in {"what", "with", "from", "that"}]
+    k_terms = [str(k).lower() for k in scope.get("keywords", [])[:8] if isinstance(k, str)]
+    terms = list(dict.fromkeys(q_terms + k_terms))[:12]
+
+    evidence_hit = sum(1 for t in terms if t and t in txt_l)
+    evidence_ratio = evidence_hit / max(1, len(terms))
+
+    uri_text = " ".join(uris).lower()
+    scope_terms = [str(scope.get("domain", "")).lower()] + [str(x).lower() for x in scope.get("keywords", [])[:4]]
+    uri_scope_hit = any(t and t in uri_text for t in scope_terms)
+
+    relevance = 0.55 * kw_cov + 0.30 * evidence_ratio + 0.15 * (1.0 if (domain_hit or uri_scope_hit) else 0.0)
+    return relevance, evidence_ratio, uri_scope_hit
+
+
 def local_search(client, query: str, scope: dict):
     expanded = query + "\n关键词:" + ",".join(scope.get("keywords", [])[:8])
     res = client.search(expanded)
@@ -207,7 +224,11 @@ def local_search(client, query: str, scope: dict):
     uris_l = " ".join(uris).lower()
     domain_hit = any(t in uris_l for t in target_terms) if target_terms else True
 
-    coverage = kw_cov if domain_hit else min(kw_cov, 0.15)
+    relevance, evidence_ratio, uri_scope_hit = deterministic_relevance(query, scope, txt, uris, domain_hit, kw_cov)
+    # deterministic gate: avoid false negatives when uri keywords are weak but semantic evidence is strong
+    effective_domain_hit = domain_hit or uri_scope_hit or relevance >= 0.58
+
+    coverage = max(kw_cov, relevance) if effective_domain_hit else min(max(kw_cov, relevance), 0.18)
 
     # 4) feedback 调权（v0.2）：adopt/up/down 影响覆盖率与外搜触发
     fb = load_feedback(os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'))
@@ -220,12 +241,15 @@ def local_search(client, query: str, scope: dict):
 
     return txt, coverage, {
         "kw_cov": kw_cov,
-        "domain_hit": domain_hit,
+        "domain_hit": effective_domain_hit,
         "target_terms": target_terms,
         "uris": uris[:8],
         "max_feedback_score": max_fb,
         "priority_uris": pri_uris,
         "rank_preview": rank_preview,
+        "relevance": round(relevance, 3),
+        "evidence_ratio": round(evidence_ratio, 3),
+        "uri_scope_hit": uri_scope_hit,
     }
 
 
@@ -339,8 +363,8 @@ def run(query: str):
         m.score('coverage_before_external', round(coverage, 3))
         print(
             f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
-            f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
-            f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
+            f"domain_hit={meta['domain_hit']}, relevance={meta.get('relevance')}, evidence={meta.get('evidence_ratio')}, "
+            f"fb_max={meta.get('max_feedback_score',0)}, priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
             f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
         )
 
