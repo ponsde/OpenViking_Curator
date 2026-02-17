@@ -170,7 +170,11 @@ def uri_freshness_score(uri: str) -> float:
 def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
     fb = load_feedback(feedback_file)
     scored = []
+    seen = set()
     for u in uris:
+        if u in seen:
+            continue
+        seen.add(u)
         f = uri_feedback_score(u, fb)             # strong user signal
         t = uri_trust_score(u)                    # weak prior
         r = uri_freshness_score(u)                # freshness prior
@@ -322,80 +326,86 @@ def run(query: str):
     m.step('init', True)
     print("✅ STEP 1 完成")
 
-    print("STEP 2/6 范围路由...")
-    scope = route_scope(query)
-    m.step('route', True, {'domain': scope.get('domain'), 'confidence': scope.get('confidence')})
-    m.score('router_confidence', scope.get('confidence', 0))
-    print("✅ STEP 2 完成:", json.dumps(scope, ensure_ascii=False))
+    try:
+        print("STEP 2/6 范围路由...")
+        scope = route_scope(query)
+        m.step('route', True, {'domain': scope.get('domain'), 'confidence': scope.get('confidence')})
+        m.score('router_confidence', scope.get('confidence', 0))
+        print("✅ STEP 2 完成:", json.dumps(scope, ensure_ascii=False))
 
-    print("STEP 3/6 本地检索(OpenViking)...")
-    local_txt, coverage, meta = local_search(client, query, scope)
-    m.step('local_search', True, {'coverage': coverage, 'kw_cov': meta.get('kw_cov'), 'domain_hit': meta.get('domain_hit')})
-    m.score('coverage_before_external', round(coverage, 3))
-    print(
-        f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
-        f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
-        f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
-        f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
-    )
+        print("STEP 3/6 本地检索(OpenViking)...")
+        local_txt, coverage, meta = local_search(client, query, scope)
+        m.step('local_search', True, {'coverage': coverage, 'kw_cov': meta.get('kw_cov'), 'domain_hit': meta.get('domain_hit')})
+        m.score('coverage_before_external', round(coverage, 3))
+        print(
+            f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
+            f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
+            f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
+            f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
+        )
 
-    external_txt = ""
-    ingested = False
-    if coverage < 0.65:
-        m.flag('external_triggered', True)
-        print("STEP 4/6 覆盖不足，触发外部搜索(Grok)...")
-        external_txt = external_search(query, scope)
-        m.step('external_search', True, {'len': len(external_txt)})
-        print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
+        external_txt = ""
+        ingested = False
+        if coverage < 0.65:
+            m.flag('external_triggered', True)
+            print("STEP 4/6 覆盖不足，触发外部搜索(Grok)...")
+            external_txt = external_search(query, scope)
+            m.step('external_search', True, {'len': len(external_txt)})
+            print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
 
-        print("STEP 5/6 审核并尝试入库...")
-        j = judge_and_pack(query, external_txt)
-        m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
-        print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags"]}, ensure_ascii=False))
-        if j.get("pass") and j.get("markdown"):
-            ing = ingest_markdown(client, "curated", j["markdown"])
-            ingested = True
-            m.step('ingest', True, {'uri': ing.get('root_uri', '')})
-            print("✅ 已入库:", ing.get("root_uri", ""))
+            print("STEP 5/6 审核并尝试入库...")
+            j = judge_and_pack(query, external_txt)
+            m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
+            print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags"]}, ensure_ascii=False))
+            if j.get("pass") and j.get("markdown"):
+                ing = ingest_markdown(client, "curated", j["markdown"])
+                ingested = True
+                m.step('ingest', True, {'uri': ing.get('root_uri', '')})
+                print("✅ 已入库:", ing.get("root_uri", ""))
+            else:
+                m.step('ingest', False)
+                print("⚠️ 未入库")
         else:
-            m.step('ingest', False)
-            print("⚠️ 未入库")
-    else:
-        m.flag('external_triggered', False)
-        print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
+            m.flag('external_triggered', False)
+            print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
 
-    print("STEP 6/7 冲突检测...")
-    conflict = detect_conflict(query, local_txt, external_txt)
-    conflict_card = ""
-    if conflict.get('has_conflict'):
-        pts = '\n'.join([f"- {x}" for x in conflict.get('points', [])[:5]])
-        conflict_card = f"⚠️ 存在冲突: {conflict.get('summary','')}\n{pts}"
-    m.step('conflict', True, {'has_conflict': conflict.get('has_conflict', False), 'summary': conflict.get('summary','')})
-    m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
-    print(f"✅ STEP 6 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
+        print("STEP 6/7 冲突检测...")
+        conflict = detect_conflict(query, local_txt, external_txt)
+        conflict_card = ""
+        if conflict.get('has_conflict'):
+            pts = '\n'.join([f"- {x}" for x in conflict.get('points', [])[:5]])
+            conflict_card = f"⚠️ 存在冲突: {conflict.get('summary','')}\n{pts}"
+        m.step('conflict', True, {'has_conflict': conflict.get('has_conflict', False), 'summary': conflict.get('summary','')})
+        m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
+        print(f"✅ STEP 6 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
 
-    print("STEP 7/7 生成回答...")
-    priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
-    ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx, conflict_card=conflict_card)
-    m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
-    m.score('priority_uris_count', len(meta.get('priority_uris', [])))
-    m.flag('ingested', ingested)
-    m.score('answer_len', len(ans))
-    report = m.finalize()
+        print("STEP 7/7 生成回答...")
+        priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
+        ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx, conflict_card=conflict_card)
+        m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
+        m.score('priority_uris_count', len(meta.get('priority_uris', [])))
+        m.flag('ingested', ingested)
+        m.score('answer_len', len(ans))
+        report = m.finalize()
 
-    case_path = None
-    if os.getenv('CURATOR_CAPTURE_CASE', '1') in ('1','true','True'):
-        case_path = capture_case(query, scope, report, ans, out_dir=os.getenv('CURATOR_CASE_DIR','cases'))
+        case_path = None
+        if os.getenv('CURATOR_CAPTURE_CASE', '1') in ('1','true','True'):
+            case_path = capture_case(query, scope, report, ans, out_dir=os.getenv('CURATOR_CASE_DIR','cases'))
 
-    print("\n===== FINAL ANSWER =====\n")
-    print(ans)
-    print("\n===== EVAL METRICS =====\n")
-    print(json.dumps({
-        'duration_sec': report['duration_sec'],
-        'flags': report['flags'],
-        'scores': report['scores'],
-        'case_path': case_path
-    }, ensure_ascii=False, indent=2))
+        print("\n===== FINAL ANSWER =====\n")
+        print(ans)
+        print("\n===== EVAL METRICS =====\n")
+        print(json.dumps({
+            'duration_sec': report['duration_sec'],
+            'flags': report['flags'],
+            'scores': report['scores'],
+            'case_path': case_path
+        }, ensure_ascii=False, indent=2))
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

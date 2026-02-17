@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 output/
 .env
+feedback.json
+.star_state.json
+cases/
