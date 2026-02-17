@@ -39,6 +39,9 @@ ROUTER_MODELS = [
     ).split(",") if m.strip()
 ]
 JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "【Claude Code】Claude-Sonnet 4-5")
+JUDGE_MODELS = [
+    m.strip() for m in env("CURATOR_JUDGE_MODELS", f"{JUDGE_MODEL},gemini-3-flash-preview").split(",") if m.strip()
+]
 ANSWER_MODELS = [
     m.strip() for m in env("CURATOR_ANSWER_MODELS", f"{JUDGE_MODEL},gemini-3-flash-preview").split(",") if m.strip()
 ]
@@ -242,6 +245,10 @@ def local_search(client, query: str, scope: dict):
 
     pri_uris, rank_preview = build_feedback_priority_uris(uris, os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'), topn=3)
 
+    top_trust = [x[2] for x in rank_preview[:3]] if rank_preview else []
+    avg_top_trust = (sum(top_trust) / len(top_trust)) if top_trust else 0.0
+    fresh_ratio = (sum(1 for u in uris[:8] if 'curated' in u.lower()) / max(1, min(8, len(uris)))) if uris else 0.0
+
     return txt, coverage, {
         "kw_cov": kw_cov,
         "domain_hit": effective_domain_hit,
@@ -253,7 +260,25 @@ def local_search(client, query: str, scope: dict):
         "relevance": round(relevance, 3),
         "evidence_ratio": round(evidence_ratio, 3),
         "uri_scope_hit": uri_scope_hit,
+        "avg_top_trust": round(avg_top_trust, 3),
+        "fresh_ratio": round(fresh_ratio, 3),
     }
+
+
+def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
+    q = (query or "").lower()
+    need_fresh = bool(scope.get("need_fresh", False)) or any(k in q for k in ["最新", "更新", "release", "changelog", "2026", "2025"])
+    low_quality = meta.get("avg_top_trust", 0) < 5.4
+    low_fresh = meta.get("fresh_ratio", 0) < 0.25
+    weak_feedback = meta.get("max_feedback_score", 0) <= 0
+
+    if coverage < 0.65:
+        return True, "low_coverage"
+    if need_fresh and (low_fresh or low_quality):
+        return True, "freshness_or_quality_boost"
+    if need_fresh and weak_feedback and low_quality:
+        return True, "need_fresh_no_positive_feedback"
+    return False, "local_sufficient"
 
 
 def external_search(query: str, scope: dict):
@@ -276,10 +301,24 @@ def judge_and_pack(query: str, external_text: str):
         "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), summary(string), markdown(string)。"
         "markdown要求包含来源URL。只输出JSON。"
     )
-    out = chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
-        {"role": "system", "content": sys},
-        {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
-    ], timeout=90)
+
+    last_err = None
+    out = None
+    for jm in JUDGE_MODELS:
+        try:
+            print(f"judge_model_used={jm}")
+            out = chat(OAI_BASE, OAI_KEY, jm, [
+                {"role": "system", "content": sys},
+                {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
+            ], timeout=90)
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if out is None:
+        return {"pass": False, "reason": f"judge_model_fail:{last_err}", "tags": [], "trust": 0, "summary": "", "markdown": ""}
+
     m = re.search(r"\{[\s\S]*\}", out)
     if not m:
         return {"pass": False, "reason": "bad_json", "tags": [], "trust": 0, "summary": "", "markdown": ""}
@@ -376,17 +415,20 @@ def run(query: str):
         print(
             f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
             f"domain_hit={meta['domain_hit']}, relevance={meta.get('relevance')}, evidence={meta.get('evidence_ratio')}, "
-            f"fb_max={meta.get('max_feedback_score',0)}, priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
+            f"avg_trust={meta.get('avg_top_trust')}, fresh_ratio={meta.get('fresh_ratio')}, fb_max={meta.get('max_feedback_score',0)}, "
+            f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
             f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
         )
 
         external_txt = ""
         ingested = False
-        if coverage < 0.65:
+        boost_needed, boost_reason = external_boost_needed(query, scope, coverage, meta)
+        if boost_needed:
             m.flag('external_triggered', True)
-            print("STEP 4/6 覆盖不足，触发外部搜索(Grok)...")
+            m.flag('external_reason', boost_reason)
+            print(f"STEP 4/6 触发外部搜索(Grok)... reason={boost_reason}")
             external_txt = external_search(query, scope)
-            m.step('external_search', True, {'len': len(external_txt)})
+            m.step('external_search', True, {'len': len(external_txt), 'reason': boost_reason})
             print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
 
             print("STEP 5/6 审核并尝试入库...")
@@ -403,7 +445,8 @@ def run(query: str):
                 print("⚠️ 未入库")
         else:
             m.flag('external_triggered', False)
-            print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
+            m.flag('external_reason', boost_reason)
+            print("STEP 4/6 跳过外部搜索（本地覆盖与质量足够）")
 
         print("STEP 6/7 冲突检测...")
         conflict = detect_conflict(query, local_txt, external_txt)
