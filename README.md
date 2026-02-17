@@ -57,13 +57,9 @@ bash run.sh "grok2api auto-register common failures"
 - `maintenance.py` – decay feedback and report stale cases
 - `freshness_rescan.py` – source-level freshness rescan (URL metadata)
 
-## Runtime strategy
+## Advanced
 
-We use **mixed mode**:
-- Background daily maintenance (star watch, feedback decay, freshness rescan)
-- Foreground on-demand retrieval pipeline per user query
-
-See details in [`MIXED_MODE.md`](MIXED_MODE.md).
+- Runtime strategy (mixed mode): see [`MIXED_MODE.md`](MIXED_MODE.md)
 
 ## Roadmap
 

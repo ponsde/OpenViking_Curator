@@ -57,13 +57,9 @@ bash run.sh "grok2api 自动注册常见失败原因"
 - `maintenance.py`：反馈衰减 + 过期案例检查
 - `freshness_rescan.py`：来源级新鲜度重扫（URL 元数据）
 
-## 运行策略
+## 进阶文档
 
-我们采用**混合模式**：
-- 后台低频定时维护（star 检查、反馈衰减、新鲜度重扫）
-- 前台按需执行检索链路（每次提问触发）
-
-详情见 [`MIXED_MODE.md`](MIXED_MODE.md)。
+- 运行策略（混合模式）详见 [`MIXED_MODE.md`](MIXED_MODE.md)
 
 ## 迭代路线
 
