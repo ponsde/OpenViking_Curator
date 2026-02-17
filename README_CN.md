@@ -56,6 +56,8 @@ bash run.sh "grok2api 自动注册常见失败原因"
 - `eval_batch.py`：批量评测脚本
 - `maintenance.py`：反馈衰减 + 过期案例检查
 - `freshness_rescan.py`：来源级新鲜度重扫（URL 元数据）
+- `openviking_memory_bridge.py`：把长期记忆写入/召回自 OpenViking
+- `soft_router.py`：软路由封装（知识型问题优先走 Curator）
 
 ## 进阶文档
 

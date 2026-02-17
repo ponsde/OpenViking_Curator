@@ -56,6 +56,8 @@ bash run.sh "grok2api auto-register common failures"
 - `eval_batch.py` – batch evaluation script
 - `maintenance.py` – decay feedback and report stale cases
 - `freshness_rescan.py` – source-level freshness rescan (URL metadata)
+- `openviking_memory_bridge.py` – write/recall durable memory in OpenViking
+- `soft_router.py` – soft routing wrapper (knowledge query -> Curator, else fallback)
 
 ## Advanced
 
