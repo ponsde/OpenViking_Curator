@@ -115,6 +115,24 @@ def route_scope(query: str):
         }
 
 
+def load_feedback(path: str):
+    p = Path(path)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+    return {}
+
+
+def uri_feedback_score(uri: str, fb: dict) -> int:
+    item = fb.get(uri, {}) if isinstance(fb, dict) else {}
+    up = int(item.get('up', 0))
+    down = int(item.get('down', 0))
+    adopt = int(item.get('adopt', 0))
+    return up - down + adopt * 2
+
+
 def local_search(client, query: str, scope: dict):
     expanded = query + "\n关键词:" + ",".join(scope.get("keywords", [])[:8])
     res = client.search(expanded)
@@ -139,11 +157,20 @@ def local_search(client, query: str, scope: dict):
     domain_hit = any(t in uris_l for t in target_terms) if target_terms else True
 
     coverage = kw_cov if domain_hit else min(kw_cov, 0.15)
+
+    # 4) feedback 调权（v0.2）：adopt/up/down 影响覆盖率与外搜触发
+    fb = load_feedback(os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'))
+    uri_scores = {u: uri_feedback_score(u, fb) for u in uris[:20]}
+    max_fb = max(uri_scores.values()) if uri_scores else 0
+    if max_fb > 0:
+        coverage = min(1.0, coverage + 0.1 * max_fb)
+
     return txt, coverage, {
         "kw_cov": kw_cov,
         "domain_hit": domain_hit,
         "target_terms": target_terms,
         "uris": uris[:8],
+        "max_feedback_score": max_fb,
     }
 
 
@@ -220,7 +247,8 @@ def run(query: str):
     m.score('coverage_before_external', round(coverage, 3))
     print(
         f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
-        f"domain_hit={meta['domain_hit']}, target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
+        f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
+        f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
     )
 
     external_txt = ""

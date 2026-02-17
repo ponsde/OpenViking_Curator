@@ -48,7 +48,7 @@ bash run.sh "grok2api 自动注册常见失败原因"
 
 - `curator_v0.py`：当前试点脚本
 - `metrics.py`：执行指标采集（jsonl 报告）
-- `feedback_store.py`：反馈存储（up/down/adopt）
+- `feedback_store.py`：反馈存储（up/down/adopt），已接入本地检索调权（v0.2）
 - `memory_capture.py`：案例沉淀（自动生成 case）
 - `schemas/`：case/pattern 模板
 - `.env.example`：环境变量模板（不含密钥）

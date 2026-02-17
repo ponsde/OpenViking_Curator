@@ -48,7 +48,7 @@ bash run.sh "grok2api auto-register common failures"
 
 - `curator_v0.py` – current pilot script
 - `metrics.py` – execution metrics collector (jsonl report)
-- `feedback_store.py` – feedback store scaffold (up/down/adopt)
+- `feedback_store.py` – feedback store (up/down/adopt), now wired into local retrieval weighting (v0.2)
 - `memory_capture.py` – auto case capture
 - `schemas/` – case/pattern templates
 - `.env.example` – environment template (no secrets)

@@ -8,8 +8,8 @@
 - [x] Batch eval script
 
 ## v0.2
-- [ ] Feedback-driven ranking (click/adopt/downvote)
-- [ ] Lightweight trust scoring in retrieval order
+- [x] Feedback-driven weighting (up/down/adopt) in local retrieval gate
+- [ ] Lightweight trust scoring in final retrieval order
 
 ## v0.3
 - [ ] Conflict detection (top-k scoped)
