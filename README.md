@@ -10,7 +10,7 @@ Curator adds active knowledge governance:
 - **Search**: fetch missing external knowledge when local coverage is low
 - **Review**: AI quality-check before ingest
 - **Score**: assign trust signals for ranking
-- **Conflict**: detect contradictory sources (planned)
+- **Conflict**: detect contradictory sources (implemented in v0.3)
 
 ## Why this project
 
@@ -30,11 +30,11 @@ Implemented in rough v0:
 - External fallback search via Grok
 - AI review and optional ingest-back into OpenViking
 
-Not yet implemented:
+Implemented recently:
 
-- Feedback-driven ranking updates
-- Full conflict detection workflow
-- Long-term data decay/cleanup policy
+- Feedback-driven retrieval weighting (v0.2)
+- Conflict detection pipeline (v0.3)
+- Maintenance + freshness rescan utilities (v0.4)
 
 ## Quick start
 
@@ -57,10 +57,18 @@ bash run.sh "grok2api auto-register common failures"
 - `maintenance.py` – decay feedback and report stale cases
 - `freshness_rescan.py` – source-level freshness rescan (URL metadata)
 
+## Runtime strategy
+
+We use **mixed mode**:
+- Background daily maintenance (star watch, feedback decay, freshness rescan)
+- Foreground on-demand retrieval pipeline per user query
+
+See details in [`MIXED_MODE.md`](MIXED_MODE.md).
+
 ## Roadmap
 
 - **v0.1**: stabilize routing + coverage check + external fallback
-- **v0.2**: feedback-driven priority/ranking (feedback store scaffold added)
+- **v0.2**: feedback-driven priority/ranking
 - **v0.3**: conflict detection
 - **v0.4**: memory cleanup and freshness re-scan
 
