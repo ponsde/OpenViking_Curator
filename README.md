@@ -52,7 +52,7 @@ bash run.sh "grok2api auto-register common failures"
 ## Roadmap
 
 - **v0.1**: stabilize routing + coverage check + external fallback
-- **v0.2**: feedback-driven priority/ranking
+- **v0.2**: feedback-driven priority/ranking (feedback store scaffold added)
 - **v0.3**: conflict detection
 - **v0.4**: memory cleanup and freshness re-scan
 
