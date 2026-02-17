@@ -34,9 +34,20 @@ Not yet implemented:
 - Full conflict detection workflow
 - Long-term data decay/cleanup policy
 
+## Quick start
+
+```bash
+cp .env.example .env
+# edit .env and fill your own endpoints/keys
+bash run.sh "grok2api auto-register common failures"
+```
+
 ## Repo structure
 
 - `curator_v0.py` – current pilot script
+- `.env.example` – environment template (no secrets)
+- `run.sh` – one-command runner with venv bootstrap
+- `eval_batch.py` – batch evaluation script
 
 ## Roadmap
 

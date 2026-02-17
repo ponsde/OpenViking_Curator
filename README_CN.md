@@ -34,9 +34,20 @@ Curator 负责做主动治理：
 - 完整冲突检测流程
 - 长期冷数据衰减/清理策略
 
+## 快速开始
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入你自己的 endpoint/key
+bash run.sh "grok2api 自动注册常见失败原因"
+```
+
 ## 仓库结构
 
 - `curator_v0.py`：当前试点脚本
+- `.env.example`：环境变量模板（不含密钥）
+- `run.sh`：一键运行（自动处理 venv）
+- `eval_batch.py`：批量评测脚本
 
 ## 迭代路线
 

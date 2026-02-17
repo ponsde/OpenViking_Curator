@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import subprocess, time, json, sys
+import subprocess, time, json, sys, os
 
 QUESTIONS = [
   'OpenViking 的分层检索机制和优势是什么？',
@@ -9,10 +9,20 @@ QUESTIONS = [
   'OpenViking 和传统RAG差异是什么？'
 ]
 
+# Load simple .env (KEY=VALUE)
+if os.path.exists('.env'):
+    with open('.env', 'r', encoding='utf-8') as f:
+        for line in f:
+            line=line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k,v=line.split('=',1)
+            os.environ[k.strip()] = v.strip().strip('"').strip("'")
+
 rows=[]
 for q in QUESTIONS:
     t=time.time()
-    p=subprocess.run([sys.executable,'curator_v0.py',q],capture_output=True,text=True,timeout=600)
+    p=subprocess.run([sys.executable,'curator_v0.py',q],capture_output=True,text=True,timeout=600, env=os.environ.copy())
     out=(p.stdout or '') + (p.stderr or '')
     rows.append({
       'q': q,
