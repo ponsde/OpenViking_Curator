@@ -39,6 +39,9 @@ ROUTER_MODELS = [
     ).split(",") if m.strip()
 ]
 JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "【Claude Code】Claude-Sonnet 4-5")
+ANSWER_MODELS = [
+    m.strip() for m in env("CURATOR_ANSWER_MODELS", f"{JUDGE_MODEL},gemini-3-flash-preview").split(",") if m.strip()
+]
 
 GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
 GROK_KEY = env("CURATOR_GROK_KEY")
@@ -333,10 +336,19 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
 def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = "", conflict_card: str = ""):
     sys = "你是技术助手。基于给定上下文回答，最后给来源列表。若存在冲突卡片，先展示冲突再给建议。"
     user = f"问题:\n{query}\n\n冲突卡片:\n{conflict_card}\n\n优先来源上下文:\n{priority_ctx[:2500]}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
-    return chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
-        {"role": "system", "content": sys},
-        {"role": "user", "content": user},
-    ], timeout=90)
+
+    last_err = None
+    for m in ANSWER_MODELS:
+        try:
+            print(f"answer_model_used={m}")
+            return chat(OAI_BASE, OAI_KEY, m, [
+                {"role": "system", "content": sys},
+                {"role": "user", "content": user},
+            ], timeout=90)
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"all answer models failed: {last_err}")
 
 
 def run(query: str):
