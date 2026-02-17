@@ -8,6 +8,7 @@ from pathlib import Path
 import requests
 import openviking as ov
 from metrics import Metrics
+from memory_capture import capture_case
 
 """
 OpenViking Curator v0 (pilot)
@@ -254,13 +255,18 @@ def run(query: str):
     m.score('answer_len', len(ans))
     report = m.finalize()
 
+    case_path = None
+    if os.getenv('CURATOR_CAPTURE_CASE', '1') in ('1','true','True'):
+        case_path = capture_case(query, scope, report, ans, out_dir=os.getenv('CURATOR_CASE_DIR','cases'))
+
     print("\n===== FINAL ANSWER =====\n")
     print(ans)
     print("\n===== EVAL METRICS =====\n")
     print(json.dumps({
         'duration_sec': report['duration_sec'],
         'flags': report['flags'],
-        'scores': report['scores']
+        'scores': report['scores'],
+        'case_path': case_path
     }, ensure_ascii=False, indent=2))
 
 
