@@ -38,12 +38,12 @@ ROUTER_MODELS = [
         "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5",
     ).split(",") if m.strip()
 ]
-JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "【Claude Code】Claude-Sonnet 4-5")
+JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gemini-3-flash-preview")
 JUDGE_MODELS = [
-    m.strip() for m in env("CURATOR_JUDGE_MODELS", f"{JUDGE_MODEL},gemini-3-flash-preview").split(",") if m.strip()
+    m.strip() for m in env("CURATOR_JUDGE_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5").split(",") if m.strip()
 ]
 ANSWER_MODELS = [
-    m.strip() for m in env("CURATOR_ANSWER_MODELS", f"{JUDGE_MODEL},gemini-3-flash-preview").split(",") if m.strip()
+    m.strip() for m in env("CURATOR_ANSWER_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5").split(",") if m.strip()
 ]
 
 GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
