@@ -16,5 +16,5 @@
 - [x] Conflict card in final answer
 
 ## v0.4
-- [ ] Freshness rescan
-- [ ] Decay and cleanup policy
+- [x] Decay and cleanup policy (maintenance script)
+- [ ] Freshness rescan (source-level)
