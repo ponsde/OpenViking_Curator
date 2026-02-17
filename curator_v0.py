@@ -149,15 +149,35 @@ def uri_feedback_score(uri: str, fb: dict) -> int:
     return best
 
 
+def uri_trust_score(uri: str) -> float:
+    u = (uri or '').lower()
+    s = 5.0
+    if 'openviking' in u or 'grok2api' in u or 'newapi' in u:
+        s += 1.0
+    if 'curated' in u:
+        s += 0.5
+    if 'license' in u:
+        s -= 0.5
+    return s
+
+
+def uri_freshness_score(uri: str) -> float:
+    # very light heuristic: curated entries likely newer
+    u = (uri or '').lower()
+    return 1.0 if 'curated' in u else 0.0
+
+
 def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
     fb = load_feedback(feedback_file)
     scored = []
     for u in uris:
-        s = uri_feedback_score(u, fb)
-        if s > 0:
-            scored.append((s, u))
-    scored.sort(reverse=True)
-    return [u for _, u in scored[:topn]]
+        f = uri_feedback_score(u, fb)             # strong user signal
+        t = uri_trust_score(u)                    # weak prior
+        r = uri_freshness_score(u)                # freshness prior
+        final = 0.50 * f + 0.30 * t + 0.20 * r
+        scored.append((final, f, t, r, u))
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [x[4] for x in scored[:topn]], scored[:min(5, len(scored))]
 
 
 def local_search(client, query: str, scope: dict):
@@ -192,7 +212,7 @@ def local_search(client, query: str, scope: dict):
     if max_fb > 0:
         coverage = min(1.0, coverage + 0.1 * max_fb)
 
-    pri_uris = build_feedback_priority_uris(uris, os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'), topn=3)
+    pri_uris, rank_preview = build_feedback_priority_uris(uris, os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'), topn=3)
 
     return txt, coverage, {
         "kw_cov": kw_cov,
@@ -201,6 +221,7 @@ def local_search(client, query: str, scope: dict):
         "uris": uris[:8],
         "max_feedback_score": max_fb,
         "priority_uris": pri_uris,
+        "rank_preview": rank_preview,
     }
 
 
@@ -289,7 +310,8 @@ def run(query: str):
     print(
         f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
         f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
-        f"priority_uris={meta.get('priority_uris',[])}, target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
+        f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
+        f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
     )
 
     external_txt = ""
