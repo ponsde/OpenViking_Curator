@@ -55,6 +55,7 @@ bash run.sh "grok2api auto-register common failures"
 - `run.sh` – one-command runner with venv bootstrap
 - `eval_batch.py` – batch evaluation script
 - `maintenance.py` – decay feedback and report stale cases
+- `freshness_rescan.py` – source-level freshness rescan (URL metadata)
 
 ## Roadmap
 

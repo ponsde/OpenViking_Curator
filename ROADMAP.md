@@ -17,4 +17,4 @@
 
 ## v0.4
 - [x] Decay and cleanup policy (maintenance script)
-- [ ] Freshness rescan (source-level)
+- [x] Freshness rescan (source-level)

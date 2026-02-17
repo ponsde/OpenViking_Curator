@@ -55,6 +55,7 @@ bash run.sh "grok2api 自动注册常见失败原因"
 - `run.sh`：一键运行（自动处理 venv）
 - `eval_batch.py`：批量评测脚本
 - `maintenance.py`：反馈衰减 + 过期案例检查
+- `freshness_rescan.py`：来源级新鲜度重扫（URL 元数据）
 
 ## 迭代路线
 
