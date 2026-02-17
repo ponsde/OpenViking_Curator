@@ -126,11 +126,38 @@ def load_feedback(path: str):
 
 
 def uri_feedback_score(uri: str, fb: dict) -> int:
-    item = fb.get(uri, {}) if isinstance(fb, dict) else {}
-    up = int(item.get('up', 0))
-    down = int(item.get('down', 0))
-    adopt = int(item.get('adopt', 0))
-    return up - down + adopt * 2
+    if not isinstance(fb, dict):
+        return 0
+
+    def _score(item):
+        up = int(item.get('up', 0))
+        down = int(item.get('down', 0))
+        adopt = int(item.get('adopt', 0))
+        return up - down + adopt * 2
+
+    # exact match
+    if uri in fb:
+        return _score(fb[uri])
+
+    # fuzzy match: same subtree / parent-child path overlap
+    best = 0
+    for k, v in fb.items():
+        if not isinstance(k, str):
+            continue
+        if k in uri or uri in k:
+            best = max(best, _score(v))
+    return best
+
+
+def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
+    fb = load_feedback(feedback_file)
+    scored = []
+    for u in uris:
+        s = uri_feedback_score(u, fb)
+        if s > 0:
+            scored.append((s, u))
+    scored.sort(reverse=True)
+    return [u for _, u in scored[:topn]]
 
 
 def local_search(client, query: str, scope: dict):
@@ -165,12 +192,15 @@ def local_search(client, query: str, scope: dict):
     if max_fb > 0:
         coverage = min(1.0, coverage + 0.1 * max_fb)
 
+    pri_uris = build_feedback_priority_uris(uris, os.getenv('CURATOR_FEEDBACK_FILE', 'feedback.json'), topn=3)
+
     return txt, coverage, {
         "kw_cov": kw_cov,
         "domain_hit": domain_hit,
         "target_terms": target_terms,
         "uris": uris[:8],
         "max_feedback_score": max_fb,
+        "priority_uris": pri_uris,
     }
 
 
@@ -215,9 +245,20 @@ def ingest_markdown(client, title: str, markdown: str):
     return client.add_resource(path=str(fn))
 
 
-def answer(query: str, local_ctx: str, external_ctx: str):
+def build_priority_context(client, uris):
+    blocks = []
+    for u in uris[:2]:
+        try:
+            c = client.read(u)
+            blocks.append(f"[PRIORITY_SOURCE] {u}\n{str(c)[:1200]}")
+        except Exception:
+            continue
+    return "\n\n".join(blocks)
+
+
+def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = ""):
     sys = "你是技术助手。基于给定上下文回答，最后给来源列表。"
-    user = f"问题:\n{query}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
+    user = f"问题:\n{query}\n\n优先来源上下文:\n{priority_ctx[:2500]}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
     return chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
         {"role": "system", "content": sys},
         {"role": "user", "content": user},
@@ -248,7 +289,7 @@ def run(query: str):
     print(
         f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
         f"domain_hit={meta['domain_hit']}, fb_max={meta.get('max_feedback_score',0)}, "
-        f"target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
+        f"priority_uris={meta.get('priority_uris',[])}, target_terms={meta['target_terms']}, uris={meta.get('uris', [])}"
     )
 
     external_txt = ""
@@ -277,8 +318,10 @@ def run(query: str):
         print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
 
     print("STEP 6/6 生成回答...")
-    ans = answer(query, local_txt, external_txt)
-    m.step('answer', True, {'answer_len': len(ans)})
+    priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
+    ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx)
+    m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
+    m.score('priority_uris_count', len(meta.get('priority_uris', [])))
     m.flag('ingested', ingested)
     m.score('answer_len', len(ans))
     report = m.finalize()
