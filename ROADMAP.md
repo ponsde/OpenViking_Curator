@@ -12,8 +12,8 @@
 - [ ] Lightweight trust scoring in final retrieval order
 
 ## v0.3
-- [ ] Conflict detection (top-k scoped)
-- [ ] Conflict card in final answer
+- [x] Conflict detection (top-k scoped)
+- [x] Conflict card in final answer
 
 ## v0.4
 - [ ] Freshness rescan

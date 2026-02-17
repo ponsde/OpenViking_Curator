@@ -277,9 +277,34 @@ def build_priority_context(client, uris):
     return "\n\n".join(blocks)
 
 
-def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = ""):
-    sys = "你是技术助手。基于给定上下文回答，最后给来源列表。"
-    user = f"问题:\n{query}\n\n优先来源上下文:\n{priority_ctx[:2500]}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
+def detect_conflict(query: str, local_ctx: str, external_ctx: str):
+    if not external_ctx.strip():
+        return {"has_conflict": False, "summary": "", "points": []}
+
+    sys = (
+        "你是冲突检测器。比较本地上下文与外部补充是否存在结论冲突。"
+        "输出严格JSON：has_conflict(bool), summary(string), points(array of string)。"
+        "如果只是细节差异但不影响结论，has_conflict=false。只输出JSON。"
+    )
+    out = chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
+        {"role": "system", "content": sys},
+        {"role": "user", "content": f"问题:{query}\n\n本地:\n{local_ctx[:2500]}\n\n外部:\n{external_ctx[:2500]}"},
+    ], timeout=60)
+    m = re.search(r"\{[\s\S]*\}", out)
+    if not m:
+        return {"has_conflict": False, "summary": "", "points": []}
+    try:
+        j = json.loads(m.group(0))
+        if "points" not in j or not isinstance(j.get("points"), list):
+            j["points"] = []
+        return j
+    except Exception:
+        return {"has_conflict": False, "summary": "", "points": []}
+
+
+def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = "", conflict_card: str = ""):
+    sys = "你是技术助手。基于给定上下文回答，最后给来源列表。若存在冲突卡片，先展示冲突再给建议。"
+    user = f"问题:\n{query}\n\n冲突卡片:\n{conflict_card}\n\n优先来源上下文:\n{priority_ctx[:2500]}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
     return chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
         {"role": "system", "content": sys},
         {"role": "user", "content": user},
@@ -339,9 +364,19 @@ def run(query: str):
         m.flag('external_triggered', False)
         print("STEP 4/6 跳过外部搜索（本地覆盖足够）")
 
-    print("STEP 6/6 生成回答...")
+    print("STEP 6/7 冲突检测...")
+    conflict = detect_conflict(query, local_txt, external_txt)
+    conflict_card = ""
+    if conflict.get('has_conflict'):
+        pts = '\n'.join([f"- {x}" for x in conflict.get('points', [])[:5]])
+        conflict_card = f"⚠️ 存在冲突: {conflict.get('summary','')}\n{pts}"
+    m.step('conflict', True, {'has_conflict': conflict.get('has_conflict', False), 'summary': conflict.get('summary','')})
+    m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
+    print(f"✅ STEP 6 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
+
+    print("STEP 7/7 生成回答...")
     priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
-    ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx)
+    ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx, conflict_card=conflict_card)
     m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
     m.score('priority_uris_count', len(meta.get('priority_uris', [])))
     m.flag('ingested', ingested)
