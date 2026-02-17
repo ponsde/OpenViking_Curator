@@ -1,5 +1,7 @@
 # OpenViking Curator
 
+[English](README.md) / 中文
+
 Curator 是 [OpenViking](https://github.com/volcengine/OpenViking) 的**上层智能治理模块**。
 
 OpenViking 本身擅长“存储+检索”，但它是被动系统：你放什么，它就存什么。
@@ -45,6 +47,8 @@ bash run.sh "grok2api 自动注册常见失败原因"
 ## 仓库结构
 
 - `curator_v0.py`：当前试点脚本
+- `metrics.py`：执行指标采集（jsonl 报告）
+- `feedback_store.py`：反馈存储（up/down/adopt）
 - `.env.example`：环境变量模板（不含密钥）
 - `run.sh`：一键运行（自动处理 venv）
 - `eval_batch.py`：批量评测脚本

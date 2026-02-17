@@ -1,5 +1,7 @@
 # OpenViking Curator
 
+English / [中文](README_CN.md)
+
 Curator is an **upper-layer intelligence module** for [OpenViking](https://github.com/volcengine/OpenViking).
 
 OpenViking is great at storage/retrieval, but it is passive: what you put in is what you get out.
@@ -45,6 +47,8 @@ bash run.sh "grok2api auto-register common failures"
 ## Repo structure
 
 - `curator_v0.py` – current pilot script
+- `metrics.py` – execution metrics collector (jsonl report)
+- `feedback_store.py` – feedback store scaffold (up/down/adopt)
 - `.env.example` – environment template (no secrets)
 - `run.sh` – one-command runner with venv bootstrap
 - `eval_batch.py` – batch evaluation script
