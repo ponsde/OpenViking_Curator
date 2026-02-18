@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from pathlib import Path
 
 
@@ -39,23 +40,104 @@ def uri_feedback_score(uri: str, fb: dict) -> int:
     return best
 
 
-def uri_trust_score(uri: str) -> float:
-    """Simple URL-based trust heuristic. TODO: replace with real trust scoring."""
+def uri_trust_score(uri: str, fb: dict | None = None) -> float:
+    """Trust scoring: URL heuristic + feedback-weighted adjustment.
+
+    Base score from URL pattern (project relevance), then adjusted by
+    feedback signals (up/down/adopt) if feedback data is provided.
+
+    Score range: 1.0 ~ 10.0
+    """
     u = (uri or "").lower()
+
+    # ── Base score from URL pattern ──
+    base = 5.5  # default for unknown URIs
     if 'openviking' in u or 'grok2api' in u or 'newapi' in u:
-        return 7.0
-    if 'curated' in u:
-        return 6.5
-    if 'license' in u or 'readme' in u:
-        return 4.0
-    return 5.5
+        base = 7.0
+    elif 'curated' in u or 'single_' in u or 'reingest_' in u:
+        base = 6.5
+    elif any(tag in u for tag in ('memory', 'case', 'experience')):
+        base = 6.0
+    elif 'license' in u or 'readme' in u:
+        base = 4.0
+    elif 'tmp' in u or 'temp' in u:
+        base = 3.0
+
+    # ── Feedback adjustment ──
+    if fb and isinstance(fb, dict):
+        fb_score = uri_feedback_score(uri, fb)
+        # Each net feedback point adjusts trust by 0.3, capped at ±2.0
+        fb_adj = max(-2.0, min(2.0, fb_score * 0.3))
+        base += fb_adj
+
+    return max(1.0, min(10.0, round(base, 2)))
 
 
-def uri_freshness_score(uri: str) -> float:
-    """Freshness heuristic. TODO: implement real date-based scoring."""
-    # Placeholder: always returns 1.0
-    # Future: parse curator_meta from document, check review_after date
-    return 1.0
+def _extract_timestamp_from_uri(uri: str) -> int | None:
+    """Extract Unix timestamp from URI path (e.g. viking://resources/1771327401_xxx)."""
+    m = re.search(r'/(\d{10})_', uri or '')
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def uri_freshness_score(uri: str, meta: dict | None = None, now: float | None = None) -> float:
+    """Freshness scoring based on document age.
+
+    Scoring logic:
+    - Documents < 30 days old: 1.0 (full freshness)
+    - 30-180 days: linear decay from 1.0 to 0.5
+    - 180-365 days: linear decay from 0.5 to 0.2
+    - > 365 days: 0.1 (very stale)
+
+    Sources (in priority order):
+    1. meta['review_after'] or meta['created_at'] (ISO date or Unix timestamp)
+    2. URI embedded timestamp (e.g. /1771327401_xxx)
+    3. Fallback: 0.5 (unknown age)
+    """
+    _now = now or time.time()
+    doc_ts = None
+
+    # ── Try meta dates ──
+    if meta and isinstance(meta, dict):
+        for key in ('review_after', 'created_at', 'ingested_at', 'date'):
+            val = meta.get(key)
+            if not val:
+                continue
+            if isinstance(val, (int, float)) and val > 1_000_000_000:
+                doc_ts = float(val)
+                break
+            if isinstance(val, str):
+                # Try ISO date parse (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
+                try:
+                    import datetime
+                    dt = datetime.datetime.fromisoformat(val.replace('Z', '+00:00'))
+                    doc_ts = dt.timestamp()
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+    # ── Try URI timestamp ──
+    if doc_ts is None:
+        doc_ts = _extract_timestamp_from_uri(uri)
+
+    # ── Unknown age fallback ──
+    if doc_ts is None:
+        return 0.5
+
+    age_days = (_now - doc_ts) / 86400
+
+    if age_days < 0:
+        return 1.0  # future date, treat as fresh
+    if age_days <= 30:
+        return 1.0
+    if age_days <= 180:
+        # Linear decay: 1.0 → 0.5 over 150 days
+        return round(1.0 - 0.5 * (age_days - 30) / 150, 3)
+    if age_days <= 365:
+        # Linear decay: 0.5 → 0.2 over 185 days
+        return round(0.5 - 0.3 * (age_days - 180) / 185, 3)
+    return 0.1
 
 
 def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
@@ -67,7 +149,7 @@ def build_feedback_priority_uris(uris, feedback_file='feedback.json', topn=3):
             continue
         seen.add(u)
         f = uri_feedback_score(u, fb)
-        t = uri_trust_score(u)
+        t = uri_trust_score(u, fb)
         r = uri_freshness_score(u)
         final = 0.50 * f + 0.30 * t + 0.20 * r
         scored.append((final, f, t, r, u))

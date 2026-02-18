@@ -312,14 +312,74 @@ class TestUriTrustScore(unittest.TestCase):
         score = uri_trust_score('viking://resources/license.md')
         self.assertLess(score, 5.0)
 
+    def test_feedback_boosts_trust(self):
+        """Positive feedback should increase trust score."""
+        fb = {'viking://resources/random_doc': {'up': 5, 'down': 0, 'adopt': 2}}
+        base = uri_trust_score('viking://resources/random_doc')
+        boosted = uri_trust_score('viking://resources/random_doc', fb=fb)
+        self.assertGreater(boosted, base)
+
+    def test_feedback_decreases_trust(self):
+        """Negative feedback should decrease trust score."""
+        fb = {'viking://resources/openviking_guide': {'up': 0, 'down': 8, 'adopt': 0}}
+        base = uri_trust_score('viking://resources/openviking_guide')
+        decreased = uri_trust_score('viking://resources/openviking_guide', fb=fb)
+        self.assertLess(decreased, base)
+
+    def test_trust_clamped(self):
+        """Trust should stay within 1.0 ~ 10.0."""
+        fb_extreme = {'viking://resources/x': {'up': 100, 'down': 0, 'adopt': 50}}
+        score = uri_trust_score('viking://resources/x', fb=fb_extreme)
+        self.assertLessEqual(score, 10.0)
+        self.assertGreaterEqual(score, 1.0)
+
 
 # ─── uri_freshness_score ─────────────────────────────────────
 
 class TestUriFreshnessScore(unittest.TestCase):
 
-    def test_always_returns_one(self):
-        """Current placeholder implementation always returns 1.0."""
-        self.assertEqual(uri_freshness_score('anything'), 1.0)
+    def test_recent_uri_full_freshness(self):
+        """URI with timestamp from ~1 day ago should score 1.0."""
+        import time as _time
+        recent_ts = int(_time.time()) - 86400  # 1 day ago
+        uri = f'viking://resources/{recent_ts}_test_doc'
+        score = uri_freshness_score(uri)
+        self.assertEqual(score, 1.0)
+
+    def test_old_uri_decayed(self):
+        """URI with timestamp from 120 days ago should be < 1.0 but > 0.2."""
+        import time as _time
+        old_ts = int(_time.time()) - 120 * 86400  # 120 days ago
+        uri = f'viking://resources/{old_ts}_old_doc'
+        score = uri_freshness_score(uri)
+        self.assertLess(score, 1.0)
+        self.assertGreater(score, 0.2)
+
+    def test_very_old_uri_stale(self):
+        """URI with timestamp > 365 days should score 0.1."""
+        import time as _time
+        ancient_ts = int(_time.time()) - 400 * 86400  # 400 days ago
+        uri = f'viking://resources/{ancient_ts}_ancient_doc'
+        score = uri_freshness_score(uri)
+        self.assertEqual(score, 0.1)
+
+    def test_no_timestamp_returns_default(self):
+        """URI without timestamp returns 0.5 (unknown age)."""
+        score = uri_freshness_score('viking://resources/no_timestamp_here')
+        self.assertEqual(score, 0.5)
+
+    def test_meta_date_overrides_uri(self):
+        """Meta date should be used when provided."""
+        import time as _time
+        now = _time.time()
+        meta = {'created_at': int(now - 10 * 86400)}  # 10 days ago
+        score = uri_freshness_score('viking://resources/some_doc', meta=meta)
+        self.assertEqual(score, 1.0)
+
+    def test_meta_iso_date(self):
+        """ISO date strings in meta should be parsed."""
+        score = uri_freshness_score('viking://resources/x', meta={'date': '2026-02-15'}, now=1771439300.0)
+        self.assertGreater(score, 0.9)  # ~3 days old
 
 
 # ─── build_priority_context ──────────────────────────────────

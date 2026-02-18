@@ -4,9 +4,9 @@ English / [中文](README_CN.md)
 
 **Active knowledge governance for [OpenViking](https://github.com/volcengine/OpenViking).** Not just retrieve — decide, verify, and grow.
 
+[![CI](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml/badge.svg)](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
-[![Tests: 22 passing](https://img.shields.io/badge/Tests-22%20passing-brightgreen.svg)](tests/)
 
 ## What is this?
 
@@ -153,7 +153,7 @@ batch_ingest.py        # Bulk topic ingestion for cold-start
 eval_batch.py          # Benchmark evaluation (10 questions)
 Dockerfile             # Container build
 docker-compose.yml     # One-click Docker startup
-tests/test_core.py     # 22 unit tests
+tests/test_core.py     # 46 unit tests
 ```
 
 ## MCP Server
@@ -169,7 +169,7 @@ python3 mcp_server.py   # Starts stdio JSON-RPC server
 ## Testing
 
 ```bash
-python -m pytest tests/ -v   # 22 tests, all internal (no API calls)
+python -m pytest tests/ -v   # 46 tests, all internal (no API calls)
 ```
 
 ## How is this different from LangChain / LlamaIndex?

@@ -38,7 +38,7 @@
 - [x] Chinese tokenization dictionary
 - [x] MCP server (stdio JSON-RPC, 3 tools)
 
-## v0.8 (current)
+## v0.8
 - [x] Cross-validation of volatile claims + chain search
 - [x] Answer uncertainty marking (⚠️ 待验证)
 - [x] External search requires GitHub project activity data
@@ -53,7 +53,19 @@
 - [x] freshness_rescan.py TTL scan mode
 - [x] 22 unit tests
 
-## v0.9 (next)
+## v0.9 (current)
+- [x] Modularization: curator.py (1035 lines) → curator/ package (8 modules)
+- [x] `run()` returns structured dict, logging replaces print
+- [x] Pluggable search backend (search_providers.py: grok/oai/custom)
+- [x] Docker + docker-compose + .dockerignore
+- [x] GitHub Actions CI workflow
+- [x] 46 unit tests (38→46: freshness + trust scoring)
+- [x] Real uri_freshness_score with time-decay (30d/180d/365d thresholds)
+- [x] Enhanced uri_trust_score with feedback-weighted adjustment
+- [x] eval_batch.py updated for modular architecture
+- [x] fcntl Windows compatibility
+- [x] CONTRIBUTING.md + MIT LICENSE
+- [x] OpenViking memory bridge (long-term memory sync)
 - [ ] Soft integration auto-trigger (main model decides when to invoke)
 - [ ] Pattern generation from accumulated cases
 - [ ] Feedback closed loop (👍👎 after answer → feedback_store)
@@ -61,7 +73,9 @@
 - [ ] Knowledge base health dashboard
 
 ## v1.0 (target)
-- [ ] Long-term memory migration to OpenViking
+- [ ] Long-term memory full migration to OpenViking
 - [ ] Multi-source conflict detection
 - [ ] Feasibility judgment for dev tasks
 - [ ] Knowledge graph from cases/patterns
+- [ ] Eval regression suite (fixed 10-question benchmark)
+- [ ] External search candidate scoring (best-of-N before ingest)

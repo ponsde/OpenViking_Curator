@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Batch evaluation: 10 questions to verify no regression after modularization."""
 import subprocess, time, json, sys, os
 
 QUESTIONS = [
@@ -20,33 +21,75 @@ QUESTIONS = [
 if os.path.exists('.env'):
     with open('.env', 'r', encoding='utf-8') as f:
         for line in f:
-            line=line.strip()
+            line = line.strip()
             if not line or line.startswith('#') or '=' not in line:
                 continue
-            k,v=line.split('=',1)
+            k, v = line.split('=', 1)
             os.environ[k.strip()] = v.strip().strip('"').strip("'")
 
-rows=[]
+rows = []
 for q in QUESTIONS:
-    t=time.time()
-    p=subprocess.run([sys.executable,'curator.py',q],capture_output=True,text=True,timeout=600, env=os.environ.copy())
-    out=(p.stdout or '') + (p.stderr or '')
+    t = time.time()
+    p = subprocess.run(
+        [sys.executable, 'curator_query.py', q],
+        capture_output=True, text=True, timeout=600,
+        env=os.environ.copy(),
+    )
+    elapsed = round(time.time() - t, 2)
+    stdout = (p.stdout or '').strip()
+    stderr = (p.stderr or '').strip()
+
+    # Parse JSON output from curator_query.py
+    ok = False
+    routed = False
+    answer_text = ''
+    coverage = None
+    external_triggered = False
+    ingested = False
+    error = ''
+
+    try:
+        result = json.loads(stdout)
+        routed = result.get('routed', False)
+        if routed:
+            ok = bool(result.get('answer'))
+            answer_text = (result.get('answer') or '')[:200]
+            meta = result.get('meta', {})
+            coverage = meta.get('coverage')
+            external_triggered = meta.get('external_triggered', False)
+            ingested = meta.get('ingested', False)
+        else:
+            ok = True  # Not routed is also a valid result
+            answer_text = f"(not routed: {result.get('reason', '?')})"
+        if result.get('error'):
+            ok = False
+            error = result['error']
+    except json.JSONDecodeError:
+        error = f"JSON parse error: {stdout[:100]}"
+
+    # Also check stderr for STEP logs
+    coverage_line = next((ln for ln in stderr.splitlines() if 'STEP 3' in ln and 'coverage' in ln), '')
+
     rows.append({
-      'q': q,
-      'sec': round(time.time()-t,2),
-      'ok': '===== FINAL ANSWER =====' in out,
-      'external': '触发外部搜索' in out,
-      'ingested': '✅ 已入库:' in out,
-      'coverage': next((ln for ln in out.splitlines() if 'STEP 3 完成:' in ln), '')[:220],
-      'router_line': next((ln for ln in out.splitlines() if ln.startswith('router_model_used=')), '')
+        'q': q,
+        'sec': elapsed,
+        'ok': ok,
+        'routed': routed,
+        'external': external_triggered,
+        'ingested': ingested,
+        'coverage': coverage,
+        'coverage_log': coverage_line[:220] if coverage_line else '',
+        'answer_preview': answer_text,
+        'error': error,
     })
 
-summary={
-  'count': len(rows),
-  'ok': sum(r['ok'] for r in rows),
-  'external': sum(r['external'] for r in rows),
-  'ingested': sum(r['ingested'] for r in rows),
-  'avg_sec': round(sum(r['sec'] for r in rows)/len(rows),2)
+summary = {
+    'count': len(rows),
+    'ok': sum(r['ok'] for r in rows),
+    'routed': sum(r['routed'] for r in rows),
+    'external': sum(r['external'] for r in rows),
+    'ingested': sum(r['ingested'] for r in rows),
+    'avg_sec': round(sum(r['sec'] for r in rows) / len(rows), 2),
 }
 
-print(json.dumps({'summary':summary,'rows':rows},ensure_ascii=False,indent=2))
+print(json.dumps({'summary': summary, 'rows': rows}, ensure_ascii=False, indent=2))
