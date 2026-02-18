@@ -134,18 +134,23 @@ All coverage/quality thresholds are configurable via env:
 ## Repo Structure
 
 ```
-curator.py          # Core 8-step pipeline
+curator/               # Core package (modular)
+  config.py            # Env vars, thresholds, HTTP client
+  router.py            # Rule-based + LLM scope routing
+  retrieval.py         # Local search, keyword index, priority context
+  feedback.py          # Trust/freshness scoring, feedback ranking
+  search.py            # External search + cross-validation
+  review.py            # AI review, ingest, conflict detection
+  answer.py            # Answer generation + source transparency
+  pipeline.py          # Main 8-step run() function
 curator_query.py       # CLI entry (--help, --status, query)
-search_providers.py    # Pluggable search backends
+search_providers.py    # Pluggable search backends (grok/oai/custom)
 mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)
 feedback_store.py      # Thread-safe feedback storage
-memory_capture.py      # Auto case capture
 freshness_rescan.py    # URL liveness + TTL expiry scanner
 dedup.py               # AI-powered dedup (scan/clean/merge)
 batch_ingest.py        # Bulk topic ingestion for cold-start
 eval_batch.py          # Benchmark evaluation (10 questions)
-maintenance.py         # Feedback decay + expired case check
-metrics.py             # Per-query metrics (JSONL)
 Dockerfile             # Container build
 docker-compose.yml     # One-click Docker startup
 tests/test_core.py     # 22 unit tests
