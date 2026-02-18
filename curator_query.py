@@ -14,20 +14,33 @@ from pathlib import Path
 
 # 明确需要插件的信号词
 POSITIVE = [
-    r"是什么", r"怎么.*工作", r"原理", r"架构", r"区别", r"对比", r"比较",
+    # 知识类
+    r"是什么", r"怎么", r"原理", r"架构", r"区别", r"对比", r"比较",
     r"总结", r"文档", r"资料", r"教程", r"部署", r"配置",
-    r"what\s+is", r"how\s+(does|to)", r"difference", r"compare",
+    r"what\s+is", r"how\s+(does|do|to|can)", r"difference", r"compare",
     r"architecture", r"tutorial", r"deploy", r"setup",
     r"为什么", r"why", r"优缺点", r"pros?\s*(and|&)\s*cons?",
     r"best\s+practice", r"最佳实践",
-    r"历史", r"之前.*怎么", r"上次.*怎么",  # 内部经验召回
+    # 选型/推荐
+    r"选", r"推荐", r"方案", r"选型", r"入门", r"指南", r"该用",
+    r"recommend", r"which\s+(one|should)", r"suggest",
+    # 经验召回
+    r"历史", r"之前", r"上次", r"经验", r"参考",
+    # 排查/调试
     r"排查", r"日志", r"故障", r"报错", r"错误", r"怎么看", r"怎么用",
-    r"troubleshoot", r"error", r"log", r"debug",
-    r"方案", r"选型", r"推荐", r"入门", r"指南",
-    # 开发任务中可能有历史经验的关键词
-    r"写一个.*脚本", r"搭建", r"加固", r"注册", r"自动化",
+    r"troubleshoot", r"error", r"log", r"debug", r"502|503|504|timeout",
+    # 开发任务
+    r"写一个", r"搭建", r"加固", r"注册", r"自动化",
     r"pipeline", r"优化", r"迁移", r"接入", r"对接",
-    r"script", r"automat", r"build", r"implement", r"create.*service",
+    r"script", r"automat", r"build", r"implement", r"create",
+    # 技术名词（出现就大概率是技术问题）
+    r"docker|nginx|redis|mysql|postgres|k8s|kubernetes",
+    r"api|sdk|cli|ssh|ssl|tls|http|websocket",
+    r"python|node|rust|go|java|typescript",
+    r"linux|ubuntu|centos|systemd",
+    # 通用知识信号
+    r"支持|兼容|版本|最新|功能|特性|渠道|安装|升级|更新",
+    r"support|compatible|version|feature|install|upgrade|channel",
 ]
 
 # 明确不需要的信号词（日常对话/操作指令）
@@ -35,7 +48,7 @@ NEGATIVE = [
     r"^(hi|hello|hey|你好|嗨|早|晚安)",
     r"^(ok|好的|行|收到|嗯|谢谢|thanks)",
     r"帮我(跑|执行|运行|commit|push|部署|重启|看看|检查)",
-    r"(?<!\w)(git|ssh|cd|ls|cat|rm|mv)\s+",
+    r"(?<!\w)(git|cd|ls|cat|rm|mv)\s+",
     r"打开|关闭|启动|停止|重启",
     r"天气|时间|几点",
     r"提醒我|remind",
