@@ -49,11 +49,11 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
 
 
 def _chat(base, key, model, messages, timeout=90):
-    """Minimal OAI chat call (same as curator_v0.chat)."""
-    import httpx
-    r = httpx.post(
+    """OAI chat call. Uses requests (same as curator_v0) for consistency."""
+    import requests
+    r = requests.post(
         f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {key}"},
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={"model": model, "messages": messages, "temperature": 0.3},
         timeout=timeout,
     )

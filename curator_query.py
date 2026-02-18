@@ -106,7 +106,7 @@ def run_status() -> dict:
     load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
-    result = {"config": {}, "openviking": {}, "search_provider": {}}
+    result = {"config": {}, "openviking": {}, "local_index": {}, "feedback": {}, "cases": 0}
 
     # Config check
     for key in ["CURATOR_OAI_BASE", "CURATOR_OAI_KEY", "CURATOR_GROK_KEY"]:

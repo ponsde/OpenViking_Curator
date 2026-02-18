@@ -66,7 +66,9 @@ def validate_config() -> None:
         missing.append("CURATOR_OAI_BASE")
     if not OAI_KEY:
         missing.append("CURATOR_OAI_KEY")
-    if not GROK_KEY:
+    # GROK_KEY only required when using grok provider
+    search_provider = env("CURATOR_SEARCH_PROVIDER", "grok")
+    if search_provider == "grok" and not GROK_KEY:
         missing.append("CURATOR_GROK_KEY")
     if missing:
         raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
@@ -121,9 +123,11 @@ def _rule_based_scope(query: str) -> dict:
     cn_text = re.sub(r"[^\u4e00-\u9fff]", "", query)
     try:
         import jieba
-        # 添加领域术语到 jieba 词典
-        for term in _CN_EXTRA_TERMS:
-            jieba.add_word(term)
+        # add_word 内部幂等，但用模块级 flag 避免重复循环
+        if not getattr(_rule_based_scope, '_jieba_init', False):
+            for term in _CN_EXTRA_TERMS:
+                jieba.add_word(term)
+            _rule_based_scope._jieba_init = True
         cn_tokens = [w for w in jieba.cut(cn_text) if len(w) >= 2]
     except ImportError:
         # jieba 不可用时用硬编码词典 + 2-gram 兜底
@@ -146,9 +150,11 @@ def _rule_based_scope(query: str) -> dict:
     cn_tokens = list(dict.fromkeys(cn_tokens))
 
     # 去掉停用词
-    _STOP = {"是什么", "怎么", "如何", "什么", "哪些", "常见", "有哪些", "最佳", "实践",
-             "怎么样", "可以", "应该", "为什么", "到底", "一下", "这个", "那个",
-             "the", "what", "how", "is", "are", "and", "for", "with", "to", "in", "of"}
+    _STOP = _GENERIC_TERMS | {
+        "是什么", "怎么", "如何", "什么", "哪些", "常见", "有哪些",
+        "怎么样", "可以", "应该", "到底", "一下", "这个", "那个",
+        "the", "what", "how", "is", "are", "and", "for", "with", "to", "in", "of",
+    }
     keywords = [t for t in (en_tokens + cn_tokens) if t.lower() not in _STOP and len(t) > 1]
     # 去重保序
     keywords = list(dict.fromkeys(keywords))[:8]
