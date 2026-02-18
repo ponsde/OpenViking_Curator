@@ -2,72 +2,144 @@
 
 [English](README.md) / 中文
 
-Curator 是 [OpenViking](https://github.com/volcengine/OpenViking) 的**上层智能治理模块**。
+Curator 是 [OpenViking](https://github.com/volcengine/OpenViking) 的**主动知识治理层**。
 
-OpenViking 本身擅长“存储+检索”，但它是被动系统：你放什么，它就存什么。
-Curator 负责做主动治理：
+传统 RAG 系统是被动的——放什么进去就检索什么。Curator 在上面加了一层智能：
 
-- **搜（Search）**：本地覆盖不足时自动外部补充
-- **审（Review）**：资料入库前做 AI 质量审核
-- **评（Score）**：给资料打信任度/排序信号
-- **判（Conflict）**：检测资料冲突（v0.3 已实现）
+| 功能 | 作用 |
+|------|------|
+| **覆盖率门控** | 评估本地检索质量，只在不足时触发外部搜索 |
+| **外部兜底** | 本地知识不够时通过 Grok 搜索补充 |
+| **质量审核** | AI 审核后才入库，防止垃圾知识污染 |
+| **信任评分** | 基于反馈的加权排序 + 时间衰减 |
+| **冲突检测** | 发现来源之间的矛盾 |
+| **新鲜度追踪** | 检测过时知识并触发重新验证 |
 
-## 这个项目要解决什么
+## 和 LangChain / LlamaIndex 有什么区别？
 
-我们希望 Agent 知识库具备：
+它们构建 RAG **管道**——帮你检索和生成。
 
-1. **自生长**（随真实问题逐步扩充）
-2. **可控质量**（不是把所有内容都塞进去）
-3. **可追溯**（有来源、有可信度）
-4. **可用速度**（日常场景可接受）
+Curator 专注于知识**治理**——决定：
+- 现有知识够不够？要不要外搜？
+- 新信息可信度够不够？要不要入库？
+- 来源之间有没有矛盾？
+- 知识有没有过时？
 
-## 当前状态（Pilot）
-
-当前粗版 v0 已实现：
-
-- 路由定范围（含 fallback）
-- OpenViking 本地检索
-- Grok 外部补充搜索
-- AI 审核 + 可选回写入库
-
-近期已实现：
-
-- 基于用户反馈的检索调权（v0.2）
-- 冲突检测流程（v0.3）
-- 衰减/清理与新鲜度重扫工具（v0.4）
+Curator 可以和任何 RAG 框架配合使用。它治理的是知识，不是管道。
 
 ## 快速开始
 
 ```bash
+# 1. 克隆并配置
+git clone https://github.com/ponsde/OpenViking_Curator.git
+cd OpenViking_Curator
 cp .env.example .env
-# 编辑 .env，填入你自己的 endpoint/key
-bash run.sh "grok2api 自动注册常见失败原因"
+# 编辑 .env，填入你自己的 API 端点和密钥
+
+# 2. 安装依赖（Python 3.10+）
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 3. 运行查询
+python3 curator_query.py "OpenViking 是什么？和传统 RAG 有什么区别？"
 ```
 
-## 仓库结构
+### 作为类 MCP 工具集成
 
-- `curator_v0.py`：当前试点脚本
-- `metrics.py`：执行指标采集（jsonl 报告）
-- `feedback_store.py`：反馈存储（up/down/adopt），已接入本地检索调权（v0.2）
-- `memory_capture.py`：案例沉淀（自动生成 case）
-- `schemas/`：case/pattern 模板
-- `.env.example`：环境变量模板（不含密钥）
-- `run.sh`：一键运行（自动处理 venv）
-- `eval_batch.py`：批量评测脚本
-- `maintenance.py`：反馈衰减 + 过期案例检查
-- `freshness_rescan.py`：来源级新鲜度重扫（URL 元数据）
+`curator_query.py` 设计为可编程调用——从你的 Agent/助手调用即可：
 
-## 进阶文档
+```bash
+python3 curator_query.py "你的问题"
+```
 
-- 运行策略（混合模式）详见 [`MIXED_MODE.md`](MIXED_MODE.md)
+**输出（JSON）：**
+```json
+{"routed": false, "reason": "negative_match"}
+```
+→ 不需要知识库，正常处理。
 
-## 迭代路线
+```json
+{"routed": true, "answer": "...", "meta": {"coverage": 0.95, "external_triggered": false}}
+```
+→ 知识库已回答，使用 `answer` 字段。
 
-- **v0.1**：稳定路由、覆盖率判定、外搜回补
-- **v0.2**：反馈驱动的优先级/排序（已加入反馈存储脚手架）
-- **v0.3**：知识冲突检测
-- **v0.4**：记忆自净化与新鲜度重扫
+内置门控自动跳过日常对话、简单指令和跟进问题。
 
-## 说明
+## 架构
 
-本项目仍处于快速迭代阶段。
+```
+查询 → 门控(规则) → 路由(LLM) → 本地检索(OpenViking)
+                                      ↓
+                              覆盖率 + 质量检查
+                                   ↙        ↘
+                           足够?          外部搜索(Grok)
+                             ↓                 ↓
+                           回答           审核 → 入库?
+                                                ↓
+                                              回答
+                                                ↓
+                                           冲突检测
+                                                ↓
+                                           Case 沉淀
+```
+
+## 文件结构
+
+| 文件 | 用途 |
+|------|------|
+| `curator_v0.py` | 核心管道（路由→检索→审核→回答） |
+| `curator_query.py` | 一体化查询入口，内置门控 |
+| `feedback_store.py` | 反馈存储，带文件锁（线程安全） |
+| `metrics.py` | 每次查询的执行指标（JSONL） |
+| `memory_capture.py` | 查询后自动沉淀 Case |
+| `eval_batch.py` | 批量评测 |
+| `freshness_rescan.py` | 来源级新鲜度验证 |
+| `schemas/` | Case 和 Pattern 模板 |
+| `.env.example` | 环境变量模板（无密钥） |
+| `tests/` | 单元测试（`pytest`） |
+
+## 配置
+
+所有配置通过环境变量（见 `.env.example`）：
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `CURATOR_OAI_BASE` | ✅ | OpenAI 兼容 API 地址 |
+| `CURATOR_OAI_KEY` | ✅ | 上述 API 的密钥 |
+| `CURATOR_GROK_BASE` | ✅ | Grok 搜索 API 地址 |
+| `CURATOR_GROK_KEY` | ✅ | Grok API 密钥 |
+| `CURATOR_ROUTER_MODELS` | | 路由模型 fallback 链（逗号分隔） |
+| `CURATOR_ANSWER_MODELS` | | 回答模型 fallback 链 |
+| `CURATOR_JUDGE_MODELS` | | 审核模型 fallback 链 |
+| `OPENVIKING_CONFIG_FILE` | | OpenViking 配置文件路径 |
+
+**无硬编码密钥。** 所有敏感值来自 `.env`（已 git-ignore）。
+
+## 模型降级
+
+路由、审核、回答三个阶段都支持降级链：
+
+```
+模型A → (503/500?) → 模型B → (失败?) → 模型C
+```
+
+通过 `CURATOR_ROUTER_MODELS`、`CURATOR_JUDGE_MODELS`、`CURATOR_ANSWER_MODELS` 配置。
+
+## 测试
+
+```bash
+source .venv/bin/activate
+python -m pytest tests/ -v
+```
+
+## 路线图
+
+见 [ROADMAP.md](ROADMAP.md)。
+
+**已完成：** v0.1–v0.4（路由、反馈、冲突检测、新鲜度、模型降级、单元测试）
+
+**下一步：** 阈值可配置化、存储抽象层、CI/CD、模式合成
+
+## 声明
+
+这是一个积极迭代中的实验性项目。上游依赖 [OpenViking](https://github.com/volcengine/OpenViking) 尚处早期阶段，使用需自行评估风险。

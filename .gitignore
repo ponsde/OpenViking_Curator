@@ -7,3 +7,7 @@ output/
 feedback.json
 .star_state.json
 cases/
+data/
+curated/
+quick_eval.py
+.pytest_cache/
