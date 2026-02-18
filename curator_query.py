@@ -44,14 +44,17 @@ POSITIVE = [
 ]
 
 # 明确不需要的信号词（日常对话/操作指令）
+# STRONG_NEGATIVE: 即使有正向信号也拦截（明确非技术场景）
+STRONG_NEGATIVE = [
+    r"天气|时间|几点|日期",
+    r"提醒我|remind",
+]
 NEGATIVE = [
-    r"^(hi|hello|hey|你好|嗨|早|晚安)",
-    r"^(ok|好的|行|收到|嗯|谢谢|thanks)",
-    r"帮我(跑|执行|运行|commit|push|部署|重启|看看|检查)",
+    r"^(hi|hello|hey|你好|嗨|早|晚安)\s*$",
+    r"^(ok|好的|行|收到|嗯|谢谢|thanks)\s*$",
+    r"帮我(跑|执行|运行|commit|push|重启)",
     r"(?<!\w)(git|cd|ls|cat|rm|mv)\s+",
     r"打开|关闭|启动|停止|重启",
-    r"天气|时间|几点",
-    r"提醒我|remind",
 ]
 
 
@@ -60,13 +63,25 @@ def should_route(query: str) -> tuple[bool, str]:
     if len(q) < 4:
         return False, "too_short"
 
+    # 强负向：即使有正向信号也拦截（明确非技术场景）
+    for p in STRONG_NEGATIVE:
+        if re.search(p, q, re.IGNORECASE):
+            return False, "strong_negative"
+
+    # 正向优先：有明确技术信号就路由
+    has_positive = False
+    for p in POSITIVE:
+        if re.search(p, q, re.IGNORECASE):
+            has_positive = True
+            break
+
+    if has_positive:
+        return True, "positive_match"
+
+    # 没有正向信号时，负向拦截
     for p in NEGATIVE:
         if re.search(p, q, re.IGNORECASE):
             return False, "negative_match"
-
-    for p in POSITIVE:
-        if re.search(p, q, re.IGNORECASE):
-            return True, "positive_match"
 
     # 中长问句（>15字、含问号）倾向路由
     if len(q) > 15 and ('?' in q or '？' in q or '吗' in q or '呢' in q):
