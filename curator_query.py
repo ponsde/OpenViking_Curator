@@ -24,6 +24,10 @@ POSITIVE = [
     r"排查", r"日志", r"故障", r"报错", r"错误", r"怎么看", r"怎么用",
     r"troubleshoot", r"error", r"log", r"debug",
     r"方案", r"选型", r"推荐", r"入门", r"指南",
+    # 开发任务中可能有历史经验的关键词
+    r"写一个.*脚本", r"搭建", r"加固", r"注册", r"自动化",
+    r"pipeline", r"优化", r"迁移", r"接入", r"对接",
+    r"script", r"automat", r"build", r"implement", r"create.*service",
 ]
 
 # 明确不需要的信号词（日常对话/操作指令）
