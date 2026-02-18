@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Source-level freshness rescan (v0.4)
+Source-level freshness rescan (v0.5)
 - scan curated markdown files for source URLs
 - fetch Last-Modified / ETag / status
 - save freshness metadata for ranking/inspection
+- NEW: scan TTL metadata (curator_meta comments) and flag expired docs
 """
 
 import re
 import json
 import time
 import argparse
+import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
 
 URL_RE = re.compile(r"https?://[^\s)\]>]+")
+META_RE = re.compile(r"<!--\s*curator_meta:\s*(.+?)\s*-->")
+REVIEW_RE = re.compile(r"<!--\s*review_after:\s*(\d{4}-\d{2}-\d{2})\s*-->")
 
 
 def extract_urls(text: str):
@@ -61,6 +65,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--curated-dir", default="cases")
     ap.add_argument("--output", default="output/freshness.json")
+    ap.add_argument("--ttl-scan", action="store_true", help="扫描 TTL metadata，报告过期文档")
     args = ap.parse_args()
 
     cdir = Path(args.curated_dir)
@@ -68,6 +73,54 @@ def main():
     outp.parent.mkdir(parents=True, exist_ok=True)
 
     files = list(cdir.glob("*.md")) if cdir.exists() else []
+
+    # TTL 扫描模式
+    if args.ttl_scan:
+        today = datetime.date.today()
+        expired = []
+        soon = []  # 7天内过期
+        ok = []
+        no_meta = []
+
+        for f in files:
+            txt = f.read_text(encoding="utf-8", errors="ignore")[:500]
+            review_m = REVIEW_RE.search(txt)
+            meta_m = META_RE.search(txt)
+
+            if not review_m:
+                no_meta.append(str(f))
+                continue
+
+            review_date = datetime.date.fromisoformat(review_m.group(1))
+            meta_info = meta_m.group(1) if meta_m else ""
+
+            entry = {
+                "file": str(f),
+                "review_after": review_m.group(1),
+                "meta": meta_info,
+            }
+
+            if review_date <= today:
+                expired.append(entry)
+            elif (review_date - today).days <= 7:
+                soon.append(entry)
+            else:
+                ok.append(entry)
+
+        ttl_result = {
+            "scan_date": today.isoformat(),
+            "total_files": len(files),
+            "expired": len(expired),
+            "expiring_soon": len(soon),
+            "ok": len(ok),
+            "no_metadata": len(no_meta),
+            "expired_files": expired,
+            "expiring_soon_files": soon,
+        }
+        print(json.dumps(ttl_result, ensure_ascii=False, indent=2))
+        return
+
+    # 原有 URL 扫描模式
     source_map = {}
 
     for f in files:

@@ -571,7 +571,7 @@ def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
     if coverage < low_cov_threshold:
         return True, "low_coverage"
     # 核心词覆盖低 = 知识库对这个话题实际没覆盖，即使通用词拉高了 coverage
-    if core_cov < 0.4:
+    if core_cov <= 0.4:
         return True, "low_core_coverage"
     if need_fresh and (low_fresh or low_quality):
         return True, "freshness_or_quality_boost"
@@ -634,10 +634,22 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
     )
 
     try:
-        out = chat(OAI_BASE, OAI_KEY, JUDGE_MODELS[0] if JUDGE_MODELS else "gemini-3-flash-preview", [
-            {"role": "system", "content": "你是信息验证器。识别需要交叉验证的易变技术声明。只输出JSON。"},
-            {"role": "user", "content": extract_prompt},
-        ], timeout=45)
+        # 尝试多个模型，防止单点 503
+        cv_models = (JUDGE_MODELS if JUDGE_MODELS else []) + ["gemini-3-flash-preview"]
+        out = None
+        for cv_model in cv_models:
+            try:
+                out = chat(OAI_BASE, OAI_KEY, cv_model, [
+                    {"role": "system", "content": "你是信息验证器。识别需要交叉验证的易变技术声明。只输出JSON。"},
+                    {"role": "user", "content": extract_prompt},
+                ], timeout=45)
+                break
+            except Exception as e:
+                print(f"  ⚠️ cross_validate model {cv_model} failed: {e}")
+                continue
+
+        if not out:
+            return {"validated": external_text, "warnings": [], "followup_done": False}
 
         match = re.search(r"\{[\s\S]*\}", out)
         if not match:
@@ -842,6 +854,41 @@ def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = ""
     raise RuntimeError(f"all answer models failed: {last_err}")
 
 
+def _build_source_footer(meta: dict, coverage: float, external_used: bool,
+                         warnings: list = None) -> str:
+    """生成回答底部的来源透明度信息"""
+    lines = ["---", "📊 **回答质量信息**"]
+
+    # 覆盖率
+    cov_pct = int(coverage * 100)
+    if cov_pct >= 80:
+        cov_label = "✅ 高"
+    elif cov_pct >= 50:
+        cov_label = "⚠️ 中等"
+    else:
+        cov_label = "❌ 低"
+    lines.append(f"- 知识库覆盖率: {cov_pct}% ({cov_label})")
+    lines.append(f"- 核心词覆盖: {meta.get('core_cov', '?')}")
+
+    # 来源
+    if external_used:
+        lines.append("- 来源: 本地知识库 + 外部搜索（已交叉验证）")
+    else:
+        lines.append("- 来源: 本地知识库")
+
+    # 使用的资源
+    uris = meta.get('priority_uris', [])
+    if uris:
+        short_uris = [u.split('/')[-1].replace('.md', '') for u in uris[:3]]
+        lines.append(f"- 主要参考: {', '.join(short_uris)}")
+
+    # 警告
+    if warnings:
+        lines.append(f"- ⚠️ 有 {len(warnings)} 条待验证信息")
+
+    return "\n".join(lines)
+
+
 def run(query: str):
     m = Metrics()
     validate_config()
@@ -935,6 +982,10 @@ def run(query: str):
         priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
         ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx,
                      conflict_card=conflict_card, warnings=cv_warnings)
+
+        # 回答透明度：附加来源和置信度信息
+        source_info = _build_source_footer(meta, coverage, boost_needed, cv_warnings)
+        ans = ans.rstrip() + "\n\n" + source_info
         m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
         m.score('priority_uris_count', len(meta.get('priority_uris', [])))
         m.flag('ingested', ingested)

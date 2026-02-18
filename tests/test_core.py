@@ -19,6 +19,7 @@ from curator_v0 import (
     uri_feedback_score,
     build_feedback_priority_uris,
     external_boost_needed,
+    _build_source_footer,
 )
 
 
@@ -178,6 +179,42 @@ class TestExternalBoostNeeded(unittest.TestCase):
             meta={'avg_top_trust': 0.8, 'fresh_ratio': 0.8},
         )
         self.assertFalse(triggered)
+
+    def test_low_core_coverage_triggers(self):
+        """Core keyword miss should trigger external even if coverage is OK."""
+        triggered, reason = external_boost_needed(
+            query="Deno 2.0 和 Bun 性能对比",
+            scope={'domain': 'general', 'keywords': ['Deno', 'Bun']},
+            coverage=0.8,
+            meta={'avg_top_trust': 5.5, 'fresh_ratio': 1.0, 'core_cov': 0.0},
+        )
+        self.assertTrue(triggered)
+        self.assertEqual(reason, 'low_core_coverage')
+
+
+# ─── _build_source_footer ────────────────────────────────────
+
+class TestSourceFooter(unittest.TestCase):
+
+    def test_high_coverage_footer(self):
+        footer = _build_source_footer(
+            meta={'core_cov': 0.8, 'priority_uris': ['viking://resources/a/a.md']},
+            coverage=0.9, external_used=False,
+        )
+        self.assertIn('90%', footer)
+        self.assertIn('✅ 高', footer)
+        self.assertIn('本地知识库', footer)
+        self.assertNotIn('外部搜索', footer)
+
+    def test_low_coverage_with_external(self):
+        footer = _build_source_footer(
+            meta={'core_cov': 0.2, 'priority_uris': []},
+            coverage=0.3, external_used=True, warnings=['某API可能过时'],
+        )
+        self.assertIn('30%', footer)
+        self.assertIn('❌ 低', footer)
+        self.assertIn('外部搜索', footer)
+        self.assertIn('1 条待验证', footer)
 
 
 # ─── feedback_store (with file lock) ─────────────────────────
