@@ -50,6 +50,15 @@ GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
 GROK_KEY = env("CURATOR_GROK_KEY")
 GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
 
+# ---- Tunable thresholds (env overridable) ----
+THRESHOLD_LOW_COV = float(env("CURATOR_THRESHOLD_LOW_COV", "0.45"))
+THRESHOLD_LOW_COV_INTERNAL = float(env("CURATOR_THRESHOLD_LOW_COV_INTERNAL", "0.35"))
+THRESHOLD_CORE_COV = float(env("CURATOR_THRESHOLD_CORE_COV", "0.4"))
+THRESHOLD_LOW_TRUST = float(env("CURATOR_THRESHOLD_LOW_TRUST", "5.4"))
+THRESHOLD_LOW_FRESH = float(env("CURATOR_THRESHOLD_LOW_FRESH", "0.25"))
+THRESHOLD_CURATED_OVERLAP = float(env("CURATOR_THRESHOLD_CURATED_OVERLAP", "0.25"))
+THRESHOLD_CURATED_MIN_HITS = int(env("CURATOR_THRESHOLD_CURATED_MIN_HITS", "3"))
+
 
 def validate_config() -> None:
     missing = []
@@ -312,6 +321,16 @@ def _local_index_search(query: str, kw_list: list, topn: int = 5) -> list:
     return scored[:topn]
 
 
+# ── 模块级常量：通用词（不作为相关性证据） ──
+_GENERIC_TERMS = {
+    "2.0", "3.0", "1.0", "0.1", "2025", "2026", "2024", "最新", "latest",
+    "对比", "比较", "区别", "最佳", "实践", "方案", "选型", "推荐",
+    "怎么", "如何", "什么", "为什么", "哪些", "入门", "指南",
+    "compare", "best", "practice", "guide", "tutorial", "how",
+    "vs", "versus", "performance", "benchmark",
+}
+
+
 def local_search(client, query: str, scope: dict):
     # 缩写展开：短缩写在语义检索中容易被淹没，展开全称提升召回
     _ABBR_MAP = {
@@ -396,14 +415,6 @@ def local_search(client, query: str, scope: dict):
     ql = query.lower()
 
     # ── 核心词 vs 通用词区分 ──
-    # 通用词：出现在大量不同主题文档中，不能作为相关性证据
-    _GENERIC_TERMS = {
-        "2.0", "3.0", "1.0", "0.1", "2025", "2026", "2024", "最新", "latest",
-        "对比", "比较", "区别", "最佳", "实践", "方案", "选型", "推荐",
-        "怎么", "如何", "什么", "为什么", "哪些", "入门", "指南",
-        "compare", "best", "practice", "guide", "tutorial", "how",
-        "vs", "versus", "performance", "benchmark",
-    }
     core_kw = [k for k in kw if k.lower() not in _GENERIC_TERMS and len(k) >= 2]
     generic_kw = [k for k in kw if k.lower() in _GENERIC_TERMS]
 
@@ -506,7 +517,7 @@ def local_search(client, query: str, scope: dict):
         preview_text = " ".join(previews).lower()
         content_overlap = sum(1 for t in query_terms if t and t.lower() in preview_text)
         overlap_ratio = content_overlap / max(1, len(query_terms))
-        if overlap_ratio >= 0.25 or content_overlap >= 3:
+        if overlap_ratio >= THRESHOLD_CURATED_OVERLAP or content_overlap >= THRESHOLD_CURATED_MIN_HITS:
             curated_bonus = 0.10 * min(len(curated_uris), 3)
             coverage = max(coverage, 0.40) + curated_bonus
             coverage = min(1.0, coverage)
@@ -558,20 +569,20 @@ def local_search(client, query: str, scope: dict):
 def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
     q = (query or "").lower()
     need_fresh = bool(scope.get("need_fresh", False)) or any(k in q for k in ["最新", "更新", "release", "changelog", "2026", "2025"])
-    low_quality = meta.get("avg_top_trust", 0) < 5.4
-    low_fresh = meta.get("fresh_ratio", 0) < 0.25
+    low_quality = meta.get("avg_top_trust", 0) < THRESHOLD_LOW_TRUST
+    low_fresh = meta.get("fresh_ratio", 0) < THRESHOLD_LOW_FRESH
     weak_feedback = meta.get("max_feedback_score", 0) <= 0
     core_cov = meta.get("core_cov", 1.0)
 
     # 覆盖率阈值（已知内部域名可更宽松，减少重复外搜）
-    low_cov_threshold = 0.45
+    low_cov_threshold = THRESHOLD_LOW_COV
     if any(k in q for k in ["newapi", "openviking", "grok2api", "mcp"]):
-        low_cov_threshold = 0.35
+        low_cov_threshold = THRESHOLD_LOW_COV_INTERNAL
 
     if coverage < low_cov_threshold:
         return True, "low_coverage"
     # 核心词覆盖低 = 知识库对这个话题实际没覆盖，即使通用词拉高了 coverage
-    if core_cov <= 0.4:
+    if core_cov <= THRESHOLD_CORE_COV:
         return True, "low_core_coverage"
     if need_fresh and (low_fresh or low_quality):
         return True, "freshness_or_quality_boost"
@@ -777,12 +788,29 @@ def ingest_markdown(client, title: str, markdown: str, freshness: str = "unknown
     return ing
 
 
-def build_priority_context(client, uris):
+def build_priority_context(client, uris, query: str = ""):
+    """读取优先资源内容。如果提供 query，用核心词验证相关性，过滤不相关文档。"""
     blocks = []
-    for u in uris[:2]:
+    # 核心词验证：如果提供了 query，只保留内容中包含核心词的文档
+    if query:
+        q_core = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower())) - _GENERIC_TERMS
+        q_cn = set(re.findall(r"[\u4e00-\u9fff]{2,4}", query))
+        check_terms = q_core | q_cn
+    else:
+        check_terms = set()
+
+    for u in uris[:4]:  # 多看几个，过滤后可能不够
         try:
-            c = client.read(u)
-            blocks.append(f"[PRIORITY_SOURCE] {u}\n{str(c)[:1200]}")
+            c = str(client.read(u))[:1500]
+            # 语义过滤：核心词至少命中1个才算相关
+            if check_terms:
+                c_lower = c.lower()
+                hits = sum(1 for t in check_terms if t.lower() in c_lower)
+                if hits == 0:
+                    continue
+            blocks.append(f"[PRIORITY_SOURCE] {u}\n{c[:1200]}")
+            if len(blocks) >= 2:
+                break
         except Exception:
             continue
     return "\n\n".join(blocks)
@@ -886,6 +914,10 @@ def _build_source_footer(meta: dict, coverage: float, external_used: bool,
     if warnings:
         lines.append(f"- ⚠️ 有 {len(warnings)} 条待验证信息")
 
+    # 反馈入口
+    lines.append("")
+    lines.append("💬 对这个回答满意吗？反馈帮助改善未来回答质量。")
+
     return "\n".join(lines)
 
 
@@ -979,7 +1011,7 @@ def run(query: str):
         print(f"✅ STEP 7 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
 
         print("STEP 8/8 生成回答...")
-        priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
+        priority_ctx = build_priority_context(client, meta.get('priority_uris', []), query=query)
         ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx,
                      conflict_card=conflict_card, warnings=cv_warnings)
 
