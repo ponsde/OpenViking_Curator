@@ -11,3 +11,5 @@ data/
 curated/
 quick_eval.py
 .pytest_cache/
+.failed_topics.json
+.curated_index.json
