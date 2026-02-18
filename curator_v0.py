@@ -545,24 +545,50 @@ def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
 
 
 def external_search(query: str, scope: dict):
+    import datetime
+    today = datetime.date.today().isoformat()
     prompt = (
         f"问题: {query}\n"
         f"关键词: {scope.get('keywords', [])}\n"
         f"排除: {scope.get('exclude', [])}\n"
         f"偏好来源: {scope.get('source_pref', [])}\n"
-        "请搜索并返回5条高质量来源，格式：标题+URL+关键点。"
+        f"当前日期: {today}\n\n"
+        "要求:\n"
+        "1. 返回5条高质量来源，格式：标题+URL+发布/更新日期+关键点\n"
+        "2. 优先最近6个月内的信息，标注每条来源的日期\n"
+        "3. 如果引用的项目/文档超过1年未更新，明确标注[可能过时]\n"
+        "4. 涉及API、注册流程、认证方式等易变内容时，必须确认当前是否仍然有效\n"
+        "5. 不要把旧版本的技术要求当成当前事实（如已取消的验证步骤）"
     )
     return chat(GROK_BASE, GROK_KEY, GROK_MODEL, [
-        {"role": "system", "content": "你是实时搜索助手，重视可验证来源。"},
+        {"role": "system", "content": (
+            "你是实时搜索助手。重视可验证来源和信息时效性。"
+            f"当前日期: {today}。"
+            "对于技术类问题，优先引用官方文档和近期更新。"
+            "如果搜到的信息可能已过时（如超过1年的项目、已变更的API流程），"
+            "必须明确标注并提示用户验证。"
+        )},
         {"role": "user", "content": prompt},
     ], timeout=90)
 
 
 def judge_and_pack(query: str, external_text: str):
+    import datetime
+    today = datetime.date.today().isoformat()
     sys = (
-        "你是资料审核器。判断外部搜索结果是否值得入库。"
-        "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), summary(string), markdown(string)。"
-        "markdown要求包含来源URL。只输出JSON。"
+        "你是资料审核器。判断外部搜索结果是否值得入库。\n"
+        f"当前日期: {today}\n\n"
+        "审核维度:\n"
+        "1. 内容准确性 — 信息是否正确、是否有来源支撑\n"
+        "2. 时效性 — 信息是否仍然有效？API流程/注册方式/技术要求等易变内容尤其注意\n"
+        "   - 超过1年未更新的项目信息：trust降低，标注[可能过时]\n"
+        "   - 引用已取消/变更的功能当作当前事实：pass=false\n"
+        "   - 将旧版本要求（如已取消的手机验证）当成现行要求：pass=false\n"
+        "3. 入库价值 — 是否值得长期保存，还是只是临时参考\n\n"
+        "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), "
+        "freshness(string: current/recent/outdated/unknown), "
+        "summary(string), markdown(string)。\n"
+        "markdown要求包含来源URL和信息日期。只输出JSON。"
     )
 
     last_err = None
@@ -707,12 +733,18 @@ def run(query: str):
             print("STEP 5/6 审核并尝试入库...")
             j = judge_and_pack(query, external_txt)
             m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
-            print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags"]}, ensure_ascii=False))
+            print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags", "freshness"]}, ensure_ascii=False))
             if j.get("pass") and j.get("markdown"):
-                ing = ingest_markdown(client, "curated", j["markdown"])
-                ingested = True
-                m.step('ingest', True, {'uri': ing.get('root_uri', '')})
-                print("✅ 已入库:", ing.get("root_uri", ""))
+                # 时效性拦截：outdated 的信息不入库
+                freshness = j.get("freshness", "unknown")
+                if freshness == "outdated":
+                    m.step('ingest', False, {'reason': 'outdated_info'})
+                    print("⚠️ 未入库: 信息已过时 (freshness=outdated)")
+                else:
+                    ing = ingest_markdown(client, "curated", j["markdown"])
+                    ingested = True
+                    m.step('ingest', True, {'uri': ing.get('root_uri', '')})
+                    print("✅ 已入库:", ing.get("root_uri", ""))
             else:
                 m.step('ingest', False)
                 print("⚠️ 未入库")
