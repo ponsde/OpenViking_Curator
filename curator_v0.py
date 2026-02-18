@@ -558,7 +558,9 @@ def external_search(query: str, scope: dict):
         "2. 优先最近6个月内的信息，标注每条来源的日期\n"
         "3. 如果引用的项目/文档超过1年未更新，明确标注[可能过时]\n"
         "4. 涉及API、注册流程、认证方式等易变内容时，必须确认当前是否仍然有效\n"
-        "5. 不要把旧版本的技术要求当成当前事实（如已取消的验证步骤）"
+        "5. 不要把旧版本的技术要求当成当前事实（如已取消的验证步骤）\n"
+        "6. GitHub项目必须标注：最后commit日期、star数、是否archived\n"
+        "7. 区分[可直接使用]和[仅供参考]——维护中且有文档的才算可用"
     )
     return chat(GROK_BASE, GROK_KEY, GROK_MODEL, [
         {"role": "system", "content": (
@@ -567,9 +569,89 @@ def external_search(query: str, scope: dict):
             "对于技术类问题，优先引用官方文档和近期更新。"
             "如果搜到的信息可能已过时（如超过1年的项目、已变更的API流程），"
             "必须明确标注并提示用户验证。"
+            "对于GitHub项目，务必区分：项目存在 ≠ 项目能用。"
         )},
         {"role": "user", "content": prompt},
     ], timeout=90)
+
+
+def cross_validate(query: str, external_text: str, scope: dict) -> dict:
+    """P0: 交叉验证 + 链式搜索
+    检测外搜结果中的易变声明，自动追问验证。
+    返回: {"validated": str, "warnings": list, "followup_done": bool}
+    """
+    import datetime
+    today = datetime.date.today().isoformat()
+
+    # 第一步：用 LLM 识别外搜结果中需要验证的声明
+    extract_prompt = (
+        f"当前日期: {today}\n\n"
+        f"以下是关于「{query}」的外部搜索结果:\n{external_text[:3000]}\n\n"
+        "请识别其中的「易变声明」——即可能已经过时或需要验证的技术事实。\n"
+        "重点关注:\n"
+        "- API端点、注册/认证流程、验证要求（这些经常变）\n"
+        "- 来自超过6个月前的项目的技术声明\n"
+        "- 多个来源之间互相矛盾的说法\n"
+        "- 把某个项目的特定实现当成通用事实的情况\n\n"
+        "输出严格JSON: {\"claims\": [{\"claim\": \"...\", \"source_date\": \"...\", \"risk\": \"high/medium/low\"}], "
+        "\"needs_followup\": bool, \"followup_query\": \"如果needs_followup=true，给出验证搜索词\"}"
+    )
+
+    try:
+        out = chat(OAI_BASE, OAI_KEY, JUDGE_MODELS[0] if JUDGE_MODELS else "gemini-3-flash-preview", [
+            {"role": "system", "content": "你是信息验证器。识别需要交叉验证的易变技术声明。只输出JSON。"},
+            {"role": "user", "content": extract_prompt},
+        ], timeout=45)
+
+        m = re.search(r"\{[\s\S]*\}", out)
+        if not m:
+            return {"validated": external_text, "warnings": [], "followup_done": False}
+
+        result = json.loads(m.group(0))
+        claims = result.get("claims", [])
+        high_risk = [c for c in claims if c.get("risk") == "high"]
+        warnings = [c.get("claim", "") for c in high_risk]
+
+        # 第二步：如果有高风险声明且建议追问，做链式搜索
+        followup_text = ""
+        if result.get("needs_followup") and result.get("followup_query") and high_risk:
+            print(f"  🔄 交叉验证: 追问 → {result['followup_query']}")
+            try:
+                followup_text = chat(GROK_BASE, GROK_KEY, GROK_MODEL, [
+                    {"role": "system", "content": (
+                        f"你是实时搜索助手。当前日期: {today}。"
+                        "请搜索最新官方信息来验证以下声明是否仍然成立。"
+                        "优先引用官方文档、Help Center、Release Notes。"
+                    )},
+                    {"role": "user", "content": (
+                        f"需要验证的声明:\n" +
+                        "\n".join([f"- {c.get('claim','')}" for c in high_risk]) +
+                        f"\n\n验证搜索: {result['followup_query']}"
+                    )},
+                ], timeout=60)
+                print(f"  ✅ 追问完成: {len(followup_text)} chars")
+            except Exception as e:
+                print(f"  ⚠️ 追问失败: {e}")
+
+        # 合并结果
+        validated = external_text
+        if followup_text:
+            validated = (
+                external_text +
+                "\n\n--- 交叉验证补充 ---\n" +
+                followup_text
+            )
+
+        return {
+            "validated": validated,
+            "warnings": warnings,
+            "followup_done": bool(followup_text),
+            "high_risk_count": len(high_risk),
+        }
+
+    except Exception as e:
+        print(f"  ⚠️ 交叉验证异常: {e}")
+        return {"validated": external_text, "warnings": [], "followup_done": False}
 
 
 def judge_and_pack(query: str, external_text: str):
@@ -617,11 +699,23 @@ def judge_and_pack(query: str, external_text: str):
         return {"pass": False, "reason": "json_parse_fail", "tags": [], "trust": 0, "summary": "", "markdown": ""}
 
 
-def ingest_markdown(client, title: str, markdown: str):
+def ingest_markdown(client, title: str, markdown: str, freshness: str = "unknown"):
+    import datetime
     p = Path(CURATED_DIR)
     p.mkdir(parents=True, exist_ok=True)
+
+    # P2: 入库时写入 metadata（日期 + 时效标签）
+    today = datetime.date.today().isoformat()
+    ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
+    ttl_days = ttl_map.get(freshness, 60)
+
+    header = (
+        f"<!-- curator_meta: ingested={today} freshness={freshness} ttl_days={ttl_days} -->\n"
+        f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n\n"
+    )
+
     fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
-    fn.write_text(markdown, encoding="utf-8")
+    fn.write_text(header + markdown, encoding="utf-8")
     ing = client.add_resource(path=str(fn))
 
     # 关键修复：入库后等待语义索引完成，否则下一次检索拿不到新文档
@@ -671,9 +765,32 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         return {"has_conflict": False, "summary": "", "points": []}
 
 
-def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = "", conflict_card: str = ""):
-    sys = "你是技术助手。基于给定上下文回答，最后给来源列表。若存在冲突卡片，先展示冲突再给建议。"
-    user = f"问题:\n{query}\n\n冲突卡片:\n{conflict_card}\n\n优先来源上下文:\n{priority_ctx[:2500]}\n\n本地上下文:\n{local_ctx[:5000]}\n\n外部补充:\n{external_ctx[:3000]}"
+def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = "",
+           conflict_card: str = "", warnings: list = None):
+    import datetime
+    today = datetime.date.today().isoformat()
+    warning_block = ""
+    if warnings:
+        warning_block = "\n⚠️ 以下信息需谨慎对待（可能过时或未经验证）:\n" + "\n".join([f"- {w}" for w in warnings[:5]])
+
+    sys = (
+        f"你是技术助手。当前日期: {today}。基于给定上下文回答。\n"
+        "规则:\n"
+        "1. 最后给来源列表，标注每个来源的日期\n"
+        "2. 若存在冲突卡片，先展示冲突再给建议\n"
+        "3. 对于不确定的信息，明确标注「⚠️ 待验证」\n"
+        "4. 引用超过1年的资料时，提醒可能过时\n"
+        "5. 区分「经过验证的事实」和「来自第三方项目的实现细节」\n"
+        "6. 如果有警告信息，在回答开头提示用户注意"
+    )
+    user = (
+        f"问题:\n{query}\n\n"
+        f"{warning_block}\n\n"
+        f"冲突卡片:\n{conflict_card}\n\n"
+        f"优先来源上下文:\n{priority_ctx[:2500]}\n\n"
+        f"本地上下文:\n{local_ctx[:5000]}\n\n"
+        f"外部补充:\n{external_ctx[:3000]}"
+    )
 
     last_err = None
     for m in ANSWER_MODELS:
@@ -730,7 +847,21 @@ def run(query: str):
             m.step('external_search', True, {'len': len(external_txt), 'reason': boost_reason})
             print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
 
-            print("STEP 5/6 审核并尝试入库...")
+            print("STEP 4.5 交叉验证...")
+            cv = cross_validate(query, external_txt, scope)
+            external_txt = cv.get("validated", external_txt)
+            cv_warnings = cv.get("warnings", [])
+            m.step('cross_validate', True, {
+                'followup_done': cv.get('followup_done', False),
+                'high_risk_count': cv.get('high_risk_count', 0),
+                'warnings': cv_warnings[:3],
+            })
+            if cv_warnings:
+                print(f"  ⚠️ 交叉验证警告: {cv_warnings}")
+            else:
+                print("  ✅ 无高风险声明")
+
+            print("STEP 5/7 审核并尝试入库...")
             j = judge_and_pack(query, external_txt)
             m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
             print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags", "freshness"]}, ensure_ascii=False))
@@ -741,7 +872,7 @@ def run(query: str):
                     m.step('ingest', False, {'reason': 'outdated_info'})
                     print("⚠️ 未入库: 信息已过时 (freshness=outdated)")
                 else:
-                    ing = ingest_markdown(client, "curated", j["markdown"])
+                    ing = ingest_markdown(client, "curated", j["markdown"], freshness=freshness)
                     ingested = True
                     m.step('ingest', True, {'uri': ing.get('root_uri', '')})
                     print("✅ 已入库:", ing.get("root_uri", ""))
@@ -751,9 +882,10 @@ def run(query: str):
         else:
             m.flag('external_triggered', False)
             m.flag('external_reason', boost_reason)
+            cv_warnings = []
             print("STEP 4/6 跳过外部搜索（本地覆盖与质量足够）")
 
-        print("STEP 6/7 冲突检测...")
+        print("STEP 6/8 冲突检测...")
         conflict = detect_conflict(query, local_txt, external_txt)
         conflict_card = ""
         if conflict.get('has_conflict'):
@@ -763,9 +895,10 @@ def run(query: str):
         m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
         print(f"✅ STEP 6 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
 
-        print("STEP 7/7 生成回答...")
+        print("STEP 8/8 生成回答...")
         priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
-        ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx, conflict_card=conflict_card)
+        ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx,
+                     conflict_card=conflict_card, warnings=cv_warnings)
         m.step('answer', True, {'answer_len': len(ans), 'priority_uris': meta.get('priority_uris', [])})
         m.score('priority_uris_count', len(meta.get('priority_uris', [])))
         m.flag('ingested', ingested)
