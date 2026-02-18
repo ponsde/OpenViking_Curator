@@ -164,51 +164,27 @@ def run_status() -> dict:
 
 
 def run_curator(query: str) -> dict:
-    """调用 curator_v0.run() 并捕获结果。"""
+    """调用 curator.run() 获取结构化结果。"""
     load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
-    # 重定向 stdout 捕获 print 输出
-    import io
-    from contextlib import redirect_stdout
-
-    buf = io.StringIO()
     try:
-        from curator_v0 import run
-        with redirect_stdout(buf):
-            run(query)
+        from curator import run
+        result = run(query)
     except Exception as e:
-        return {"routed": True, "error": str(e), "steps": buf.getvalue()}
-
-    output = buf.getvalue()
-
-    # 提取 FINAL ANSWER 和 EVAL METRICS
-    answer = ""
-    metrics = {}
-    if "===== FINAL ANSWER =====" in output:
-        parts = output.split("===== FINAL ANSWER =====")
-        tail = parts[1] if len(parts) > 1 else ""
-        if "===== EVAL METRICS =====" in tail:
-            answer_part, metrics_part = tail.split("===== EVAL METRICS =====", 1)
-            answer = answer_part.strip()
-            try:
-                metrics = json.loads(metrics_part.strip())
-            except json.JSONDecodeError:
-                pass
-        else:
-            answer = tail.strip()
+        return {"routed": True, "error": str(e)}
 
     return {
         "routed": True,
-        "answer": answer,
+        "answer": result.get("answer", ""),
         "meta": {
-            "duration": metrics.get("duration_sec"),
-            "external_triggered": metrics.get("flags", {}).get("external_triggered"),
-            "external_reason": metrics.get("flags", {}).get("external_reason"),
-            "has_conflict": metrics.get("flags", {}).get("has_conflict"),
-            "ingested": metrics.get("flags", {}).get("ingested"),
-            "coverage": metrics.get("scores", {}).get("coverage_before_external"),
-            "case_path": metrics.get("case_path"),
+            "duration": result.get("metrics", {}).get("duration_sec"),
+            "external_triggered": result.get("meta", {}).get("external_triggered"),
+            "external_reason": result.get("meta", {}).get("external_reason"),
+            "has_conflict": result.get("meta", {}).get("has_conflict"),
+            "ingested": result.get("meta", {}).get("ingested"),
+            "coverage": result.get("meta", {}).get("coverage"),
+            "case_path": result.get("case_path"),
         },
     }
 

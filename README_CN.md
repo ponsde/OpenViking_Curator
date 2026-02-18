@@ -114,7 +114,7 @@ PROVIDERS["bing"] = bing_search
 ## 项目结构
 
 ```
-curator_v0.py          # 核心 8 步管线
+curator.py          # 核心 8 步管线
 curator_query.py       # CLI 入口（--help, --status, 查询）
 search_providers.py    # 可插拔搜索后端
 mcp_server.py          # MCP 服务器（stdio JSON-RPC，3 个工具）

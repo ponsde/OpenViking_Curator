@@ -29,7 +29,7 @@ if os.path.exists('.env'):
 rows=[]
 for q in QUESTIONS:
     t=time.time()
-    p=subprocess.run([sys.executable,'curator_v0.py',q],capture_output=True,text=True,timeout=600, env=os.environ.copy())
+    p=subprocess.run([sys.executable,'curator.py',q],capture_output=True,text=True,timeout=600, env=os.environ.copy())
     out=(p.stdout or '') + (p.stderr or '')
     rows.append({
       'q': q,

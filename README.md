@@ -134,7 +134,7 @@ All coverage/quality thresholds are configurable via env:
 ## Repo Structure
 
 ```
-curator_v0.py          # Core 8-step pipeline
+curator.py          # Core 8-step pipeline
 curator_query.py       # CLI entry (--help, --status, query)
 search_providers.py    # Pluggable search backends
 mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)

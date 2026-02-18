@@ -49,7 +49,7 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
 
 
 def _chat(base, key, model, messages, timeout=90):
-    """OAI chat call. Uses requests (same as curator_v0) for consistency."""
+    """OAI chat call. Uses requests (same as curator) for consistency."""
     import requests
     r = requests.post(
         f"{base}/chat/completions",

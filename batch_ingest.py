@@ -23,7 +23,7 @@ if env_file.exists():
             if v:
                 os.environ[k] = v
 
-from curator_v0 import (
+from curator import (
     validate_config, chat, route_scope, local_search,
     external_boost_needed, external_search, judge_and_pack,
     ingest_markdown, build_priority_context, detect_conflict,

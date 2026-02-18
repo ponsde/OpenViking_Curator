@@ -13,7 +13,7 @@ os.environ.setdefault('OAI_KEY', 'test-key')
 os.environ.setdefault('GROK_SEARCH_URL', 'http://localhost:8788')
 
 import feedback_store
-from curator_v0 import (
+from curator import (
     route_scope,
     deterministic_relevance,
     uri_feedback_score,

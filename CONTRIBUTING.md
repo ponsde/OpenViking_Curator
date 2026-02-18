@@ -24,7 +24,7 @@ python -m pytest tests/ -v
 ## Project Structure
 
 ```
-curator_v0.py          # Core pipeline (8-step: route → search → judge → answer)
+curator.py          # Core pipeline (8-step: route → search → judge → answer)
 curator_query.py       # CLI entry point with routing gate
 search_providers.py    # Pluggable external search backends
 mcp_server.py          # MCP server (stdio JSON-RPC)
