@@ -90,9 +90,8 @@ def should_route(query: str) -> tuple[bool, str]:
     return False, "no_signal"
 
 
-def run_curator(query: str) -> dict:
-    """调用 curator_v0.run() 并捕获结果。"""
-    # 确保环境变量从 .env 加载
+def load_env():
+    """Load .env file into os.environ."""
     env_file = Path(__file__).parent / '.env'
     if env_file.exists():
         for line in env_file.read_text().splitlines():
@@ -101,6 +100,72 @@ def run_curator(query: str) -> dict:
                 k, v = line.split('=', 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
+
+def run_status() -> dict:
+    """Quick health check: config, OpenViking connection, knowledge base stats."""
+    load_env()
+    sys.path.insert(0, str(Path(__file__).parent))
+
+    result = {"config": {}, "openviking": {}, "search_provider": {}}
+
+    # Config check
+    for key in ["CURATOR_OAI_BASE", "CURATOR_OAI_KEY", "CURATOR_GROK_KEY"]:
+        val = os.getenv(key, "")
+        result["config"][key] = "✅ set" if val else "❌ missing"
+
+    result["config"]["CURATOR_SEARCH_PROVIDER"] = os.getenv("CURATOR_SEARCH_PROVIDER", "grok (default)")
+
+    # OpenViking check
+    try:
+        import openviking as ov
+        config_file = os.getenv("OPENVIKING_CONFIG_FILE", "")
+        client = ov.SyncOpenViking(path=os.getenv("CURATOR_DATA_PATH", "./data"))
+        client.initialize()
+        resources = client.ls("viking://resources")
+        result["openviking"] = {
+            "status": "✅ connected",
+            "config": config_file or "(default)",
+            "resources": len(resources) if resources else 0,
+        }
+        client.close()
+    except Exception as e:
+        result["openviking"] = {"status": f"❌ {e}"}
+
+    # Local index check
+    idx_file = Path(__file__).parent / ".curated_index.json"
+    if idx_file.exists():
+        try:
+            idx = json.loads(idx_file.read_text())
+            result["local_index"] = {"documents": len(idx)}
+        except Exception:
+            result["local_index"] = {"status": "⚠️ corrupt"}
+    else:
+        result["local_index"] = {"status": "not found (run a query to generate)"}
+
+    # Feedback check
+    fb_file = Path(os.getenv("CURATOR_FEEDBACK_FILE", "./feedback.json"))
+    if fb_file.exists():
+        try:
+            fb = json.loads(fb_file.read_text())
+            result["feedback"] = {"entries": len(fb)}
+        except Exception:
+            result["feedback"] = {"entries": 0}
+    else:
+        result["feedback"] = {"entries": 0}
+
+    # Cases count
+    case_dir = Path(os.getenv("CURATOR_CASE_DIR", "./cases"))
+    if case_dir.exists():
+        result["cases"] = len(list(case_dir.glob("*.md")))
+    else:
+        result["cases"] = 0
+
+    return result
+
+
+def run_curator(query: str) -> dict:
+    """调用 curator_v0.run() 并捕获结果。"""
+    load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
     # 重定向 stdout 捕获 print 输出
@@ -148,11 +213,36 @@ def run_curator(query: str) -> dict:
     }
 
 
+HELP_TEXT = """OpenViking Curator — Knowledge-governed Q&A with retrieval + external search
+
+Usage:
+  python3 curator_query.py "your question"     Query with auto routing gate
+  python3 curator_query.py --status             Health check (config + OpenViking + stats)
+  python3 curator_query.py --help               Show this help
+
+Environment:
+  Configure via .env file (see .env.example) or env vars.
+  Key settings: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY
+
+Output (JSON):
+  {"routed": false, "reason": "..."}                Not routed (no plugin needed)
+  {"routed": true, "answer": "...", "meta": {...}}   Plugin answer with metadata
+"""
+
+
 if __name__ == "__main__":
-    q = " ".join(sys.argv[1:]).strip()
-    if not q:
-        print(json.dumps({"error": "usage: curator_query.py <query>"}, ensure_ascii=False))
-        sys.exit(2)
+    args = sys.argv[1:]
+
+    if not args or "--help" in args or "-h" in args:
+        print(HELP_TEXT)
+        sys.exit(0)
+
+    if "--status" in args:
+        result = run_status()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0)
+
+    q = " ".join(args).strip()
 
     route, reason = should_route(q)
     if not route:

@@ -108,32 +108,41 @@ def _rule_based_scope(query: str) -> dict:
     # ── 关键词提取 ──
     # 英文技术词
     en_tokens = re.findall(r"[a-zA-Z0-9_\-/.]{2,}", query)
-    # 中文词切分（简易词典 + 字符 n-gram 兜底）
-    _CN_TERMS = {
-        "所有权", "模型", "理解", "排查", "配置", "注册", "入门", "对比", "选型",
+
+    # 中文分词：jieba 优先，硬编码词典兜底
+    _CN_EXTRA_TERMS = {
+        "所有权", "模型", "排查", "配置", "注册", "入门", "对比", "选型",
         "安全", "加固", "防火墙", "日志", "网络", "存储", "容器", "反向代理",
         "常见问题", "最佳实践", "工作原理", "使用场景", "设计理念", "快速上手",
         "自动更新", "兼容性", "参数差异", "注意事项", "网关对比", "状态管理",
-        "上下文", "文件系统", "向量数据库", "陷阱",
+        "上下文", "文件系统", "向量数据库", "陷阱", "高并发", "负载均衡",
+        "微服务", "消息队列", "缓存", "数据库", "中间件", "监控", "告警",
     }
-    cn_tokens = []
-    remaining = re.sub(r"[^\u4e00-\u9fff]", "", query)
-    while remaining:
-        matched = False
-        for length in (4, 3, 2):
-            if len(remaining) >= length and remaining[:length] in _CN_TERMS:
-                cn_tokens.append(remaining[:length])
-                remaining = remaining[length:]
-                matched = True
-                break
-        if not matched:
-            # 跳过单字
-            remaining = remaining[1:]
-    # 补充 regex 2-gram 防漏（但只保留在词典里或有意义的）
-    bigrams = re.findall(r"[\u4e00-\u9fff]{2}", query)
-    for bg in bigrams:
-        if bg in _CN_TERMS and bg not in cn_tokens:
-            cn_tokens.append(bg)
+    cn_text = re.sub(r"[^\u4e00-\u9fff]", "", query)
+    try:
+        import jieba
+        # 添加领域术语到 jieba 词典
+        for term in _CN_EXTRA_TERMS:
+            jieba.add_word(term)
+        cn_tokens = [w for w in jieba.cut(cn_text) if len(w) >= 2]
+    except ImportError:
+        # jieba 不可用时用硬编码词典 + 2-gram 兜底
+        cn_tokens = []
+        remaining = cn_text
+        while remaining:
+            matched = False
+            for length in (4, 3, 2):
+                if len(remaining) >= length and remaining[:length] in _CN_EXTRA_TERMS:
+                    cn_tokens.append(remaining[:length])
+                    remaining = remaining[length:]
+                    matched = True
+                    break
+            if not matched:
+                remaining = remaining[1:]
+        bigrams = re.findall(r"[\u4e00-\u9fff]{2}", query)
+        for bg in bigrams:
+            if bg in _CN_EXTRA_TERMS and bg not in cn_tokens:
+                cn_tokens.append(bg)
     cn_tokens = list(dict.fromkeys(cn_tokens))
 
     # 去掉停用词

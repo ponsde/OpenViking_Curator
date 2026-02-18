@@ -2,144 +2,146 @@
 
 [English](README.md) / 中文
 
-Curator 是 [OpenViking](https://github.com/volcengine/OpenViking) 的**主动知识治理层**。
+**[OpenViking](https://github.com/volcengine/OpenViking) 的主动知识治理层。** 不只是检索——判断、验证、积累。
 
-传统 RAG 系统是被动的——放什么进去就检索什么。Curator 在上面加了一层智能：
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
+[![Tests: 22 passing](https://img.shields.io/badge/Tests-22%20passing-brightgreen.svg)](tests/)
 
-| 功能 | 作用 |
+## 这是什么？
+
+传统 RAG：放数据进去、取数据出来。Curator 加了治理层：
+
+| 功能 | 说明 |
 |------|------|
-| **覆盖率门控** | 评估本地检索质量，只在不足时触发外部搜索 |
-| **外部兜底** | 本地知识不够时通过 Grok 搜索补充 |
-| **质量审核** | AI 审核后才入库，防止垃圾知识污染 |
-| **信任评分** | 基于反馈的加权排序 + 时间衰减 |
-| **冲突检测** | 发现来源之间的矛盾 |
-| **新鲜度追踪** | 检测过时知识并触发重新验证 |
-
-## 和 LangChain / LlamaIndex 有什么区别？
-
-它们构建 RAG **管道**——帮你检索和生成。
-
-Curator 专注于知识**治理**——决定：
-- 现有知识够不够？要不要外搜？
-- 新信息可信度够不够？要不要入库？
-- 来源之间有没有矛盾？
-- 知识有没有过时？
-
-Curator 可以和任何 RAG 框架配合使用。它治理的是知识，不是管道。
+| **覆盖率门控** | 评估本地检索质量，只在不够时触发外搜 |
+| **可插拔外部搜索** | Grok、OpenAI 或自定义后端——换个环境变量就行 |
+| **AI 审核入库** | 外搜结果经过质量/时效审核才入库 |
+| **交叉验证** | 易变声明自动对官方源交叉验证 |
+| **冲突检测** | 识别本地与外部信息的矛盾 |
+| **时效追踪** | TTL 元数据、过期扫描、过时知识检测 |
+| **反馈闭环** | 用户反馈影响未来检索排序 |
+| **案例沉淀** | 自动保存问答为可复用经验 |
 
 ## 快速开始
 
+### 方式 A：本地安装
+
 ```bash
-# 1. 克隆并配置
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
-cp .env.example .env
-# 编辑 .env，填入你自己的 API 端点和密钥
-
-# 2. 安装依赖（Python 3.10+）
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 3. 运行查询
-python3 curator_query.py "OpenViking 是什么？和传统 RAG 有什么区别？"
+cp .env.example .env   # 填入你的 API key
 ```
 
-### 作为类 MCP 工具集成
-
-`curator_query.py` 设计为可编程调用——从你的 Agent/助手调用即可：
+### 方式 B：Docker
 
 ```bash
-python3 curator_query.py "你的问题"
+git clone https://github.com/ponsde/OpenViking_Curator.git
+cd OpenViking_Curator
+cp .env.example .env   # 填入你的 API key
+docker compose build
+docker compose run curator "OpenViking 是什么？"
 ```
 
-**输出（JSON）：**
-```json
-{"routed": false, "reason": "negative_match"}
-```
-→ 不需要知识库，正常处理。
+### 试一下
 
-```json
-{"routed": true, "answer": "...", "meta": {"coverage": 0.95, "external_triggered": false}}
-```
-→ 知识库已回答，使用 `answer` 字段。
+```bash
+# 健康检查
+python3 curator_query.py --status
 
-内置门控自动跳过日常对话、简单指令和跟进问题。
+# 提问
+python3 curator_query.py "Redis 和 Memcached 高并发下怎么选？"
+```
 
 ## 架构
 
 ```
-查询 → 门控(规则) → 路由(LLM) → 本地检索(OpenViking)
-                                      ↓
-                              覆盖率 + 质量检查
-                                   ↙        ↘
-                           足够?          外部搜索(Grok)
-                             ↓                 ↓
-                           回答           审核 → 入库?
-                                                ↓
-                                              回答
-                                                ↓
-                                           冲突检测
-                                                ↓
-                                           Case 沉淀
+查询 → 门控（纯规则，不调 LLM）→ 路由 → 本地检索（OpenViking）
+                                               ↓
+                                     覆盖率 + 核心词检查
+                                          ↙         ↘
+                                    足够？       外部搜索（可插拔）
+                                      ↓                ↓
+                                    回答       交叉验证 → 审核 → 入库？
+                                      ↓                         ↓
+                                  来源透明度                   回答
+                                      ↓                         ↓
+                                  案例沉淀                  冲突检测
 ```
 
-## 文件结构
+## 搜索后端
 
-| 文件 | 用途 |
-|------|------|
-| `curator_v0.py` | 核心管道（路由→检索→审核→回答） |
-| `curator_query.py` | 一体化查询入口，内置门控 |
-| `feedback_store.py` | 反馈存储，带文件锁（线程安全） |
-| `metrics.py` | 每次查询的执行指标（JSONL） |
-| `memory_capture.py` | 查询后自动沉淀 Case |
-| `eval_batch.py` | 批量评测 |
-| `freshness_rescan.py` | 来源级新鲜度验证 |
-| `schemas/` | Case 和 Pattern 模板 |
-| `.env.example` | 环境变量模板（无密钥） |
-| `tests/` | 单元测试（`pytest`） |
+外搜后端**可插拔**。在 `.env` 里设 `CURATOR_SEARCH_PROVIDER`：
+
+| 后端 | 值 | 说明 |
+|------|-----|------|
+| Grok | `grok`（默认） | 通过 grok2api 或兼容端点 |
+| OpenAI | `oai` | 任意有联网能力的 OAI 兼容模型 |
+| 自定义 | 你的名字 | 在 `search_providers.py` 注册 |
+
+```python
+# search_providers.py 里加你自己的
+def bing_search(query, scope, **kwargs) -> str:
+    ...
+    return result_text
+
+PROVIDERS["bing"] = bing_search
+```
 
 ## 配置
 
-所有配置通过环境变量（见 `.env.example`）：
+所有配置通过环境变量（`.env` 文件，已 git-ignored）：
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `CURATOR_OAI_BASE` | ✅ | OpenAI 兼容 API 地址 |
-| `CURATOR_OAI_KEY` | ✅ | 上述 API 的密钥 |
-| `CURATOR_GROK_BASE` | ✅ | Grok 搜索 API 地址 |
-| `CURATOR_GROK_KEY` | ✅ | Grok API 密钥 |
-| `CURATOR_ROUTER_MODELS` | | 路由模型 fallback 链（逗号分隔） |
-| `CURATOR_ANSWER_MODELS` | | 回答模型 fallback 链 |
-| `CURATOR_JUDGE_MODELS` | | 审核模型 fallback 链 |
-| `OPENVIKING_CONFIG_FILE` | | OpenViking 配置文件路径 |
+| `CURATOR_OAI_BASE` | ✅ | OAI 兼容 API 地址 |
+| `CURATOR_OAI_KEY` | ✅ | API key |
+| `CURATOR_GROK_KEY` | ✅* | Grok API key（*仅使用 Grok 后端时） |
+| `CURATOR_SEARCH_PROVIDER` | | 搜索后端：`grok`（默认）、`oai`、自定义 |
 
-**无硬编码密钥。** 所有敏感值来自 `.env`（已 git-ignore）。
+### 可调阈值
 
-## 模型降级
+所有阈值支持 env 覆盖：
 
-路由、审核、回答三个阶段都支持降级链：
+| 变量 | 默认 | 含义 |
+|------|------|------|
+| `CURATOR_THRESHOLD_LOW_COV` | 0.45 | 低于此值触发外搜 |
+| `CURATOR_THRESHOLD_CORE_COV` | 0.4 | 核心词覆盖 ≤ 此值触发外搜 |
+| `CURATOR_THRESHOLD_LOW_TRUST` | 5.4 | 低于此值触发质量补充搜索 |
+
+## 项目结构
 
 ```
-模型A → (503/500?) → 模型B → (失败?) → 模型C
+curator_v0.py          # 核心 8 步管线
+curator_query.py       # CLI 入口（--help, --status, 查询）
+search_providers.py    # 可插拔搜索后端
+mcp_server.py          # MCP 服务器（stdio JSON-RPC，3 个工具）
+feedback_store.py      # 线程安全的反馈存储
+dedup.py               # AI 去重（scan/clean/merge）
+batch_ingest.py        # 批量入库（冷启动用）
+eval_batch.py          # 基准测试（10 题）
+freshness_rescan.py    # URL 可达性 + TTL 过期扫描
+Dockerfile             # 容器构建
+docker-compose.yml     # 一键 Docker 启动
+tests/test_core.py     # 22 个单元测试
 ```
-
-通过 `CURATOR_ROUTER_MODELS`、`CURATOR_JUDGE_MODELS`、`CURATOR_ANSWER_MODELS` 配置。
 
 ## 测试
 
 ```bash
-source .venv/bin/activate
-python -m pytest tests/ -v
+python -m pytest tests/ -v   # 22 个测试，全部离线（不调外部 API）
 ```
 
 ## 路线图
 
-见 [ROADMAP.md](ROADMAP.md)。
+见 [ROADMAP.md](ROADMAP.md)。当前版本 **v0.8**。
 
-**已完成：** v0.1–v0.4（路由、反馈、冲突检测、新鲜度、模型降级、单元测试）
+## 贡献
 
-**下一步：** 阈值可配置化、存储抽象层、CI/CD、模式合成
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 声明
+## License
 
-这是一个积极迭代中的实验性项目。上游依赖 [OpenViking](https://github.com/volcengine/OpenViking) 尚处早期阶段，使用需自行评估风险。
+[MIT](LICENSE)

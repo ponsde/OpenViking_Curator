@@ -2,144 +2,189 @@
 
 English / [中文](README_CN.md)
 
-Curator is an **active knowledge governance layer** for [OpenViking](https://github.com/volcengine/OpenViking).
+**Active knowledge governance for [OpenViking](https://github.com/volcengine/OpenViking).** Not just retrieve — decide, verify, and grow.
 
-Traditional RAG systems are passive — what you put in is what you get out. Curator adds intelligence on top:
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
+[![Tests: 22 passing](https://img.shields.io/badge/Tests-22%20passing-brightgreen.svg)](tests/)
+
+## What is this?
+
+Traditional RAG: put data in → get data out. Curator adds the governance layer:
 
 | Feature | What it does |
 |---------|-------------|
 | **Coverage Gate** | Measures local retrieval quality; only triggers external search when needed |
-| **External Fallback** | Searches via Grok when local knowledge is insufficient |
-| **Quality Review** | AI-powered review before ingesting new knowledge |
-| **Trust Scoring** | Feedback-weighted ranking with time decay |
-| **Conflict Detection** | Identifies contradictions between sources |
-| **Freshness Tracking** | Detects stale knowledge and triggers re-verification |
-
-## How is this different from LangChain / LlamaIndex?
-
-Those frameworks build RAG **pipelines** — they help you retrieve and generate.
-
-Curator focuses on knowledge **governance** — the layer that decides:
-- Is my existing knowledge good enough, or do I need to search externally?
-- Is this new information trustworthy enough to ingest?
-- Do my sources contradict each other?
-- Has this knowledge gone stale?
-
-You can use Curator alongside any RAG framework. It governs the knowledge, not the pipeline.
+| **Pluggable External Search** | Grok, OpenAI, or your own backend — just set an env var |
+| **AI Review + Ingest** | Reviews external results for quality/freshness before storing |
+| **Cross-Validation** | Verifies volatile claims against official sources |
+| **Conflict Detection** | Identifies contradictions between local and external sources |
+| **Freshness Tracking** | TTL metadata, expiry scanning, stale knowledge detection |
+| **Feedback Loop** | User feedback influences future retrieval ranking |
+| **Case Capture** | Automatically saves Q&A as reusable experience |
 
 ## Quick Start
 
+### Option A: Local install
+
 ```bash
-# 1. Clone and setup
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
-cp .env.example .env
-# Edit .env with your own API endpoints and keys
-
-# 2. Install dependencies (Python 3.10+)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 3. Run a query
-python3 curator_query.py "What is OpenViking and how does it differ from traditional RAG?"
+cp .env.example .env   # Edit with your API keys
 ```
 
-### Integration as an MCP-like Tool
-
-`curator_query.py` is designed for programmatic use — call it from your agent/assistant:
+### Option B: Docker
 
 ```bash
-python3 curator_query.py "your question here"
+git clone https://github.com/ponsde/OpenViking_Curator.git
+cd OpenViking_Curator
+cp .env.example .env   # Edit with your API keys
+docker compose build
+docker compose run curator "What is OpenViking?"
+```
+
+### First run
+
+```bash
+# Health check
+python3 curator_query.py --status
+
+# Ask a question
+python3 curator_query.py "Redis vs Memcached for high concurrency?"
 ```
 
 **Output (JSON):**
 ```json
-{"routed": false, "reason": "negative_match"}
+{"routed": true, "answer": "...", "meta": {"coverage": 0.7, "external_triggered": false}}
 ```
-→ Query doesn't need the knowledge base. Handle it normally.
-
-```json
-{"routed": true, "answer": "...", "meta": {"coverage": 0.95, "external_triggered": false}}
-```
-→ Knowledge base answered. Use the `answer` field.
-
-The built-in gate skips casual conversation, simple commands, and follow-up questions automatically.
 
 ## Architecture
 
 ```
-Query → Gate (rule-based) → Route (LLM) → Local Search (OpenViking)
-                                              ↓
-                                    Coverage + Quality Check
-                                         ↙         ↘
-                              Sufficient?        External Search (Grok)
-                                  ↓                    ↓
-                              Answer            Review → Ingest?
-                                                       ↓
-                                                   Answer
-                                                       ↓
-                                              Conflict Detection
-                                                       ↓
-                                                  Case Capture
+Query → Gate (rule-based, no LLM) → Scope Router → Local Search (OpenViking)
+                                                         ↓
+                                               Coverage + Core Keywords
+                                                    ↙         ↘
+                                          Sufficient?     External Search (pluggable)
+                                              ↓                    ↓
+                                           Answer         Cross-Validate → Review → Ingest?
+                                              ↓                                    ↓
+                                        Source Footer                          Answer
+                                              ↓                                    ↓
+                                        Case Capture                     Conflict Detection
 ```
 
-## Repo Structure
+**8-step pipeline:** Init → Route → Local Search → External Search → Cross-Validate → Review/Ingest → Conflict Detection → Answer
 
-| File | Purpose |
-|------|---------|
-| `curator_v0.py` | Core pipeline (route → search → review → answer) |
-| `curator_query.py` | One-command entry point with built-in query gate |
-| `feedback_store.py` | Feedback storage with file locking (thread-safe) |
-| `metrics.py` | Per-query execution metrics (JSONL) |
-| `memory_capture.py` | Auto case capture after each query |
-| `eval_batch.py` | Batch evaluation runner |
-| `freshness_rescan.py` | Source-level freshness verification |
-| `schemas/` | Case and pattern templates |
-| `.env.example` | Environment variable template (no secrets) |
-| `tests/` | Unit tests (`pytest`) |
+## Search Providers
+
+External search is **pluggable**. Set `CURATOR_SEARCH_PROVIDER` in `.env`:
+
+| Provider | Value | Description |
+|----------|-------|-------------|
+| Grok | `grok` (default) | Via grok2api or compatible endpoint |
+| OpenAI | `oai` | Any OAI-compatible model with internet access |
+| Custom | your name | Register in `search_providers.py` |
+
+**Adding your own provider:**
+
+```python
+# In search_providers.py
+def my_search(query: str, scope: dict, **kwargs) -> str:
+    # Your search logic (Bing, SerpAPI, internal wiki, etc.)
+    return result_text
+
+PROVIDERS["my_search"] = my_search
+```
+
+Then set `CURATOR_SEARCH_PROVIDER=my_search`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Configuration
 
-All configuration is via environment variables (see `.env.example`):
+All config via environment variables (`.env` file, git-ignored):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `CURATOR_OAI_BASE` | ✅ | OpenAI-compatible API base URL |
-| `CURATOR_OAI_KEY` | ✅ | API key for the above |
-| `CURATOR_GROK_BASE` | ✅ | Grok search API base URL |
-| `CURATOR_GROK_KEY` | ✅ | Grok API key |
-| `CURATOR_ROUTER_MODELS` | | Comma-separated model fallback chain for routing |
-| `CURATOR_ANSWER_MODELS` | | Comma-separated model fallback chain for answers |
-| `CURATOR_JUDGE_MODELS` | | Comma-separated model fallback chain for review |
-| `OPENVIKING_CONFIG_FILE` | | Path to OpenViking config file |
+| `CURATOR_OAI_KEY` | ✅ | API key for router/judge/answer |
+| `CURATOR_GROK_KEY` | ✅* | Grok API key (*only if using Grok provider) |
+| `CURATOR_SEARCH_PROVIDER` | | Search backend: `grok` (default), `oai`, custom |
+| `CURATOR_ROUTER_MODELS` | | Model fallback chain for routing |
+| `CURATOR_ANSWER_MODELS` | | Model fallback chain for answers |
+| `CURATOR_JUDGE_MODELS` | | Model fallback chain for review |
+| `OPENVIKING_CONFIG_FILE` | | Path to OpenViking ov.conf |
 
-**No secrets are hardcoded.** All sensitive values come from `.env` (git-ignored).
+### Tunable Thresholds
 
-## Model Fallback
+All coverage/quality thresholds are configurable via env:
 
-Router, judge, and answer stages each support a fallback chain:
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CURATOR_THRESHOLD_LOW_COV` | 0.45 | Below → trigger external search |
+| `CURATOR_THRESHOLD_CORE_COV` | 0.4 | Core keyword coverage; ≤ → external search |
+| `CURATOR_THRESHOLD_LOW_TRUST` | 5.4 | Below → quality boost search |
+| `CURATOR_THRESHOLD_LOW_FRESH` | 0.25 | Below → freshness boost search |
+
+**No secrets are hardcoded.** All sensitive values come from `.env`.
+
+## Repo Structure
 
 ```
-Model A → (503/500?) → Model B → (fail?) → Model C
+curator_v0.py          # Core 8-step pipeline
+curator_query.py       # CLI entry (--help, --status, query)
+search_providers.py    # Pluggable search backends
+mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)
+feedback_store.py      # Thread-safe feedback storage
+memory_capture.py      # Auto case capture
+freshness_rescan.py    # URL liveness + TTL expiry scanner
+dedup.py               # AI-powered dedup (scan/clean/merge)
+batch_ingest.py        # Bulk topic ingestion for cold-start
+eval_batch.py          # Benchmark evaluation (10 questions)
+maintenance.py         # Feedback decay + expired case check
+metrics.py             # Per-query metrics (JSONL)
+Dockerfile             # Container build
+docker-compose.yml     # One-click Docker startup
+tests/test_core.py     # 22 unit tests
 ```
 
-Configure via `CURATOR_ROUTER_MODELS`, `CURATOR_JUDGE_MODELS`, `CURATOR_ANSWER_MODELS`.
+## MCP Server
+
+Curator includes a standard MCP server compatible with Claude Desktop, mcporter, and any MCP client:
+
+```bash
+python3 mcp_server.py   # Starts stdio JSON-RPC server
+```
+
+**Tools:** `curator_query`, `curator_ingest`, `curator_status`
 
 ## Testing
 
 ```bash
-source .venv/bin/activate
-python -m pytest tests/ -v
+python -m pytest tests/ -v   # 22 tests, all internal (no API calls)
 ```
+
+## How is this different from LangChain / LlamaIndex?
+
+Those build RAG **pipelines**. Curator governs the **knowledge**:
+- Is my existing knowledge good enough?
+- Is this new information trustworthy?
+- Do my sources contradict each other?
+- Has this knowledge gone stale?
+
+Use alongside any RAG framework. It governs knowledge, not pipelines.
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for the full plan.
+See [ROADMAP.md](ROADMAP.md). Currently at **v0.8**.
 
-**Done:** v0.1–v0.4 (routing, feedback, conflict detection, freshness, model fallback, unit tests)
+## Contributing
 
-**Next:** configurable thresholds, storage abstraction layer, CI/CD, pattern synthesis
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Disclaimer
+## License
 
-This is an experimental project under active iteration. The upstream dependency [OpenViking](https://github.com/volcengine/OpenViking) is early-stage. Use at your own risk.
+[MIT](LICENSE)
