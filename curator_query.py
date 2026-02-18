@@ -21,6 +21,9 @@ POSITIVE = [
     r"为什么", r"why", r"优缺点", r"pros?\s*(and|&)\s*cons?",
     r"best\s+practice", r"最佳实践",
     r"历史", r"之前.*怎么", r"上次.*怎么",  # 内部经验召回
+    r"排查", r"日志", r"故障", r"报错", r"错误", r"怎么看", r"怎么用",
+    r"troubleshoot", r"error", r"log", r"debug",
+    r"方案", r"选型", r"推荐", r"入门", r"指南",
 ]
 
 # 明确不需要的信号词（日常对话/操作指令）
@@ -28,7 +31,7 @@ NEGATIVE = [
     r"^(hi|hello|hey|你好|嗨|早|晚安)",
     r"^(ok|好的|行|收到|嗯|谢谢|thanks)",
     r"帮我(跑|执行|运行|commit|push|部署|重启|看看|检查)",
-    r"(git\s+|ssh\s+|cd\s+|ls\s+|cat\s+|rm\s+|mv\s+)",
+    r"(?<!\w)(git|ssh|cd|ls|cat|rm|mv)\s+",
     r"打开|关闭|启动|停止|重启",
     r"天气|时间|几点",
     r"提醒我|remind",
