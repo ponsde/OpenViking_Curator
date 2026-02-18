@@ -1,0 +1,21 @@
+services:
+  curator:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./cases:/app/cases
+      - ./curated:/app/curated
+      - ./feedback.json:/app/feedback.json
+    # Query mode (default): docker compose run curator "你的问题"
+    # MCP server mode:      docker compose run curator python3 mcp_server.py
+
+  # Optional: OpenViking (if not running separately)
+  # Uncomment and configure ov.conf + data volume
+  # openviking:
+  #   image: openviking/openviking:latest
+  #   volumes:
+  #     - ./ov.conf:/etc/openviking/ov.conf
+  #     - ./data:/data
+  #   ports:
+  #     - "1833:1833"

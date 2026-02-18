@@ -592,34 +592,9 @@ def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
 
 
 def external_search(query: str, scope: dict):
-    import datetime
-    today = datetime.date.today().isoformat()
-    prompt = (
-        f"问题: {query}\n"
-        f"关键词: {scope.get('keywords', [])}\n"
-        f"排除: {scope.get('exclude', [])}\n"
-        f"偏好来源: {scope.get('source_pref', [])}\n"
-        f"当前日期: {today}\n\n"
-        "要求:\n"
-        "1. 返回5条高质量来源，格式：标题+URL+发布/更新日期+关键点\n"
-        "2. 优先最近6个月内的信息，标注每条来源的日期\n"
-        "3. 如果引用的项目/文档超过1年未更新，明确标注[可能过时]\n"
-        "4. 涉及API、注册流程、认证方式等易变内容时，必须确认当前是否仍然有效\n"
-        "5. 不要把旧版本的技术要求当成当前事实（如已取消的验证步骤）\n"
-        "6. GitHub项目必须标注：最后commit日期、star数、是否archived\n"
-        "7. 区分[可直接使用]和[仅供参考]——维护中且有文档的才算可用"
-    )
-    return chat(GROK_BASE, GROK_KEY, GROK_MODEL, [
-        {"role": "system", "content": (
-            "你是实时搜索助手。重视可验证来源和信息时效性。"
-            f"当前日期: {today}。"
-            "对于技术类问题，优先引用官方文档和近期更新。"
-            "如果搜到的信息可能已过时（如超过1年的项目、已变更的API流程），"
-            "必须明确标注并提示用户验证。"
-            "对于GitHub项目，务必区分：项目存在 ≠ 项目能用。"
-        )},
-        {"role": "user", "content": prompt},
-    ], timeout=90)
+    """External search via pluggable provider (default: Grok)."""
+    from search_providers import search as provider_search
+    return provider_search(query, scope)
 
 
 def cross_validate(query: str, external_text: str, scope: dict) -> dict:
@@ -676,18 +651,12 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
         if result.get("needs_followup") and result.get("followup_query") and high_risk:
             print(f"  🔄 交叉验证: 追问 → {result['followup_query']}")
             try:
-                followup_text = chat(GROK_BASE, GROK_KEY, GROK_MODEL, [
-                    {"role": "system", "content": (
-                        f"你是实时搜索助手。当前日期: {today}。"
-                        "请搜索最新官方信息来验证以下声明是否仍然成立。"
-                        "优先引用官方文档、Help Center、Release Notes。"
-                    )},
-                    {"role": "user", "content": (
-                        f"需要验证的声明:\n" +
-                        "\n".join([f"- {c.get('claim','')}" for c in high_risk]) +
-                        f"\n\n验证搜索: {result['followup_query']}"
-                    )},
-                ], timeout=60)
+                from search_providers import get_provider, _build_search_prompt
+                provider_fn = get_provider()
+                followup_text = provider_fn(
+                    result['followup_query'],
+                    {"keywords": [c.get('claim','')[:30] for c in high_risk], "exclude": [], "source_pref": ["official_docs"]},
+                )
                 print(f"  ✅ 追问完成: {len(followup_text)} chars")
             except Exception as e:
                 print(f"  ⚠️ 追问失败: {e}")

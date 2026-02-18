@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-import json, os, argparse, fcntl
+import json, os, argparse
 from pathlib import Path
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False  # Windows fallback
 
 STORE = Path(os.getenv('CURATOR_FEEDBACK_FILE', './feedback.json'))
 
 
 def _locked_rw(fn):
-    """Read-modify-write with exclusive file lock."""
+    """Read-modify-write with exclusive file lock (Unix) or no-lock fallback (Windows)."""
     STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.touch(exist_ok=True)
     with open(STORE, 'r+', encoding='utf-8') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        if _HAS_FCNTL:
+            fcntl.flock(f, fcntl.LOCK_EX)
         try:
             raw = f.read().strip()
             data = json.loads(raw) if raw else {}
@@ -20,18 +27,21 @@ def _locked_rw(fn):
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
             return result
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            if _HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def load():
     if STORE.exists():
         with open(STORE, 'r', encoding='utf-8') as f:
-            fcntl.flock(f, fcntl.LOCK_SH)
+            if _HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_SH)
             try:
                 raw = f.read().strip()
                 return json.loads(raw) if raw else {}
             finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
+                if _HAS_FCNTL:
+                    fcntl.flock(f, fcntl.LOCK_UN)
     return {}
 
 
