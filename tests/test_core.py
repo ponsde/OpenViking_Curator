@@ -25,21 +25,27 @@ from curator_v0 import (
 # ─── route_scope ─────────────────────────────────────────────
 
 class TestRouteScope(unittest.TestCase):
-    """Test query scope routing (keyword-based, no LLM call)."""
+    """Test query scope routing (rule-based fast route)."""
 
-    @patch('curator_v0.chat')
-    def test_domain_detection(self, mock_chat):
-        mock_chat.return_value = '{"domain":"tech","keywords":["python","async"],"time_hint":"none"}'
+    def test_domain_detection(self):
         scope = route_scope("Python async 怎么用")
-        self.assertEqual(scope['domain'], 'tech')
-        self.assertIn('python', scope['keywords'])
+        self.assertEqual(scope['domain'], 'technology')
+        self.assertIn('Python', scope['keywords'])
 
-    @patch('curator_v0.chat')
-    def test_malformed_json_fallback(self, mock_chat):
-        mock_chat.return_value = 'not json at all'
-        scope = route_scope("随便问个问题")
-        # Should not crash; returns a dict with defaults
-        self.assertIsInstance(scope, dict)
+    def test_general_domain_fallback(self):
+        scope = route_scope("今天天气怎么样")
+        self.assertEqual(scope['domain'], 'general')
+        self.assertIsInstance(scope['keywords'], list)
+
+    def test_keywords_extraction(self):
+        scope = route_scope("Nginx 反向代理 502 怎么排查？")
+        kw_lower = [k.lower() for k in scope['keywords']]
+        self.assertIn('nginx', kw_lower)
+        self.assertIn('502', kw_lower)
+
+    def test_need_fresh(self):
+        scope = route_scope("2026 最新 Python 发布了什么")
+        self.assertTrue(scope['need_fresh'])
 
 
 # ─── deterministic_relevance ─────────────────────────────────

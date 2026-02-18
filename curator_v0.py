@@ -74,7 +74,89 @@ def chat(base, key, model, messages, timeout=60):
     return r.json()["choices"][0]["message"]["content"]
 
 
+def _rule_based_scope(query: str) -> dict:
+    """纯规则路由：0 API 调用，<1ms 完成"""
+    ql = query.lower()
+
+    # ── 领域判定 ──
+    _DOMAIN_MAP = {
+        "technology": ["docker", "nginx", "linux", "k8s", "kubernetes", "systemd", "git",
+                       "python", "asyncio", "rust", "golang", "javascript", "typescript",
+                       "api", "mcp", "rag", "llm", "openai", "claude", "grok", "embedding",
+                       "vector", "milvus", "chroma", "qdrant", "ci/cd", "github actions",
+                       "terraform", "ansible", "openviking", "newapi", "oneapi", "grok2api",
+                       "wordpress", "tailscale", "cloudflare", "向量", "容器", "反向代理",
+                       "部署", "配置", "排查", "服务器", "数据库"],
+        "devops": ["vps", "ssh", "firewall", "防火墙", "安全加固", "监控", "日志",
+                   "systemctl", "journalctl", "iptables", "ufw"],
+    }
+    domain = "general"
+    for d, terms in _DOMAIN_MAP.items():
+        if any(t in ql for t in terms):
+            domain = d
+            break
+
+    # ── 关键词提取 ──
+    # 英文技术词
+    en_tokens = re.findall(r"[a-zA-Z0-9_\-/.]{2,}", query)
+    # 中文词切分（简易词典 + 字符 n-gram 兜底）
+    _CN_TERMS = {
+        "所有权", "模型", "理解", "排查", "配置", "注册", "入门", "对比", "选型",
+        "安全", "加固", "防火墙", "日志", "网络", "存储", "容器", "反向代理",
+        "常见问题", "最佳实践", "工作原理", "使用场景", "设计理念", "快速上手",
+        "自动更新", "兼容性", "参数差异", "注意事项", "网关对比", "状态管理",
+        "上下文", "文件系统", "向量数据库", "陷阱",
+    }
+    cn_tokens = []
+    remaining = re.sub(r"[^\u4e00-\u9fff]", "", query)
+    while remaining:
+        matched = False
+        for length in (4, 3, 2):
+            if len(remaining) >= length and remaining[:length] in _CN_TERMS:
+                cn_tokens.append(remaining[:length])
+                remaining = remaining[length:]
+                matched = True
+                break
+        if not matched:
+            # 跳过单字
+            remaining = remaining[1:]
+    # 补充 regex 2-gram 防漏（但只保留在词典里或有意义的）
+    bigrams = re.findall(r"[\u4e00-\u9fff]{2}", query)
+    for bg in bigrams:
+        if bg in _CN_TERMS and bg not in cn_tokens:
+            cn_tokens.append(bg)
+    cn_tokens = list(dict.fromkeys(cn_tokens))
+
+    # 去掉停用词
+    _STOP = {"是什么", "怎么", "如何", "什么", "哪些", "常见", "有哪些", "最佳", "实践",
+             "怎么样", "可以", "应该", "为什么", "到底", "一下", "这个", "那个",
+             "the", "what", "how", "is", "are", "and", "for", "with", "to", "in", "of"}
+    keywords = [t for t in (en_tokens + cn_tokens) if t.lower() not in _STOP and len(t) > 1]
+    # 去重保序
+    keywords = list(dict.fromkeys(keywords))[:8]
+
+    # ── 时效性判定 ──
+    need_fresh = any(k in ql for k in ["最新", "更新", "release", "changelog", "2026", "2025", "latest"])
+
+    return {
+        "domain": domain,
+        "keywords": keywords,
+        "exclude": [],
+        "need_fresh": need_fresh,
+        "source_pref": ["official_docs", "tech_blog", "github"],
+        "confidence": 0.7,
+    }
+
+
+# 环境变量控制：CURATOR_FAST_ROUTE=1 用规则（默认），=0 用 LLM
+FAST_ROUTE = env("CURATOR_FAST_ROUTE", "1") == "1"
+
+
 def route_scope(query: str):
+    if FAST_ROUTE:
+        return _rule_based_scope(query)
+
+    # LLM fallback（慢但更智能）
     sys = (
         "你是检索路由器。把用户问题转换为严格JSON，字段: "
         "domain(字符串), keywords(数组), exclude(数组), need_fresh(boolean), source_pref(数组), confidence(0-1)。"
@@ -257,11 +339,15 @@ def local_search(client, query: str, scope: dict):
     search_queries = [expanded]
     if expanded_q != query:
         search_queries.append(expanded_q)  # 缩写全称版
-    # 额外加一个纯 query（无关键词后缀）
-    search_queries.append(query)
+
+    # 快速模式：只用 search()（纯向量，不走 LLM query planning）
+    # find() 慢但更精准，仅在需要时用一次
+    methods = [client.search]
+    if not FAST_ROUTE:
+        methods.insert(0, client.find)
 
     for sq in search_queries:
-        for method in (client.find, client.search):
+        for method in methods:
             try:
                 res = method(sq)
                 for x in (getattr(res, "resources", []) or []):
@@ -382,12 +468,14 @@ def local_search(client, query: str, scope: dict):
         return any(tag in ul for tag in ("curated", "single_", "reingest_", "fix_", "re2_"))
     curated_uris = [u for u in uris if _is_our_doc(u)]
     if curated_uris:
-        # 用 query + 关键词在正文中匹配（宽松：中英文都查）
-        query_terms = set(kw) | set(re.findall(r"[\u4e00-\u9fff]{2,}", query))
+        # 用 query 核心英文词（不含通用中文词）在正文中匹配
+        core_en = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower()))
+        core_cn = set(re.findall(r"[\u4e00-\u9fff]{3,4}", query))  # 3字以上中文更有区分度
+        query_terms = core_en | core_cn
         preview_text = " ".join(previews).lower()
         content_overlap = sum(1 for t in query_terms if t and t.lower() in preview_text)
         overlap_ratio = content_overlap / max(1, len(query_terms))
-        if overlap_ratio >= 0.15 or content_overlap >= 2:
+        if overlap_ratio >= 0.25 or content_overlap >= 3:
             curated_bonus = 0.10 * min(len(curated_uris), 3)
             coverage = max(coverage, 0.40) + curated_bonus
             coverage = min(1.0, coverage)
