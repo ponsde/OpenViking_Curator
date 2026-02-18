@@ -603,11 +603,11 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
             {"role": "user", "content": extract_prompt},
         ], timeout=45)
 
-        m = re.search(r"\{[\s\S]*\}", out)
-        if not m:
+        match = re.search(r"\{[\s\S]*\}", out)
+        if not match:
             return {"validated": external_text, "warnings": [], "followup_done": False}
 
-        result = json.loads(m.group(0))
+        result = json.loads(match.group(0))
         claims = result.get("claims", [])
         high_risk = [c for c in claims if c.get("risk") == "high"]
         warnings = [c.get("claim", "") for c in high_risk]
@@ -811,20 +811,20 @@ def run(query: str):
     validate_config()
     os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
-    print("STEP 1/6 初始化...")
+    print("STEP 1/8 初始化...")
     client = ov.SyncOpenViking(path=DATA_PATH)
     client.initialize()
     m.step('init', True)
     print("✅ STEP 1 完成")
 
     try:
-        print("STEP 2/6 范围路由...")
+        print("STEP 2/8 范围路由...")
         scope = route_scope(query)
         m.step('route', True, {'domain': scope.get('domain'), 'confidence': scope.get('confidence')})
         m.score('router_confidence', scope.get('confidence', 0))
         print("✅ STEP 2 完成:", json.dumps(scope, ensure_ascii=False))
 
-        print("STEP 3/6 本地检索(OpenViking)...")
+        print("STEP 3/8 本地检索(OpenViking)...")
         local_txt, coverage, meta = local_search(client, query, scope)
         m.step('local_search', True, {'coverage': coverage, 'kw_cov': meta.get('kw_cov'), 'domain_hit': meta.get('domain_hit')})
         m.score('coverage_before_external', round(coverage, 3))
@@ -842,12 +842,12 @@ def run(query: str):
         if boost_needed:
             m.flag('external_triggered', True)
             m.flag('external_reason', boost_reason)
-            print(f"STEP 4/6 触发外部搜索(Grok)... reason={boost_reason}")
+            print(f"STEP 4/8 触发外部搜索(Grok)... reason={boost_reason}")
             external_txt = external_search(query, scope)
             m.step('external_search', True, {'len': len(external_txt), 'reason': boost_reason})
             print("✅ STEP 4 完成: 外部结果长度", len(external_txt))
 
-            print("STEP 4.5 交叉验证...")
+            print("STEP 5/8 交叉验证...")
             cv = cross_validate(query, external_txt, scope)
             external_txt = cv.get("validated", external_txt)
             cv_warnings = cv.get("warnings", [])
@@ -861,7 +861,7 @@ def run(query: str):
             else:
                 print("  ✅ 无高风险声明")
 
-            print("STEP 5/7 审核并尝试入库...")
+            print("STEP 6/8 审核并尝试入库...")
             j = judge_and_pack(query, external_txt)
             m.step('judge', True, {'pass': j.get('pass'), 'trust': j.get('trust')})
             print("审核结果:", json.dumps({k: j.get(k) for k in ["pass", "reason", "trust", "tags", "freshness"]}, ensure_ascii=False))
@@ -883,9 +883,9 @@ def run(query: str):
             m.flag('external_triggered', False)
             m.flag('external_reason', boost_reason)
             cv_warnings = []
-            print("STEP 4/6 跳过外部搜索（本地覆盖与质量足够）")
+            print("STEP 4/8 跳过外部搜索（本地覆盖与质量足够）")
 
-        print("STEP 6/8 冲突检测...")
+        print("STEP 7/8 冲突检测...")
         conflict = detect_conflict(query, local_txt, external_txt)
         conflict_card = ""
         if conflict.get('has_conflict'):
@@ -893,7 +893,7 @@ def run(query: str):
             conflict_card = f"⚠️ 存在冲突: {conflict.get('summary','')}\n{pts}"
         m.step('conflict', True, {'has_conflict': conflict.get('has_conflict', False), 'summary': conflict.get('summary','')})
         m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
-        print(f"✅ STEP 6 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
+        print(f"✅ STEP 7 完成: has_conflict={bool(conflict.get('has_conflict', False))}")
 
         print("STEP 8/8 生成回答...")
         priority_ctx = build_priority_context(client, meta.get('priority_uris', []))
