@@ -394,6 +394,19 @@ def local_search(client, query: str, scope: dict):
     q_tokens = re.findall(r"[a-z0-9_\-]{2,}", query.lower())
     kw.extend(q_tokens[:6])
     ql = query.lower()
+
+    # ── 核心词 vs 通用词区分 ──
+    # 通用词：出现在大量不同主题文档中，不能作为相关性证据
+    _GENERIC_TERMS = {
+        "2.0", "3.0", "1.0", "0.1", "2025", "2026", "2024", "最新", "latest",
+        "对比", "比较", "区别", "最佳", "实践", "方案", "选型", "推荐",
+        "怎么", "如何", "什么", "为什么", "哪些", "入门", "指南",
+        "compare", "best", "practice", "guide", "tutorial", "how",
+        "vs", "versus", "performance", "benchmark",
+    }
+    core_kw = [k for k in kw if k.lower() not in _GENERIC_TERMS and len(k) >= 2]
+    generic_kw = [k for k in kw if k.lower() in _GENERIC_TERMS]
+
     # 手工锚点（高频内部术语）
     _anchors = {
         "newapi": ["newapi", "oneapi", "openai", "api gateway"],
@@ -438,6 +451,20 @@ def local_search(client, query: str, scope: dict):
     hit = sum(1 for k in kw if k in relevance_text)
     kw_cov = hit / max(1, len(kw))
 
+    # ── 核心词覆盖率（更准确的相关性信号） ──
+    # 对短词（<=4字符）用词边界匹配，避免 "bun" 命中 "ubuntu" 等
+    def _core_match(term, text):
+        if len(term) <= 4:
+            return bool(re.search(r'(?<![a-z])' + re.escape(term) + r'(?![a-z])', text))
+        return term in text
+
+    core_hit = sum(1 for k in core_kw if _core_match(k, relevance_text))
+    core_cov = core_hit / max(1, len(core_kw)) if core_kw else kw_cov
+
+    # 语义连贯性检查：如果核心词覆盖低但通用词拉高了 kw_cov，惩罚
+    if core_kw and core_cov < 0.3 and kw_cov > 0.5:
+        kw_cov = kw_cov * 0.3  # 严重惩罚：核心词几乎没命中
+
     # ── 领域词命中 ──
     target_terms = []
     for anchor_key, anchor_terms in _anchors.items():
@@ -454,13 +481,17 @@ def local_search(client, query: str, scope: dict):
     # ── coverage 计算 ──
     effective_domain_hit = (domain_hit
                            or (uri_scope_hit and evidence_ratio >= 0.2)
-                           or relevance >= 0.55)
+                           or (relevance >= 0.55 and core_cov >= 0.3))
 
     # 噪声惩罚：证据弱但关键词覆盖高
     if evidence_ratio < 0.15 and kw_cov > 0.5:
         kw_cov = kw_cov * 0.35
 
-    coverage = max(kw_cov, relevance) if effective_domain_hit else min(max(kw_cov, relevance), 0.18)
+    # 核心词缺失惩罚：即使通用词命中多，核心词没命中就不算真覆盖
+    if core_kw and core_cov < 0.2:
+        coverage = min(max(kw_cov, relevance), 0.25) if effective_domain_hit else min(max(kw_cov, relevance), 0.10)
+    else:
+        coverage = max(kw_cov, relevance) if effective_domain_hit else min(max(kw_cov, relevance), 0.18)
 
     # curated 资源加权：搜到我们入库过的文档说明知识库里有相关内容
     def _is_our_doc(u):
@@ -468,9 +499,9 @@ def local_search(client, query: str, scope: dict):
         return any(tag in ul for tag in ("curated", "single_", "reingest_", "fix_", "re2_"))
     curated_uris = [u for u in uris if _is_our_doc(u)]
     if curated_uris:
-        # 用 query 核心英文词（不含通用中文词）在正文中匹配
-        core_en = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower()))
-        core_cn = set(re.findall(r"[\u4e00-\u9fff]{3,4}", query))  # 3字以上中文更有区分度
+        # 用 query 核心英文词（去掉通用词）在正文中匹配
+        core_en = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower())) - _GENERIC_TERMS
+        core_cn = set(re.findall(r"[\u4e00-\u9fff]{3,4}", query)) - _GENERIC_TERMS
         query_terms = core_en | core_cn
         preview_text = " ".join(previews).lower()
         content_overlap = sum(1 for t in query_terms if t and t.lower() in preview_text)
@@ -509,6 +540,7 @@ def local_search(client, query: str, scope: dict):
 
     return txt, coverage, {
         "kw_cov": round(kw_cov, 3),
+        "core_cov": round(core_cov, 3),
         "domain_hit": effective_domain_hit,
         "target_terms": target_terms[:6],
         "uris": uris[:8],
@@ -529,6 +561,7 @@ def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
     low_quality = meta.get("avg_top_trust", 0) < 5.4
     low_fresh = meta.get("fresh_ratio", 0) < 0.25
     weak_feedback = meta.get("max_feedback_score", 0) <= 0
+    core_cov = meta.get("core_cov", 1.0)
 
     # 覆盖率阈值（已知内部域名可更宽松，减少重复外搜）
     low_cov_threshold = 0.45
@@ -537,6 +570,9 @@ def external_boost_needed(query: str, scope: dict, coverage: float, meta: dict):
 
     if coverage < low_cov_threshold:
         return True, "low_coverage"
+    # 核心词覆盖低 = 知识库对这个话题实际没覆盖，即使通用词拉高了 coverage
+    if core_cov < 0.4:
+        return True, "low_core_coverage"
     if need_fresh and (low_fresh or low_quality):
         return True, "freshness_or_quality_boost"
     if need_fresh and weak_feedback and low_quality:
@@ -829,7 +865,7 @@ def run(query: str):
         m.step('local_search', True, {'coverage': coverage, 'kw_cov': meta.get('kw_cov'), 'domain_hit': meta.get('domain_hit')})
         m.score('coverage_before_external', round(coverage, 3))
         print(
-            f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, "
+            f"✅ STEP 3 完成: coverage={coverage:.2f}, kw_cov={meta['kw_cov']:.2f}, core_cov={meta.get('core_cov', '?')}, "
             f"domain_hit={meta['domain_hit']}, relevance={meta.get('relevance')}, evidence={meta.get('evidence_ratio')}, "
             f"avg_trust={meta.get('avg_top_trust')}, fresh_ratio={meta.get('fresh_ratio')}, fb_max={meta.get('max_feedback_score',0)}, "
             f"priority_uris={meta.get('priority_uris',[])}, rank_preview={meta.get('rank_preview',[])}, "
