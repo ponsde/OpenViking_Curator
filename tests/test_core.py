@@ -17,10 +17,15 @@ from curator import (
     route_scope,
     deterministic_relevance,
     uri_feedback_score,
+    uri_trust_score,
+    uri_freshness_score,
     build_feedback_priority_uris,
     external_boost_needed,
     _build_source_footer,
+    validate_config,
+    build_priority_context,
 )
+from curator_query import should_route
 
 
 # ─── route_scope ─────────────────────────────────────────────
@@ -254,6 +259,120 @@ class TestFeedbackStore(unittest.TestCase):
             feedback_store.apply('viking://concurrent', 'up')
         data = feedback_store.load()
         self.assertEqual(data['viking://concurrent']['up'], 20)
+
+
+
+# ─── validate_config ─────────────────────────────────────────
+
+class TestValidateConfig(unittest.TestCase):
+
+    def test_valid_config(self):
+        """Should not raise with all required vars set."""
+        import curator.config as cfg
+        old = (cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY)
+        cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = 'http://x', 'k', 'g'
+        try:
+            cfg.validate_config()  # no exception = pass
+        finally:
+            cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = old
+
+    @patch.dict(os.environ, {'CURATOR_OAI_BASE': '', 'CURATOR_OAI_KEY': ''}, clear=False)
+    def test_missing_oai_raises(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            # Force re-import to pick up empty env
+            from curator.config import validate_config as vc
+            # Temporarily clear the module-level vars
+            import curator.config as cfg
+            old_base, old_key = cfg.OAI_BASE, cfg.OAI_KEY
+            cfg.OAI_BASE, cfg.OAI_KEY = '', ''
+            try:
+                cfg.validate_config()
+            finally:
+                cfg.OAI_BASE, cfg.OAI_KEY = old_base, old_key
+        self.assertIn('CURATOR_OAI_BASE', str(ctx.exception))
+
+
+# ─── uri_trust_score ─────────────────────────────────────────
+
+class TestUriTrustScore(unittest.TestCase):
+
+    def test_known_project_high_trust(self):
+        score = uri_trust_score('viking://resources/openviking_guide')
+        self.assertGreater(score, 6.0)
+
+    def test_curated_medium_trust(self):
+        score = uri_trust_score('viking://resources/123_curated/doc.md')
+        self.assertGreater(score, 6.0)
+
+    def test_unknown_uri(self):
+        score = uri_trust_score('viking://resources/random_doc')
+        self.assertAlmostEqual(score, 5.5)
+
+    def test_license_low_trust(self):
+        score = uri_trust_score('viking://resources/license.md')
+        self.assertLess(score, 5.0)
+
+
+# ─── uri_freshness_score ─────────────────────────────────────
+
+class TestUriFreshnessScore(unittest.TestCase):
+
+    def test_always_returns_one(self):
+        """Current placeholder implementation always returns 1.0."""
+        self.assertEqual(uri_freshness_score('anything'), 1.0)
+
+
+# ─── build_priority_context ──────────────────────────────────
+
+class TestBuildPriorityContext(unittest.TestCase):
+
+    def test_filters_irrelevant_docs(self):
+        """Docs not containing core query terms should be filtered out."""
+        mock_client = MagicMock()
+        mock_client.read.return_value = "This is about Python machine learning frameworks"
+        result = build_priority_context(mock_client, ['uri1', 'uri2'], query='Nginx 反向代理')
+        self.assertEqual(result, '')  # all filtered out
+
+    def test_keeps_relevant_docs(self):
+        mock_client = MagicMock()
+        mock_client.read.return_value = "Docker compose 部署指南，容器化最佳实践"
+        result = build_priority_context(mock_client, ['uri1'], query='Docker 部署')
+        self.assertIn('Docker', result)
+
+    def test_no_query_no_filter(self):
+        mock_client = MagicMock()
+        mock_client.read.return_value = "Any content here"
+        result = build_priority_context(mock_client, ['uri1'])
+        self.assertIn('Any content', result)
+
+
+# ─── should_route (curator_query gate) ───────────────────────
+
+class TestShouldRoute(unittest.TestCase):
+
+    def test_tech_question_routes(self):
+        routed, reason = should_route('Redis 和 Memcached 怎么选')
+        self.assertTrue(routed)
+
+    def test_greeting_blocks(self):
+        routed, reason = should_route('你好')
+        self.assertFalse(routed)
+
+    def test_positive_overrides_weak_negative(self):
+        routed, reason = should_route('ok 那 Docker 怎么部署')
+        self.assertTrue(routed)
+
+    def test_strong_negative_blocks(self):
+        routed, reason = should_route('今天天气怎么样')
+        self.assertFalse(routed)
+
+    def test_empty_query(self):
+        routed, reason = should_route('')
+        self.assertFalse(routed)
+
+    def test_pure_command_blocks(self):
+        routed, reason = should_route('帮我跑一下 git status')
+        self.assertFalse(routed)
 
 
 if __name__ == '__main__':
