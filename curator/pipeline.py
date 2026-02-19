@@ -111,6 +111,21 @@ def run(query: str) -> dict:
         m.step('conflict', True, {'has_conflict': conflict.get('has_conflict', False)})
         m.flag('has_conflict', bool(conflict.get('has_conflict', False)))
 
+        # ── 渐进式去重（每次检查 2-3 对，不阻塞主流程） ──
+        try:
+            from .dedup import incremental_dedup
+            dedup_uris = meta.get('uris', [])
+            if len(dedup_uris) >= 2:
+                dedup_result = incremental_dedup(client, dedup_uris, max_checks=2)
+                if dedup_result["merged"] > 0:
+                    log.info("dedup: 本次合并 %d 对重复文档", dedup_result["merged"])
+                m.step('dedup', True, dedup_result)
+            else:
+                m.step('dedup', True, {'checked': 0, 'merged': 0})
+        except Exception as e:
+            log.debug("dedup skipped: %s", e)
+            m.step('dedup', False, {'error': str(e)})
+
         log.info("STEP 8/8 生成回答...")
         priority_ctx = build_priority_context(client, meta.get('priority_uris', []), query=query)
         ans = answer(query, local_txt, external_txt, priority_ctx=priority_ctx,

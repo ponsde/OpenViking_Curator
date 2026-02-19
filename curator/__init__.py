@@ -21,6 +21,7 @@ from .retrieval import (
 from .search import external_boost_needed, external_search, cross_validate
 from .review import judge_and_pack, ingest_markdown, detect_conflict
 from .answer import answer, _build_source_footer
+from .dedup import incremental_dedup
 from .pipeline import run
 
 __all__ = [
