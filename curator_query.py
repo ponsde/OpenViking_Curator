@@ -10,84 +10,135 @@ curator_query.py — 一体化查询入口
 import json, os, re, sys
 from pathlib import Path
 
-# ── 快速门控（不调 LLM，纯规则） ──
+# ── 路由门控：LLM 判断 + 规则兜底 ──
 
-# 明确需要插件的信号词
-POSITIVE = [
-    # 知识类
-    r"是什么", r"怎么", r"原理", r"架构", r"区别", r"对比", r"比较",
-    r"总结", r"文档", r"资料", r"教程", r"部署", r"配置",
-    r"what\s+is", r"how\s+(does|do|to|can)", r"difference", r"compare",
-    r"architecture", r"tutorial", r"deploy", r"setup",
-    r"为什么", r"why", r"优缺点", r"pros?\s*(and|&)\s*cons?",
-    r"best\s+practice", r"最佳实践",
-    # 选型/推荐
-    r"选", r"推荐", r"方案", r"选型", r"入门", r"指南", r"该用",
-    r"recommend", r"which\s+(one|should)", r"suggest",
-    # 经验召回
-    r"历史", r"之前", r"上次", r"经验", r"参考",
-    # 排查/调试
-    r"排查", r"日志", r"故障", r"报错", r"错误", r"怎么看", r"怎么用",
-    r"troubleshoot", r"error", r"log", r"debug", r"502|503|504|timeout",
-    # 开发任务
-    r"写一个", r"搭建", r"加固", r"注册", r"自动化",
-    r"pipeline", r"优化", r"迁移", r"接入", r"对接",
-    r"script", r"automat", r"build", r"implement", r"create",
-    # 技术名词（出现就大概率是技术问题）
-    r"docker|nginx|redis|mysql|postgres|k8s|kubernetes",
-    r"api|sdk|cli|ssh|ssl|tls|http|websocket",
-    r"python|node|rust|go|java|typescript",
-    r"linux|ubuntu|centos|systemd",
-    # 通用知识信号
-    r"支持|兼容|版本|最新|功能|特性|渠道|安装|升级|更新",
-    r"support|compatible|version|feature|install|upgrade|channel",
+# 绝对拦截（无论如何不路由）
+_HARD_BLOCK = [
+    r"^(hi|hello|hey|你好|嗨|早|晚安|早安)\s*[!！.。]?$",
+    r"^(ok|好的|行|收到|嗯|谢谢|thanks|thx|明白|了解|知道了)\s*[!！.。]?$",
+    r"^(天气|时间|几点|日期|提醒我|remind)",
 ]
 
-# 明确不需要的信号词（日常对话/操作指令）
-# STRONG_NEGATIVE: 即使有正向信号也拦截（明确非技术场景）
-STRONG_NEGATIVE = [
-    r"天气|时间|几点|日期",
-    r"提醒我|remind",
+# 绝对通过（明确技术查询，跳过 LLM 判断直接路由）
+_HARD_PASS = [
+    r"(docker|nginx|redis|mysql|postgres|k8s|kubernetes).*(部署|配置|排查|教程|对比|怎么)",
+    r"(502|503|504|timeout|error|报错|故障).*(排查|怎么|日志|原因)",
+    r"(grok2api|openviking|newapi|oneapi).*(配置|部署|注册|怎么|架构)",
 ]
-NEGATIVE = [
-    r"^(hi|hello|hey|你好|嗨|早|晚安)\s*$",
-    r"^(ok|好的|行|收到|嗯|谢谢|thanks)\s*$",
-    r"帮我(跑|执行|运行|commit|push|重启)",
-    r"(?<!\w)(git|cd|ls|cat|rm|mv)\s+",
-    r"打开|关闭|启动|停止|重启",
-]
+
+_LLM_ROUTE_PROMPT = """你是一个路由判断器。判断用户的消息是否需要查询知识库来回答。
+
+需要查知识库的场景：
+- 知识类问题（原理、概念、区别、教程、怎么做）
+- 需要参考之前的项目经验或开发记录
+- 技术选型、对比、推荐
+- 排查、故障、报错相关
+- 涉及具体技术栈（Docker、Nginx、Python、API 等）
+- 用户在问一个你可能不知道但知识库里可能有答案的问题
+
+不需要查知识库的场景：
+- 日常对话（你好、谢谢、聊天）
+- 纯操作指令（帮我跑xxx、commit、重启、查看日志）
+- 简单的是/否确认
+- 上下文已经很明确的跟进讨论
+- 天气、时间、提醒等非知识类请求
+
+只回答一个 JSON: {"route": true/false, "reason": "一句话原因"}
+不要输出其他内容。"""
+
+
+def _llm_should_route(query: str) -> tuple[bool, str]:
+    """用 LLM 判断是否需要路由到知识库。快速、低成本。"""
+    import requests
+
+    # 优先用 Grok（快+免费），fallback 到 OAI
+    endpoints = []
+    grok_base = os.getenv("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
+    grok_key = os.getenv("CURATOR_GROK_KEY", "")
+    if grok_key:
+        endpoints.append((grok_base, grok_key, os.getenv("CURATOR_GROK_MODEL", "grok-4-fast")))
+    
+    oai_base = os.getenv("CURATOR_OAI_BASE", "")
+    oai_key = os.getenv("CURATOR_OAI_KEY", "")
+    if oai_key:
+        endpoints.append((oai_base, oai_key, "gemini-3-flash-preview"))
+
+    for base, key, model in endpoints:
+        try:
+            r = requests.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": _LLM_ROUTE_PROMPT},
+                        {"role": "user", "content": query},
+                    ],
+                    "stream": False,
+                    "max_tokens": 100,
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            content = r.json()["choices"][0]["message"]["content"]
+            m = re.search(r'\{[^}]+\}', content)
+            if m:
+                parsed = json.loads(m.group(0))
+                return bool(parsed.get("route", False)), parsed.get("reason", "llm_judge")
+        except Exception:
+            continue
+
+    # LLM 全挂 → fallback 到规则
+    return _rule_should_route(query)
+
+
+def _rule_should_route(query: str) -> tuple[bool, str]:
+    """纯规则 fallback（LLM 不可用时）。"""
+    q = query.strip().lower()
+
+    # 技术关键词
+    tech_signals = [
+        r"是什么|怎么|原理|架构|区别|对比|比较|部署|配置",
+        r"what\s+is|how\s+(does|do|to|can)|difference|compare|deploy|setup",
+        r"排查|日志|故障|报错|错误|troubleshoot|error|debug",
+        r"docker|nginx|redis|api|sdk|ssh|python|linux|systemd",
+        r"之前|经验|参考|上次|历史",
+        r"选型|推荐|方案|recommend|suggest",
+    ]
+    for p in tech_signals:
+        if re.search(p, q, re.IGNORECASE):
+            return True, "rule_positive"
+
+    if len(q) > 15 and ('?' in q or '？' in q or '吗' in q or '呢' in q):
+        return True, "rule_question_heuristic"
+
+    return False, "rule_no_signal"
 
 
 def should_route(query: str) -> tuple[bool, str]:
-    q = query.strip().lower()
+    load_env()  # ensure .env is loaded for LLM routing
+    q = query.strip()
     if len(q) < 4:
         return False, "too_short"
 
-    # 强负向：即使有正向信号也拦截（明确非技术场景）
-    for p in STRONG_NEGATIVE:
-        if re.search(p, q, re.IGNORECASE):
-            return False, "strong_negative"
+    ql = q.lower()
 
-    # 正向优先：有明确技术信号就路由
-    has_positive = False
-    for p in POSITIVE:
-        if re.search(p, q, re.IGNORECASE):
-            has_positive = True
-            break
+    # 硬拦截
+    for p in _HARD_BLOCK:
+        if re.search(p, ql, re.IGNORECASE):
+            return False, "hard_block"
 
-    if has_positive:
-        return True, "positive_match"
+    # 硬通过
+    for p in _HARD_PASS:
+        if re.search(p, ql, re.IGNORECASE):
+            return True, "hard_pass"
 
-    # 没有正向信号时，负向拦截
-    for p in NEGATIVE:
-        if re.search(p, q, re.IGNORECASE):
-            return False, "negative_match"
-
-    # 中长问句（>15字、含问号）倾向路由
-    if len(q) > 15 and ('?' in q or '？' in q or '吗' in q or '呢' in q):
-        return True, "question_heuristic"
-
-    return False, "no_signal"
+    # LLM 判断
+    use_llm = os.getenv("CURATOR_LLM_ROUTE", "1") == "1"
+    if use_llm:
+        return _llm_should_route(q)
+    else:
+        return _rule_should_route(q)
 
 
 def load_env():
