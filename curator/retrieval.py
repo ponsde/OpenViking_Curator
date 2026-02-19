@@ -1,5 +1,6 @@
 """Retrieval: local search, keyword index, priority context building."""
 
+import asyncio
 import json
 import os
 import re
@@ -64,6 +65,51 @@ _GENERIC_TERMS = {
 }
 
 
+def _intent_search(client, query: str, limit: int = 5) -> list:
+    """用 OpenViking 原生 IntentAnalyzer 做智能检索。
+    
+    VLM 分析 query 意图，拆成多个 TypedQuery（resource/memory/skill），
+    分别检索后合并去重。比手写关键词展开更准确。
+    
+    失败时静默返回空列表，不影响主流程。
+    """
+    try:
+        from openviking.retrieve.intent_analyzer import IntentAnalyzer
+
+        analyzer = IntentAnalyzer(max_recent_messages=5)
+
+        async def _analyze():
+            return await analyzer.analyze(
+                compression_summary="",
+                messages=[],
+                current_message=query,
+            )
+
+        # 在新 event loop 里跑，避免跟 sync 环境冲突
+        plan = asyncio.run(_analyze())
+        
+        all_items = []
+        seen_uris = set()
+        
+        for tq in plan.queries[:5]:  # 最多取 5 个子查询
+            try:
+                res = client.search(tq.query, limit=limit)
+                for x in (getattr(res, "resources", []) or []):
+                    u = getattr(x, "uri", "")
+                    if u and u not in seen_uris:
+                        seen_uris.add(u)
+                        all_items.append(x)
+            except Exception:
+                pass
+        
+        log.info("IntentAnalyzer: %d 子查询 → %d 个结果", len(plan.queries), len(all_items))
+        return all_items
+        
+    except Exception as e:
+        log.debug("IntentAnalyzer 失败，回退普通检索: %s", e)
+        return []
+
+
 def local_search(client, query: str, scope: dict):
     # 缩写展开：短缩写在语义检索中容易被淹没，展开全称提升召回
     _ABBR_MAP = {
@@ -111,6 +157,15 @@ def local_search(client, query: str, scope: dict):
                 pass
 
     txt = str(all_items[:5])
+
+    # ── OV 原生智能检索（IntentAnalyzer）──
+    # 用 VLM 分析意图，拆成多角度子查询，补充普通检索可能遗漏的结果
+    intent_items = _intent_search(client, query, limit=5)
+    for x in intent_items:
+        u = getattr(x, "uri", "")
+        if u and u not in seen_uris:
+            seen_uris.add(u)
+            all_items.append(x)
 
     # ── 本地索引兜底 ──
     # OpenViking 检索不稳定时，用关键词索引补充候选
