@@ -66,47 +66,39 @@ _GENERIC_TERMS = {
 
 
 def _intent_search(client, query: str, limit: int = 5) -> list:
-    """用 OpenViking 原生 IntentAnalyzer 做智能检索。
+    """用 OpenViking 原生 session search 做完整智能检索。
     
-    VLM 分析 query 意图，拆成多个 TypedQuery（resource/memory/skill），
-    分别检索后合并去重。比手写关键词展开更准确。
+    完整流程：VLM 意图分析 → QueryPlan → HierarchicalRetriever → 多路合并。
+    用 AsyncOpenViking 绕过 SyncOpenViking 的 session search 死锁 bug。
+    共享同一个 AGFS 端口，不会冲突。
     
     失败时静默返回空列表，不影响主流程。
     """
     try:
-        from openviking.retrieve.intent_analyzer import IntentAnalyzer
+        import openviking as ov
+        from openviking.message.part import TextPart
+        data_path = os.environ.get('CURATOR_DATA_PATH', './data')
 
-        analyzer = IntentAnalyzer(max_recent_messages=5)
-
-        async def _analyze():
-            return await analyzer.analyze(
-                compression_summary="",
-                messages=[],
-                current_message=query,
-            )
-
-        # 在新 event loop 里跑，避免跟 sync 环境冲突
-        plan = asyncio.run(_analyze())
-        
-        all_items = []
-        seen_uris = set()
-        
-        for tq in plan.queries[:5]:  # 最多取 5 个子查询
+        async def _session_search():
+            aclient = ov.AsyncOpenViking(path=data_path)
+            await aclient.initialize()
             try:
-                res = client.search(tq.query, limit=limit)
-                for x in (getattr(res, "resources", []) or []):
-                    u = getattr(x, "uri", "")
-                    if u and u not in seen_uris:
-                        seen_uris.add(u)
-                        all_items.append(x)
-            except Exception:
-                pass
-        
-        log.info("IntentAnalyzer: %d 子查询 → %d 个结果", len(plan.queries), len(all_items))
-        return all_items
+                sess_info = await aclient.create_session()
+                sess_id = sess_info.get('session_id') or sess_info.get('id', '')
+                sess = aclient.session(sess_id)
+                sess.add_message('user', [TextPart(query)])
+                result = await aclient.search(query, session=sess, limit=limit)
+                await aclient.delete_session(sess_id)
+                return getattr(result, 'resources', []) or []
+            finally:
+                await aclient.close()
+
+        items = asyncio.run(_session_search())
+        log.info("OV session search: %d 个结果", len(items))
+        return items
         
     except Exception as e:
-        log.debug("IntentAnalyzer 失败，回退普通检索: %s", e)
+        log.debug("OV session search 失败，回退普通检索: %s", e)
         return []
 
 
