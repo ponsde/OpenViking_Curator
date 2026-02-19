@@ -214,13 +214,16 @@ def run_status() -> dict:
     return result
 
 
-def run_curator(query: str) -> dict:
-    """调用 curator.run() 获取结构化结果。"""
+def run_curator(query: str, use_v2: bool = True) -> dict:
+    """调用 curator pipeline 获取结构化结果。"""
     load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
     try:
-        from curator import run
+        if use_v2:
+            from curator.pipeline_v2 import run
+        else:
+            from curator.pipeline import run
         result = run(query)
     except Exception as e:
         return {"routed": True, "error": str(e)}
@@ -269,12 +272,13 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(0)
 
-    q = " ".join(args).strip()
+    q = " ".join(a for a in args if not a.startswith("--")).strip()
+    use_v2 = "--v1" not in args
 
     route, reason = should_route(q)
     if not route:
         print(json.dumps({"routed": False, "reason": reason}, ensure_ascii=False))
         sys.exit(0)
 
-    result = run_curator(q)
+    result = run_curator(q, use_v2=use_v2)
     print(json.dumps(result, ensure_ascii=False, indent=2))

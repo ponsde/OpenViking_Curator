@@ -139,3 +139,25 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         return {"has_conflict": False, "summary": "", "points": []}
 
 
+def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "unknown"):
+    """通过 OV HTTP API 入库（不依赖 SyncOpenViking）。"""
+    import datetime
+
+    p = Path(CURATED_DIR)
+    p.mkdir(parents=True, exist_ok=True)
+
+    today = datetime.date.today().isoformat()
+    ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
+    ttl_days = ttl_map.get(freshness, 60)
+
+    header = (
+        f"<!-- curator_meta: ingested={today} freshness={freshness} ttl_days={ttl_days} -->\n"
+        f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n\n"
+    )
+
+    fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
+    fn.write_text(header + markdown, encoding="utf-8")
+
+    # 通过 HTTP API 入库
+    result = ov_client.add_resource(str(fn), reason="curator_ingest")
+    return result
