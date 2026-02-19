@@ -153,7 +153,9 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
                 
                 return all_items
             finally:
-                await aclient.close()
+                # 不要 close singleton！只关闭会让其他调用者也挂掉
+                # AsyncOpenViking 是全局 singleton，close 会重置所有状态
+                pass
 
         items = asyncio.run(_session_search())
         log.info("OV session search: %d 个结果", len(items))

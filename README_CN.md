@@ -114,29 +114,39 @@ PROVIDERS["bing"] = bing_search
 ## 项目结构
 
 ```
-curator.py          # 核心 8 步管线
+curator/               # 核心包（模块化）
+  config.py            # 环境变量、阈值、HTTP 客户端
+  router.py            # 路由（规则 + LLM）
+  retrieval_v2.py      # OV 原生检索 + 覆盖率评估
+  session_manager.py   # OV HTTP client + 持久 session 生命周期
+  feedback.py          # trust/freshness/反馈打分
+  search.py            # 外搜 + 交叉验证
+  review.py            # 审核入库 + 冲突检测
+  answer.py            # 回答生成 + 来源透明度
+  pipeline_v2.py       # 主流程（6 步）
 curator_query.py       # CLI 入口（--help, --status, 查询）
 search_providers.py    # 可插拔搜索后端
 mcp_server.py          # MCP 服务器（stdio JSON-RPC，3 个工具）
-feedback_store.py      # 线程安全的反馈存储
-dedup.py               # AI 去重（scan/clean/merge）
-batch_ingest.py        # 批量入库（冷启动用）
-eval_batch.py          # 基准测试（10 题）
-freshness_rescan.py    # URL 可达性 + TTL 过期扫描
+feedback_store.py      # 线程安全反馈存储
+batch_ingest.py        # 批量入库（冷启动）
+eval_batch.py          # 批量评测
+freshness_rescan.py    # URL 可达性 + TTL 扫描
 Dockerfile             # 容器构建
-docker-compose.yml     # 一键 Docker 启动
-tests/test_core.py     # 22 个单元测试
+docker-compose.yml     # 一键启动
+tests/test_core.py     # 46 个单元测试
 ```
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -v   # 22 个测试，全部离线（不调外部 API）
+python -m pytest tests/ -v   # 46 个测试，全部离线（不调外部 API）
+python eval/benchmark.py     # 10题 benchmark（裸 OV vs curator v2）
+python eval/deadlock_repro.py --mode both  # 嵌入模式 vs HTTP 死锁复验
 ```
 
 ## 路线图
 
-见 [ROADMAP.md](ROADMAP.md)。当前版本 **v0.8**。
+见 [ROADMAP.md](ROADMAP.md)。当前版本 **v0.9**（OV 原生 v2 管线）。
 
 ## 贡献
 

@@ -137,12 +137,13 @@ All coverage/quality thresholds are configurable via env:
 curator/               # Core package (modular)
   config.py            # Env vars, thresholds, HTTP client
   router.py            # Rule-based + LLM scope routing
-  retrieval.py         # Local search, keyword index, priority context
+  retrieval_v2.py      # OV-native retrieval + coverage assessment
+  session_manager.py   # OV HTTP client + persistent session lifecycle
   feedback.py          # Trust/freshness scoring, feedback ranking
   search.py            # External search + cross-validation
   review.py            # AI review, ingest, conflict detection
   answer.py            # Answer generation + source transparency
-  pipeline.py          # Main 8-step run() function
+  pipeline_v2.py       # Main 6-step OV-native pipeline
 curator_query.py       # CLI entry (--help, --status, query)
 search_providers.py    # Pluggable search backends (grok/oai/custom)
 mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)
@@ -170,6 +171,8 @@ python3 mcp_server.py   # Starts stdio JSON-RPC server
 
 ```bash
 python -m pytest tests/ -v   # 46 tests, all internal (no API calls)
+python eval/benchmark.py     # 10-query benchmark (raw OV vs curator v2)
+python eval/deadlock_repro.py --mode both  # embedded vs HTTP deadlock check
 ```
 
 ## How is this different from LangChain / LlamaIndex?
@@ -184,7 +187,7 @@ Use alongside any RAG framework. It governs knowledge, not pipelines.
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Currently at **v0.8**.
+See [ROADMAP.md](ROADMAP.md). Currently at **v0.9** (OV-native v2 pipeline).
 
 ## Contributing
 

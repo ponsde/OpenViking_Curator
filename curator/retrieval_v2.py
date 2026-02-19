@@ -9,6 +9,7 @@
 import os
 import re
 from .config import log
+from .feedback import load_feedback, uri_feedback_score, uri_trust_score, uri_freshness_score
 
 
 def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
@@ -120,7 +121,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 3) -> tuple:
 
 
 def assess_coverage(result: dict) -> tuple:
-    """基于 OV 返回的 score 和数量评估覆盖率。
+    """基于 OV score + 质量信号评估覆盖率。
 
     返回: (coverage: float, need_external: bool, reason: str)
     """
@@ -129,26 +130,67 @@ def assess_coverage(result: dict) -> tuple:
     if not all_items:
         return 0.0, True, "no_results"
 
-    scores = [x.get("score", 0) for x in all_items if x.get("score", 0) > 0]
-    if not scores:
+    scored_items = [x for x in all_items if x.get("score", 0) > 0]
+    if not scored_items:
         return 0.0, True, "no_scores"
 
+    scores = [x.get("score", 0) for x in scored_items]
     avg_score = sum(scores) / len(scores)
     top_score = max(scores)
     count = len(scores)
 
-    # 评估逻辑：
-    # - top_score > 0.6 且 count >= 3 → 本地够用
-    # - top_score > 0.5 且 count >= 2 → 勉强够用
-    # - 否则 → 需要外搜
+    # ── 附加质量信号：feedback / trust / freshness / curated 命中 ──
+    uris = [x.get("uri", "") for x in scored_items if x.get("uri")]
+    fb = load_feedback(os.getenv("CURATOR_FEEDBACK_FILE", "feedback.json"))
+
+    if uris:
+        fb_scores = [uri_feedback_score(u, fb) for u in uris[:8]]
+        trust_scores = [uri_trust_score(u, fb) for u in uris[:8]]
+        fresh_scores = [uri_freshness_score(u) for u in uris[:8]]
+
+        max_fb = max(fb_scores) if fb_scores else 0
+        avg_trust = (sum(trust_scores) / len(trust_scores)) if trust_scores else 0.0
+        avg_fresh = (sum(fresh_scores) / len(fresh_scores)) if fresh_scores else 0.0
+
+        curated_hits = sum(
+            1 for u in uris[:8]
+            if any(k in u.lower() for k in ("curated", "auto_", "ov_exp_", "curator_"))
+        )
+        curated_ratio = curated_hits / max(1, min(8, len(uris)))
+    else:
+        max_fb = 0
+        avg_trust = 0.0
+        avg_fresh = 0.0
+        curated_ratio = 0.0
+
+    # base coverage（保留 v2 简洁逻辑）
     if top_score > 0.6 and count >= 3:
         coverage = min(1.0, avg_score + 0.2)
-        return coverage, False, "local_sufficient"
+        reason = "local_sufficient"
     elif top_score > 0.5 and count >= 2:
         coverage = avg_score
-        return coverage, False, "local_marginal"
+        reason = "local_marginal"
     elif top_score > 0.4 and count >= 1:
         coverage = avg_score * 0.8
-        return coverage, True, "low_coverage"
+        reason = "low_coverage"
     else:
-        return avg_score * 0.5, True, "insufficient"
+        coverage = avg_score * 0.5
+        reason = "insufficient"
+
+    # 质量加权：小幅修正，不要喧宾夺主
+    if max_fb > 0:
+        coverage = min(1.0, coverage + min(0.08, 0.02 * max_fb))
+    if avg_trust >= 6.5:
+        coverage = min(1.0, coverage + 0.04)
+    if avg_fresh >= 0.6:
+        coverage = min(1.0, coverage + 0.03)
+    if curated_ratio >= 0.4:
+        coverage = min(1.0, coverage + 0.04)
+
+    need_external = reason in ("low_coverage", "insufficient")
+    if coverage >= 0.55 and need_external:
+        # 避免质量信号提升后仍被旧 reason 误判外搜
+        need_external = False
+        reason = "local_marginal"
+
+    return coverage, need_external, reason

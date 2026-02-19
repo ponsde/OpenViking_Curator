@@ -22,12 +22,10 @@ from .search import external_boost_needed, external_search, cross_validate
 from .review import judge_and_pack, ingest_markdown, ingest_markdown_v2, detect_conflict
 from .answer import answer, _build_source_footer
 from .dedup import incremental_dedup
-from .pipeline import run
-
 # v2 modules
 from .session_manager import OVClient, SessionManager
 from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
-from .pipeline_v2 import run as run_v2
+from .pipeline_v2 import run
 
 __all__ = [
     "run", "route_scope", "local_search", "external_search",

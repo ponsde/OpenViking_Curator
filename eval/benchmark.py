@@ -98,23 +98,40 @@ BENCHMARK_QUERIES = [
 ]
 
 
-def run_raw_ov(client, query: str, limit: int = 5) -> dict:
-    """裸 OpenViking 检索（不经过 Curator）"""
+def run_raw_ov(query: str, limit: int = 5) -> dict:
+    """裸 OpenViking 检索（HTTP API，不经过 Curator）。"""
+    import urllib.request
+
+    def _post(path: str, payload: dict):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:9100{path}",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())
+
+    def _get(path: str):
+        with urllib.request.urlopen(f"http://127.0.0.1:9100{path}", timeout=60) as resp:
+            return json.loads(resp.read())
+
     start = time.time()
     results = []
     seen = set()
 
-    for method in [client.search, client.find]:
+    for path in ["/api/v1/search/search", "/api/v1/search/find"]:
         try:
-            res = method(query, limit=limit)
-            for x in (getattr(res, "resources", []) or []):
-                u = getattr(x, "uri", "")
+            res = _post(path, {"query": query, "limit": limit}).get("result", {})
+            for x in (res.get("resources", []) or []):
+                u = x.get("uri", "")
                 if u and u not in seen:
                     seen.add(u)
                     try:
-                        content = str(client.read(u))[:1000]
+                        import urllib.parse
+                        enc = urllib.parse.quote(u, safe='/:')
+                        content = (_get(f"/api/v1/content/read?uri={enc}").get("result", "") or "")[:1000]
                     except Exception:
-                        content = getattr(x, "abstract", "") or ""
+                        content = x.get("abstract", "") or ""
                     results.append({"uri": u, "content": content})
         except Exception:
             pass
@@ -124,7 +141,7 @@ def run_raw_ov(client, query: str, limit: int = 5) -> dict:
 
 
 def run_curator(query: str, client=None) -> dict:
-    """Curator 全流程，单 query 超时 120s"""
+    """Curator v2 全流程，单 query 超时 120s"""
     import signal
 
     class TimeoutError(Exception):
@@ -137,16 +154,16 @@ def run_curator(query: str, client=None) -> dict:
     try:
         old_handler = signal.signal(signal.SIGALRM, _handler)
         signal.alarm(120)  # 120s 超时
-        from curator.pipeline import run
-        result = run(query, client=client)
+        from curator.pipeline_v2 import run
+        result = run(query)
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
         elapsed = time.time() - start
         return {
             "answer": result.get("answer", ""),
-            "coverage": result.get("coverage", 0),
-            "routed": result.get("routed", False),
-            "source": result.get("source", ""),
+            "coverage": result.get("meta", {}).get("coverage", 0),
+            "routed": True,
+            "source": "",
             "elapsed": round(elapsed, 2),
         }
     except Exception as e:
@@ -174,11 +191,6 @@ def score_hit(content: str, expected_topics: list) -> dict:
 
 def run_benchmark():
     """运行完整 benchmark"""
-    import openviking as ov
-
-    client = ov.SyncOpenViking(path='/home/ponsde/OpenViking_test/data')
-    client.initialize()
-
     results = []
 
     for q in BENCHMARK_QUERIES:
@@ -187,12 +199,12 @@ def run_benchmark():
         print(f"{'='*60}")
 
         # 1. 裸 OV
-        raw = run_raw_ov(client, q["query"])
+        raw = run_raw_ov(q["query"])
         raw_content = "\n".join(r["content"] for r in raw["results"])
         raw_score = score_hit(raw_content, q["expected_topics"])
 
-        # 2. Curator（复用同一个 client，避免端口冲突）
-        cur = run_curator(q["query"], client=client)
+        # 2. Curator v2
+        cur = run_curator(q["query"])
         cur_content = cur.get("answer", "") + " " + cur.get("source", "")
         cur_score = score_hit(cur_content, q["expected_topics"])
 
@@ -226,8 +238,6 @@ def run_benchmark():
         print(f"  裸 OV:    命中 {raw_score['hit_rate']:.0%} ({len(raw_score['hits'])}/{len(q['expected_topics'])})  {raw['elapsed']:.1f}s")
         print(f"  Curator:  命中 {cur_score['hit_rate']:.0%} ({len(cur_score['hits'])}/{len(q['expected_topics'])})  {cur.get('elapsed', 0):.1f}s")
         print(f"  胜者: {entry['winner']}")
-
-    client.close()
 
     # ── 汇总 ──
     print(f"\n{'='*60}")

@@ -192,7 +192,8 @@ def run(query: str, client=None) -> dict:
                                     parts.append(_ContextPart(uri=_uri))
                             _sess.add_message('assistant', parts)
                         finally:
-                            await _ac.close()
+                            # singleton，不 close
+                            pass
                     _asyncio.run(_add_assistant_msg())
         except Exception as _e:
             log.debug("session 回写跳过: %s", _e)
