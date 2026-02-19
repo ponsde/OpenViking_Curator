@@ -65,12 +65,42 @@ _GENERIC_TERMS = {
 }
 
 
+_CURATOR_SESSION_ID_FILE = os.path.join(
+    os.environ.get('CURATOR_DATA_PATH', './data'), '.curator_session_id'
+)
+
+
+def _get_or_create_session_id(aclient) -> str:
+    """获取或创建 Curator 的持久 session，让 OV 越用越懂用户。"""
+    import asyncio
+    
+    # 尝试读取已有的 session id
+    if os.path.exists(_CURATOR_SESSION_ID_FILE):
+        sid = open(_CURATOR_SESSION_ID_FILE).read().strip()
+        if sid:
+            return sid
+    
+    # 创建新 session
+    async def _create():
+        info = await aclient.create_session()
+        return info.get('session_id') or info.get('id', '')
+    
+    sid = asyncio.get_event_loop().run_until_complete(_create())
+    if sid:
+        os.makedirs(os.path.dirname(_CURATOR_SESSION_ID_FILE), exist_ok=True)
+        open(_CURATOR_SESSION_ID_FILE, 'w').write(sid)
+        log.info("创建 Curator 持久 session: %s", sid)
+    return sid
+
+
 def _intent_search(client, query: str, limit: int = 5) -> list:
     """用 OpenViking 原生 session search 做完整智能检索。
     
+    使用持久 session：每次查询都积累到同一个 session 中，
+    OV 会记住历史查询模式，让检索越来越精准。
+    
     完整流程：VLM 意图分析 → QueryPlan → HierarchicalRetriever → 多路合并。
     用 AsyncOpenViking 绕过 SyncOpenViking 的 session search 死锁 bug。
-    共享同一个 AGFS 端口，不会冲突。
     
     失败时静默返回空列表，不影响主流程。
     """
@@ -83,12 +113,30 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
             aclient = ov.AsyncOpenViking(path=data_path)
             await aclient.initialize()
             try:
-                sess_info = await aclient.create_session()
-                sess_id = sess_info.get('session_id') or sess_info.get('id', '')
-                sess = aclient.session(sess_id)
+                # 复用持久 session
+                sid = None
+                if os.path.exists(_CURATOR_SESSION_ID_FILE):
+                    sid = open(_CURATOR_SESSION_ID_FILE).read().strip()
+                
+                if not sid:
+                    sess_info = await aclient.create_session()
+                    sid = sess_info.get('session_id') or sess_info.get('id', '')
+                    if sid:
+                        os.makedirs(os.path.dirname(_CURATOR_SESSION_ID_FILE) or '.', exist_ok=True)
+                        open(_CURATOR_SESSION_ID_FILE, 'w').write(sid)
+                        log.info("创建 Curator 持久 session: %s", sid)
+                
+                sess = aclient.session(sid)
                 sess.add_message('user', [TextPart(query)])
+                
                 result = await aclient.search(query, session=sess, limit=limit)
-                await aclient.delete_session(sess_id)
+                
+                # commit 让 OV 归档记忆，越用越精准
+                try:
+                    sess.commit()
+                except Exception:
+                    pass
+                
                 return getattr(result, 'resources', []) or []
             finally:
                 await aclient.close()
