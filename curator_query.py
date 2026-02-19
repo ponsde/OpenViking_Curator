@@ -16,7 +16,7 @@ from pathlib import Path
 _HARD_BLOCK = [
     r"^(hi|hello|hey|你好|嗨|早|晚安|早安)\s*[!！.。]?$",
     r"^(ok|好的|行|收到|嗯|谢谢|thanks|thx|明白|了解|知道了)\s*[!！.。]?$",
-    r"^(天气|时间|几点|日期|提醒我|remind)",
+    r"(天气|时间|几点|日期|提醒我|remind\s*me)",
 ]
 
 # 绝对通过（明确技术查询，跳过 LLM 判断直接路由）
