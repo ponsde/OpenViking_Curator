@@ -215,7 +215,10 @@ def run_status() -> dict:
 
 
 def run_curator(query: str) -> dict:
-    """调用 curator v2 pipeline 获取结构化结果。"""
+    """调用 curator v2 pipeline 获取结构化结果。
+
+    v2 不再生成回答，只返回结构化数据。调用方自己组装 LLM 上下文。
+    """
     load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
@@ -227,7 +230,11 @@ def run_curator(query: str) -> dict:
 
     return {
         "routed": True,
-        "answer": result.get("answer", ""),
+        "query": result.get("query", query),
+        "context_text": result.get("context_text", ""),
+        "external_text": result.get("external_text", ""),
+        "coverage": result.get("coverage", 0),
+        "conflict": result.get("conflict", {}),
         "meta": {
             "duration": result.get("metrics", {}).get("duration_sec"),
             "external_triggered": result.get("meta", {}).get("external_triggered"),
@@ -235,6 +242,7 @@ def run_curator(query: str) -> dict:
             "has_conflict": result.get("meta", {}).get("has_conflict"),
             "ingested": result.get("meta", {}).get("ingested"),
             "coverage": result.get("meta", {}).get("coverage"),
+            "used_uris": result.get("meta", {}).get("used_uris", []),
             "case_path": result.get("case_path"),
         },
     }

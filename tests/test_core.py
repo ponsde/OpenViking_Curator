@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Unit tests for OpenViking Curator core functions."""
+"""Unit tests for OpenViking Curator v2 core functions."""
 import json, os, sys, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set required env vars before importing curator
 os.environ.setdefault('OAI_BASE', 'http://localhost:8000/v1')
@@ -15,15 +15,18 @@ os.environ.setdefault('GROK_SEARCH_URL', 'http://localhost:8788')
 import feedback_store
 from curator import (
     route_scope,
-    deterministic_relevance,
     uri_feedback_score,
     uri_trust_score,
     uri_freshness_score,
     build_feedback_priority_uris,
     external_boost_needed,
-    _build_source_footer,
     validate_config,
-    build_priority_context,
+    # v2 modules
+    ov_retrieve,
+    load_context,
+    assess_coverage,
+    answer,
+    _build_source_footer,
 )
 from curator_query import should_route
 
@@ -54,47 +57,104 @@ class TestRouteScope(unittest.TestCase):
         self.assertTrue(scope['need_fresh'])
 
 
-# ─── deterministic_relevance ─────────────────────────────────
+# ─── assess_coverage (v2) ────────────────────────────────────
 
-class TestDeterministicRelevance(unittest.TestCase):
+class TestAssessCoverage(unittest.TestCase):
+    """Test simplified coverage assessment."""
 
-    def test_high_coverage(self):
-        """Full keyword coverage + evidence should score high."""
-        relevance, ev_ratio, uri_hit = deterministic_relevance(
-            query="OpenViking 部署步骤",
-            scope={'domain': 'tech', 'keywords': ['openviking', '部署', '步骤'], 'time_hint': 'none'},
-            txt="OpenViking 部署步骤如下：先安装依赖……",
-            uris=['viking://tech/deploy-guide'],
-            domain_hit=True,
-            kw_cov=1.0,
-        )
-        self.assertGreaterEqual(relevance, 0.7)
-        self.assertGreater(ev_ratio, 0)
+    def test_no_results(self):
+        cov, need_ext, reason = assess_coverage({"all_items": []})
+        self.assertEqual(cov, 0.0)
+        self.assertTrue(need_ext)
+        self.assertEqual(reason, "no_results")
 
-    def test_zero_coverage(self):
-        """No keyword match should score low."""
-        relevance, ev_ratio, uri_hit = deterministic_relevance(
-            query="明天天气怎么样",
-            scope={'domain': 'general', 'keywords': ['天气', '明天'], 'time_hint': 'none'},
-            txt="这是一篇关于 Python 编程的文章",
-            uris=[],
-            domain_hit=False,
-            kw_cov=0.0,
-        )
-        self.assertLessEqual(relevance, 0.3)
+    def test_no_scores(self):
+        cov, need_ext, reason = assess_coverage({"all_items": [{"uri": "x", "score": 0}]})
+        self.assertEqual(cov, 0.0)
+        self.assertTrue(need_ext)
+        self.assertEqual(reason, "no_scores")
 
-    def test_partial_coverage(self):
-        """Partial match should be in between."""
-        relevance, ev_ratio, uri_hit = deterministic_relevance(
-            query="grok 搜索 API",
-            scope={'domain': 'tech', 'keywords': ['grok', '搜索', 'api'], 'time_hint': 'none'},
-            txt="grok 是一个工具",
-            uris=['viking://tech/grok'],
-            domain_hit=True,
-            kw_cov=0.33,
-        )
-        self.assertGreater(relevance, 0.2)
-        self.assertLess(relevance, 0.8)
+    def test_high_score_sufficient(self):
+        items = [
+            {"uri": "a", "score": 0.7},
+            {"uri": "b", "score": 0.6},
+            {"uri": "c", "score": 0.5},
+        ]
+        cov, need_ext, reason = assess_coverage({"all_items": items})
+        self.assertGreater(cov, 0.5)
+        self.assertFalse(need_ext)
+        self.assertEqual(reason, "local_sufficient")
+
+    def test_marginal_coverage(self):
+        items = [
+            {"uri": "a", "score": 0.5},
+        ]
+        cov, need_ext, reason = assess_coverage({"all_items": items})
+        self.assertFalse(need_ext)
+        self.assertEqual(reason, "local_marginal")
+
+    def test_low_score_triggers_external(self):
+        items = [
+            {"uri": "a", "score": 0.3},
+        ]
+        cov, need_ext, reason = assess_coverage({"all_items": items})
+        self.assertTrue(need_ext)
+        self.assertIn(reason, ("low_coverage", "insufficient"))
+
+
+# ─── load_context (v2) ───────────────────────────────────────
+
+class TestLoadContext(unittest.TestCase):
+    """Test L0→L1→L2 layered context loading."""
+
+    def test_empty_items(self):
+        mock_ov = MagicMock()
+        text, uris = load_context(mock_ov, [], "test query")
+        self.assertEqual(text, "")
+        self.assertEqual(uris, [])
+
+    def test_l1_used_for_low_score(self):
+        """Low-score items should use L1 (overview), not L2."""
+        mock_ov = MagicMock()
+        mock_ov.overview.return_value = "This is a detailed overview of the topic."
+        mock_ov.read.return_value = "Full content here"
+
+        items = [{"uri": "a", "score": 0.4, "abstract": "short abstract"}]
+        text, uris = load_context(mock_ov, items, "test query")
+
+        self.assertIn("a", uris)
+        # overview was called
+        mock_ov.overview.assert_called_once_with("a")
+        # read should NOT be called (score < 0.55)
+        mock_ov.read.assert_not_called()
+
+    def test_l2_used_for_high_score(self):
+        """High-score top items should get L2 (read)."""
+        mock_ov = MagicMock()
+        mock_ov.overview.return_value = "Overview content here with enough text."
+        mock_ov.read.return_value = "Full detailed content of the document for deep reading."
+
+        items = [{"uri": "a", "score": 0.7, "abstract": "abstract text"}]
+        text, uris = load_context(mock_ov, items, "test query")
+
+        self.assertIn("a", uris)
+        mock_ov.read.assert_called_once_with("a")
+        self.assertIn("Full detailed content", text)
+
+    def test_max_l2_respected(self):
+        """Should not read more than max_l2 items at L2."""
+        mock_ov = MagicMock()
+        mock_ov.overview.return_value = "Overview text sufficient for display."
+        mock_ov.read.return_value = "Full content for reading."
+
+        items = [
+            {"uri": f"item_{i}", "score": 0.8 - i * 0.01, "abstract": "abs"}
+            for i in range(5)
+        ]
+        text, uris = load_context(mock_ov, items, "test", max_l2=2)
+
+        # read should be called at most 2 times
+        self.assertLessEqual(mock_ov.read.call_count, 2)
 
 
 # ─── uri_feedback_score ──────────────────────────────────────
@@ -120,7 +180,6 @@ class TestUriFeedbackScore(unittest.TestCase):
         """Child URI should pick up parent feedback."""
         fb = {'viking://tech': {'up': 3, 'down': 0, 'adopt': 1}}
         score = uri_feedback_score('viking://tech/sub/page', fb)
-        # Should find parent and return > 0
         self.assertGreaterEqual(score, 0)
 
 
@@ -149,7 +208,6 @@ class TestBuildFeedbackPriorityUris(unittest.TestCase):
             topn=2,
         )
         self.assertEqual(len(uri_list), 2)
-        # 'a' should rank first (highest score)
         self.assertEqual(uri_list[0], 'viking://a')
 
     def test_negative_excluded_from_top(self):
@@ -158,7 +216,6 @@ class TestBuildFeedbackPriorityUris(unittest.TestCase):
             feedback_file=self.tmpfile.name,
             topn=3,
         )
-        # 'b' has negative score, still returned if it's the only one
         self.assertIn('viking://b', uri_list)
 
 
@@ -186,7 +243,6 @@ class TestExternalBoostNeeded(unittest.TestCase):
         self.assertFalse(triggered)
 
     def test_low_core_coverage_triggers(self):
-        """Core keyword miss should trigger external even if coverage is OK."""
         triggered, reason = external_boost_needed(
             query="Deno 2.0 和 Bun 性能对比",
             scope={'domain': 'general', 'keywords': ['Deno', 'Bun']},
@@ -197,7 +253,7 @@ class TestExternalBoostNeeded(unittest.TestCase):
         self.assertEqual(reason, 'low_core_coverage')
 
 
-# ─── _build_source_footer ────────────────────────────────────
+# ─── _build_source_footer (answer.py, optional) ─────────────
 
 class TestSourceFooter(unittest.TestCase):
 
@@ -231,7 +287,6 @@ class TestFeedbackStore(unittest.TestCase):
             suffix='.json', delete=False
         )
         self.tmpfile.close()
-        # Point store at temp file
         feedback_store.STORE = Path(self.tmpfile.name)
         Path(self.tmpfile.name).write_text('{}', encoding='utf-8')
 
@@ -254,12 +309,10 @@ class TestFeedbackStore(unittest.TestCase):
             feedback_store.apply('viking://x', 'invalid')
 
     def test_concurrent_safety(self):
-        """Multiple sequential applies should not lose data."""
         for i in range(20):
             feedback_store.apply('viking://concurrent', 'up')
         data = feedback_store.load()
         self.assertEqual(data['viking://concurrent']['up'], 20)
-
 
 
 # ─── validate_config ─────────────────────────────────────────
@@ -267,21 +320,18 @@ class TestFeedbackStore(unittest.TestCase):
 class TestValidateConfig(unittest.TestCase):
 
     def test_valid_config(self):
-        """Should not raise with all required vars set."""
         import curator.config as cfg
         old = (cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY)
         cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = 'http://x', 'k', 'g'
         try:
-            cfg.validate_config()  # no exception = pass
+            cfg.validate_config()
         finally:
             cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = old
 
     @patch.dict(os.environ, {'CURATOR_OAI_BASE': '', 'CURATOR_OAI_KEY': ''}, clear=False)
     def test_missing_oai_raises(self):
         with self.assertRaises(RuntimeError) as ctx:
-            # Force re-import to pick up empty env
             from curator.config import validate_config as vc
-            # Temporarily clear the module-level vars
             import curator.config as cfg
             old_base, old_key = cfg.OAI_BASE, cfg.OAI_KEY
             cfg.OAI_BASE, cfg.OAI_KEY = '', ''
@@ -313,21 +363,18 @@ class TestUriTrustScore(unittest.TestCase):
         self.assertLess(score, 5.0)
 
     def test_feedback_boosts_trust(self):
-        """Positive feedback should increase trust score."""
         fb = {'viking://resources/random_doc': {'up': 5, 'down': 0, 'adopt': 2}}
         base = uri_trust_score('viking://resources/random_doc')
         boosted = uri_trust_score('viking://resources/random_doc', fb=fb)
         self.assertGreater(boosted, base)
 
     def test_feedback_decreases_trust(self):
-        """Negative feedback should decrease trust score."""
         fb = {'viking://resources/openviking_guide': {'up': 0, 'down': 8, 'adopt': 0}}
         base = uri_trust_score('viking://resources/openviking_guide')
         decreased = uri_trust_score('viking://resources/openviking_guide', fb=fb)
         self.assertLess(decreased, base)
 
     def test_trust_clamped(self):
-        """Trust should stay within 1.0 ~ 10.0."""
         fb_extreme = {'viking://resources/x': {'up': 100, 'down': 0, 'adopt': 50}}
         score = uri_trust_score('viking://resources/x', fb=fb_extreme)
         self.assertLessEqual(score, 10.0)
@@ -339,71 +386,41 @@ class TestUriTrustScore(unittest.TestCase):
 class TestUriFreshnessScore(unittest.TestCase):
 
     def test_recent_uri_full_freshness(self):
-        """URI with timestamp from ~1 day ago should score 1.0."""
         import time as _time
-        recent_ts = int(_time.time()) - 86400  # 1 day ago
+        recent_ts = int(_time.time()) - 86400
         uri = f'viking://resources/{recent_ts}_test_doc'
         score = uri_freshness_score(uri)
         self.assertEqual(score, 1.0)
 
     def test_old_uri_decayed(self):
-        """URI with timestamp from 120 days ago should be < 1.0 but > 0.2."""
         import time as _time
-        old_ts = int(_time.time()) - 120 * 86400  # 120 days ago
+        old_ts = int(_time.time()) - 120 * 86400
         uri = f'viking://resources/{old_ts}_old_doc'
         score = uri_freshness_score(uri)
         self.assertLess(score, 1.0)
         self.assertGreater(score, 0.2)
 
     def test_very_old_uri_stale(self):
-        """URI with timestamp > 365 days should score 0.1."""
         import time as _time
-        ancient_ts = int(_time.time()) - 400 * 86400  # 400 days ago
+        ancient_ts = int(_time.time()) - 400 * 86400
         uri = f'viking://resources/{ancient_ts}_ancient_doc'
         score = uri_freshness_score(uri)
         self.assertEqual(score, 0.1)
 
     def test_no_timestamp_returns_default(self):
-        """URI without timestamp returns 0.5 (unknown age)."""
         score = uri_freshness_score('viking://resources/no_timestamp_here')
         self.assertEqual(score, 0.5)
 
     def test_meta_date_overrides_uri(self):
-        """Meta date should be used when provided."""
         import time as _time
         now = _time.time()
-        meta = {'created_at': int(now - 10 * 86400)}  # 10 days ago
+        meta = {'created_at': int(now - 10 * 86400)}
         score = uri_freshness_score('viking://resources/some_doc', meta=meta)
         self.assertEqual(score, 1.0)
 
     def test_meta_iso_date(self):
-        """ISO date strings in meta should be parsed."""
         score = uri_freshness_score('viking://resources/x', meta={'date': '2026-02-15'}, now=1771439300.0)
-        self.assertGreater(score, 0.9)  # ~3 days old
-
-
-# ─── build_priority_context ──────────────────────────────────
-
-class TestBuildPriorityContext(unittest.TestCase):
-
-    def test_filters_irrelevant_docs(self):
-        """Docs not containing core query terms should be filtered out."""
-        mock_client = MagicMock()
-        mock_client.read.return_value = "This is about Python machine learning frameworks"
-        result = build_priority_context(mock_client, ['uri1', 'uri2'], query='Nginx 反向代理')
-        self.assertEqual(result, '')  # all filtered out
-
-    def test_keeps_relevant_docs(self):
-        mock_client = MagicMock()
-        mock_client.read.return_value = "Docker compose 部署指南，容器化最佳实践"
-        result = build_priority_context(mock_client, ['uri1'], query='Docker 部署')
-        self.assertIn('Docker', result)
-
-    def test_no_query_no_filter(self):
-        mock_client = MagicMock()
-        mock_client.read.return_value = "Any content here"
-        result = build_priority_context(mock_client, ['uri1'])
-        self.assertIn('Any content', result)
+        self.assertGreater(score, 0.9)
 
 
 # ─── should_route (curator_query gate) ───────────────────────
@@ -433,6 +450,24 @@ class TestShouldRoute(unittest.TestCase):
     def test_pure_command_blocks(self):
         routed, reason = should_route('帮我跑一下 git status')
         self.assertFalse(routed)
+
+
+# ─── OVClient.wait_processed ─────────────────────────────────
+
+class TestOVClientWaitProcessed(unittest.TestCase):
+    """Test that wait_processed method exists and calls correct endpoint."""
+
+    def test_wait_processed_calls_api(self):
+        from curator.session_manager import OVClient
+        client = OVClient("http://127.0.0.1:9100")
+        with patch.object(client, '_post', return_value={"status": "ok"}) as mock_post:
+            result = client.wait_processed(timeout=15)
+            mock_post.assert_called_once_with(
+                "/api/v1/system/wait",
+                {"timeout": 15},
+                timeout=25,
+            )
+            self.assertEqual(result["status"], "ok")
 
 
 if __name__ == '__main__':

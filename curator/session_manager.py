@@ -103,6 +103,11 @@ class OVClient:
 
     # ── 关系 ──
 
+    def wait_processed(self, timeout: int = 30) -> dict:
+        """等待 OV 处理队列完成（入库后索引建立）。"""
+        r = self._post("/api/v1/system/wait", {"timeout": timeout}, timeout=timeout + 10)
+        return r
+
     def link(self, from_uri: str, to_uris: list, reason: str = ""):
         self._post("/api/v1/relations/link", {
             "from_uri": from_uri, "to_uris": to_uris, "reason": reason,

@@ -160,4 +160,11 @@ def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "u
 
     # 通过 HTTP API 入库
     result = ov_client.add_resource(str(fn), reason="curator_ingest")
+
+    # 入库后等待 OV 处理完成（建索引），否则下次检索拿不到
+    try:
+        ov_client.wait_processed(timeout=30)
+    except Exception as e:
+        log.debug("wait_processed 失败: %s", e)
+
     return result

@@ -2,7 +2,7 @@
 
 English / [中文](README_CN.md)
 
-**Active knowledge governance for [OpenViking](https://github.com/volcengine/OpenViking).** Not just retrieve — decide, verify, and grow.
+**OV 的外搜补充层 + 治理层。** Not just retrieve — decide, verify, and grow. Curator doesn't answer questions — it provides structured, verified context for your LLM.
 
 [![CI](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml/badge.svg)](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -57,26 +57,38 @@ python3 curator_query.py "Redis vs Memcached for high concurrency?"
 
 **Output (JSON):**
 ```json
-{"routed": true, "answer": "...", "meta": {"coverage": 0.7, "external_triggered": false}}
+{
+  "routed": true,
+  "context_text": "...",
+  "external_text": "",
+  "coverage": 0.7,
+  "conflict": {"has_conflict": false},
+  "meta": {"external_triggered": false, "used_uris": [...]}
+}
 ```
 
 ## Architecture
 
 ```
-Query → Gate (rule-based, no LLM) → Scope Router → Local Search (OpenViking)
-                                                         ↓
-                                               Coverage + Core Keywords
-                                                    ↙         ↘
-                                          Sufficient?     External Search (pluggable)
-                                              ↓                    ↓
-                                           Answer         Cross-Validate → Review → Ingest?
-                                              ↓                                    ↓
-                                        Source Footer                          Answer
-                                              ↓                                    ↓
-                                        Case Capture                     Conflict Detection
+Query → Gate (rule+LLM) → Scope Router → OV Search (session-based)
+                                              ↓
+                                    L0→L1→L2 Layered Loading
+                                    + Coverage Assessment
+                                         ↙         ↘
+                                   Sufficient?   External Search (pluggable)
+                                       ↓                    ↓
+                                  Structured       Cross-Validate → Review → Ingest?
+                                   Output                                    ↓
+                                       ↓                              Conflict Detection
+                                  { context_text,                          ↓
+                                    external_text,               Structured Output
+                                    coverage,
+                                    conflict, meta }
 ```
 
-**8-step pipeline:** Init → Route → Local Search → External Search → Cross-Validate → Review/Ingest → Conflict Detection → Answer
+**5-step pipeline:** Init/Route → OV Retrieve → Layered Load + Coverage → External Search (optional) → Conflict Detection + Session Feedback
+
+**Key design:** Curator returns structured data (context, coverage, conflicts), NOT generated answers. The caller decides how to use this context with their own LLM.
 
 ## Search Providers
 
@@ -137,13 +149,14 @@ All coverage/quality thresholds are configurable via env:
 curator/               # Core package (modular)
   config.py            # Env vars, thresholds, HTTP client
   router.py            # Rule-based + LLM scope routing
-  retrieval_v2.py      # OV-native retrieval + coverage assessment
+  retrieval_v2.py      # OV-native L0→L1→L2 retrieval + coverage
   session_manager.py   # OV HTTP client + persistent session lifecycle
   feedback.py          # Trust/freshness scoring, feedback ranking
   search.py            # External search + cross-validation
   review.py            # AI review, ingest, conflict detection
-  answer.py            # Answer generation + source transparency
-  pipeline_v2.py       # Main 6-step OV-native pipeline
+  answer.py            # Answer generation (optional, caller decides)
+  pipeline_v2.py       # Main 5-step pipeline (returns structured data)
+  legacy/              # v1 modules (kept for reference)
 curator_query.py       # CLI entry (--help, --status, query)
 search_providers.py    # Pluggable search backends (grok/oai/custom)
 mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)
@@ -151,10 +164,8 @@ feedback_store.py      # Thread-safe feedback storage
 freshness_rescan.py    # URL liveness + TTL expiry scanner
 dedup.py               # AI-powered dedup (scan/clean/merge)
 batch_ingest.py        # Bulk topic ingestion for cold-start
-eval_batch.py          # Benchmark evaluation (10 questions)
-Dockerfile             # Container build
-docker-compose.yml     # One-click Docker startup
-tests/test_core.py     # 46 unit tests
+eval/benchmark.py      # Fair comparison benchmark (retrieval content only)
+tests/test_core.py     # 50 unit tests
 ```
 
 ## MCP Server
@@ -170,8 +181,8 @@ python3 mcp_server.py   # Starts stdio JSON-RPC server
 ## Testing
 
 ```bash
-python -m pytest tests/ -v   # 46 tests, all internal (no API calls)
-python eval/benchmark.py     # 10-query benchmark (raw OV vs curator v2)
+python -m pytest tests/ -v   # 50 tests, all internal (no API calls)
+python eval/benchmark.py     # 10-query benchmark (raw OV vs curator v2, fair retrieval comparison)
 python eval/deadlock_repro.py --mode both  # embedded vs HTTP deadlock check
 ```
 

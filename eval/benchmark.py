@@ -2,6 +2,10 @@
 """
 Curator Eval Benchmark — 对比裸 OpenViking 检索 vs Curator 全流程。
 
+公平对比：两边都比检索内容的关键词命中率。
+- raw OV：检索结果的 L2 content
+- Curator：检索结果的 context_text（不是 LLM 生成的 answer）
+
 用法:
   cd /home/ponsde/OpenViking_test && source .venv/bin/activate
   python3 /home/ponsde/OpenViking_Curator/eval/benchmark.py
@@ -33,7 +37,6 @@ os.environ.setdefault('OPENVIKING_CONFIG_FILE', '/home/ponsde/OpenViking_test/ov
 os.environ.setdefault('CURATOR_DATA_PATH', '/home/ponsde/OpenViking_test/data')
 
 # ── 10 个固定测试 Query ──
-# 每个包含: query, expected_topics (期望命中的关键词), difficulty
 BENCHMARK_QUERIES = [
     {
         "id": 1,
@@ -99,7 +102,7 @@ BENCHMARK_QUERIES = [
 
 
 def run_raw_ov(query: str, limit: int = 5) -> dict:
-    """裸 OpenViking 检索（HTTP API，不经过 Curator）。"""
+    """裸 OpenViking 检索（HTTP API，不经过 Curator）。返回 L2 content。"""
     import urllib.request
 
     def _post(path: str, payload: dict):
@@ -140,8 +143,8 @@ def run_raw_ov(query: str, limit: int = 5) -> dict:
     return {"results": results[:limit], "elapsed": round(elapsed, 2)}
 
 
-def run_curator(query: str, client=None) -> dict:
-    """Curator v2 全流程，单 query 超时 120s"""
+def run_curator(query: str) -> dict:
+    """Curator v2 全流程。返回 context_text（检索内容，非 LLM 回答）。"""
     import signal
 
     class TimeoutError(Exception):
@@ -153,23 +156,23 @@ def run_curator(query: str, client=None) -> dict:
     start = time.time()
     try:
         old_handler = signal.signal(signal.SIGALRM, _handler)
-        signal.alarm(120)  # 120s 超时
+        signal.alarm(120)
         from curator.pipeline_v2 import run
         result = run(query)
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
         elapsed = time.time() - start
         return {
-            "answer": result.get("answer", ""),
-            "coverage": result.get("meta", {}).get("coverage", 0),
+            "context_text": result.get("context_text", ""),
+            "external_text": result.get("external_text", ""),
+            "coverage": result.get("coverage", 0),
             "routed": True,
-            "source": "",
             "elapsed": round(elapsed, 2),
         }
     except Exception as e:
         signal.alarm(0)
         elapsed = time.time() - start
-        return {"answer": "", "error": str(e), "elapsed": round(elapsed, 2)}
+        return {"context_text": "", "error": str(e), "elapsed": round(elapsed, 2)}
 
 
 def score_hit(content: str, expected_topics: list) -> dict:
@@ -198,14 +201,14 @@ def run_benchmark():
         print(f"[{q['id']}/10] {q['category']}: {q['query']}")
         print(f"{'='*60}")
 
-        # 1. 裸 OV
+        # 1. 裸 OV：用 L2 content
         raw = run_raw_ov(q["query"])
         raw_content = "\n".join(r["content"] for r in raw["results"])
         raw_score = score_hit(raw_content, q["expected_topics"])
 
-        # 2. Curator v2
+        # 2. Curator v2：用 context_text（检索内容，不是 LLM 生成的 answer）
         cur = run_curator(q["query"])
-        cur_content = cur.get("answer", "") + " " + cur.get("source", "")
+        cur_content = cur.get("context_text", "") + " " + cur.get("external_text", "")
         cur_score = score_hit(cur_content, q["expected_topics"])
 
         entry = {

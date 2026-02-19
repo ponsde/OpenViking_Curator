@@ -1,4 +1,4 @@
-"""Pipeline v2: OV-native 6-step pipeline。"""
+"""Pipeline v2: OV-native pipeline — 返回结构化数据，不生成回答。"""
 
 import os
 import json
@@ -13,7 +13,6 @@ from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
 from .session_manager import OVClient, SessionManager
 from .search import external_boost_needed, external_search, cross_validate
 from .review import judge_and_pack, ingest_markdown_v2, detect_conflict
-from .answer import answer, _build_source_footer
 
 
 def _init_session_manager() -> tuple:
@@ -30,25 +29,44 @@ def _init_session_manager() -> tuple:
 
 
 def run(query: str, client=None) -> dict:
-    """Main pipeline v2. OV session search 为主力。
+    """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
 
-    Args:
-        query: 用户查询
-        client: 兼容旧接口，传入时忽略（v2 用 HTTP API）
+    返回:
+        {
+            "query": str,
+            "ov_results": dict,         # 原始检索结果
+            "context_text": str,         # 分层加载的上下文内容
+            "external_text": str,        # 外搜补充内容（可能为空）
+            "coverage": float,           # 覆盖率评分
+            "conflict": dict,            # 冲突检测结果
+            "meta": dict,                # 元信息
+            "metrics": dict,             # 性能指标
+            "case_path": str | None,     # case 文件路径
+        }
     """
     m = Metrics()
     validate_config()
     os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
-    result = {"query": query, "answer": "", "meta": {}, "metrics": {}, "case_path": None}
+    result = {
+        "query": query,
+        "ov_results": {},
+        "context_text": "",
+        "external_text": "",
+        "coverage": 0.0,
+        "conflict": {},
+        "meta": {},
+        "metrics": {},
+        "case_path": None,
+    }
 
     # ── Step 1: 初始化 + 路由 ──
-    log.info("STEP 1/6 初始化 + 路由...")
+    log.info("STEP 1/5 初始化 + 路由...")
     try:
         ov, sm = _init_session_manager()
     except Exception as e:
         log.error("OV 初始化失败: %s", e)
-        result["answer"] = f"知识库服务不可用: {e}"
+        result["meta"]["error"] = f"知识库服务不可用: {e}"
         return result
 
     m.step("init", True)
@@ -61,7 +79,7 @@ def run(query: str, client=None) -> dict:
     sm.add_user_query(query)
 
     # ── Step 2: OV 检索 ──
-    log.info("STEP 2/6 OV 检索...")
+    log.info("STEP 2/5 OV 检索...")
     retrieval_result = ov_retrieve(sm, query, limit=10)
     all_items = retrieval_result["all_items"]
     m.step("retrieve", True, {
@@ -71,13 +89,18 @@ def run(query: str, client=None) -> dict:
         "total": len(all_items),
     })
 
+    result["ov_results"] = retrieval_result
+
     # ── Step 3: 分层加载 + 覆盖率评估 ──
-    log.info("STEP 3/6 加载内容...")
-    context_text, used_uris = load_context(ov, all_items, query, max_l2=3)
-    coverage, need_external, cov_reason = assess_coverage(retrieval_result)
+    log.info("STEP 3/5 加载内容...")
+    context_text, used_uris = load_context(ov, all_items, query, max_l2=2)
+    coverage, need_external, cov_reason = assess_coverage(retrieval_result, query=query)
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
     log.info("STEP 3 完成: coverage=%.2f, reason=%s, used=%d", coverage, cov_reason, len(used_uris))
+
+    result["context_text"] = context_text
+    result["coverage"] = coverage
 
     # ── Step 4: 外搜（可选）──
     external_txt = ""
@@ -87,7 +110,7 @@ def run(query: str, client=None) -> dict:
     if need_external:
         m.flag("external_triggered", True)
         m.flag("external_reason", cov_reason)
-        log.info("STEP 4/6 外部搜索... reason=%s", cov_reason)
+        log.info("STEP 4/5 外部搜索... reason=%s", cov_reason)
         try:
             external_txt = external_search(query, scope)
             m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason})
@@ -118,50 +141,34 @@ def run(query: str, client=None) -> dict:
     else:
         m.flag("external_triggered", False)
         m.flag("external_reason", cov_reason)
-        log.info("STEP 4/6 跳过外搜: %s", cov_reason)
+        log.info("STEP 4/5 跳过外搜: %s", cov_reason)
 
-    # ── Step 5: 生成回答 ──
-    log.info("STEP 5/6 生成回答...")
+    result["external_text"] = external_txt
 
-    # 冲突检测
+    # ── Step 5: 冲突检测 + Session 反馈 ──
+    log.info("STEP 5/5 冲突检测 + session 反馈...")
+
     conflict = detect_conflict(query, context_text, external_txt)
-    conflict_card = ""
-    if conflict.get("has_conflict"):
-        pts = "\n".join([f"- {x}" for x in conflict.get("points", [])[:5]])
-        conflict_card = f"存在冲突: {conflict.get('summary', '')}\n{pts}"
     m.flag("has_conflict", bool(conflict.get("has_conflict", False)))
+    result["conflict"] = conflict
 
-    ans = answer(query, context_text, external_txt,
-                 priority_ctx="", conflict_card=conflict_card, warnings=cv_warnings)
-
-    # source footer
-    meta_for_footer = {
-        "uris": [x.get("uri", "") for x in all_items[:8]],
-        "priority_uris": used_uris,
-    }
-    source_info = _build_source_footer(meta_for_footer, coverage, need_external, cv_warnings)
-    ans = ans.rstrip() + "\n\n" + source_info
-
-    m.step("answer", True, {"answer_len": len(ans)})
-    m.flag("ingested", ingested)
-
-    # ── Step 6: Session 反馈 ──
-    log.info("STEP 6/6 session 反馈...")
-    sm.add_assistant_response(ans, used_uris)
+    # Session 反馈：记录结构化摘要（不再记录 LLM 生成的回答）
+    summary = f"检索完成: coverage={coverage:.2f}, sources={len(used_uris)}, external={'是' if need_external else '否'}"
+    sm.add_assistant_response(summary, used_uris)
     sm.maybe_commit()
     m.step("feedback", True)
 
-    # ── 结果 ──
+    # ── 结果组装 ──
     report = m.finalize()
 
     case_path = None
     if os.getenv("CURATOR_CAPTURE_CASE", "1") in ("1", "true"):
-        case_path = capture_case(query, scope, report, ans,
+        case_path = capture_case(query, scope, report, context_text,
                                  out_dir=os.getenv("CURATOR_CASE_DIR", "cases"))
 
-    result["answer"] = ans
     result["meta"] = {
         "coverage": coverage,
+        "coverage_reason": cov_reason,
         "external_triggered": report["flags"].get("external_triggered", False),
         "external_reason": cov_reason,
         "has_conflict": report["flags"].get("has_conflict", False),
