@@ -170,6 +170,32 @@ def run(query: str, client=None) -> dict:
         result["case_path"] = case_path
         log.info("完成: %.1fs, coverage=%.2f, external=%s",
                  report["duration_sec"], coverage, report["flags"].get("external_triggered"))
+
+        # ── 回写 session：把 assistant 回答也告诉 OV，完整学习对话模式 ──
+        try:
+            import asyncio as _asyncio
+            import openviking as _ov
+            from openviking.message.part import TextPart as _TextPart, ContextPart as _ContextPart
+            _sid_file = os.path.join(DATA_PATH, '.curator_session_id')
+            if os.path.exists(_sid_file):
+                _sid = open(_sid_file).read().strip()
+                if _sid:
+                    async def _add_assistant_msg():
+                        _ac = _ov.AsyncOpenViking(path=DATA_PATH)
+                        await _ac.initialize()
+                        try:
+                            _sess = _ac.session(_sid)
+                            # 构建 assistant 消息，包含引用的 URI（ContextPart）
+                            parts = [_TextPart(ans[:500])]
+                            for _uri in meta.get('priority_uris', [])[:3]:
+                                if _uri:
+                                    parts.append(_ContextPart(uri=_uri))
+                            _sess.add_message('assistant', parts)
+                        finally:
+                            await _ac.close()
+                    _asyncio.run(_add_assistant_msg())
+        except Exception as _e:
+            log.debug("session 回写跳过: %s", _e)
     finally:
         if _own_client:
             try:

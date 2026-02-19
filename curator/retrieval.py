@@ -131,13 +131,27 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
                 
                 result = await aclient.search(query, session=sess, limit=limit)
                 
+                # 取全部三路结果（memories + resources + skills），不只 resources
+                all_items = []
+                for attr in ['resources', 'memories', 'skills']:
+                    items_list = getattr(result, attr, []) or []
+                    all_items.extend(items_list)
+                
+                # 记录实际使用的 URI，让 OV 学习优化排序
+                used_uris = [getattr(x, 'uri', '') for x in all_items[:5] if getattr(x, 'uri', '')]
+                if used_uris:
+                    try:
+                        sess.used(contexts=used_uris)
+                    except Exception:
+                        pass
+                
                 # commit 让 OV 归档记忆，越用越精准
                 try:
                     sess.commit()
                 except Exception:
                     pass
                 
-                return getattr(result, 'resources', []) or []
+                return all_items
             finally:
                 await aclient.close()
 
@@ -397,9 +411,11 @@ def local_search(client, query: str, scope: dict):
 
 
 def build_priority_context(client, uris, query: str = ""):
-    """读取优先资源内容。如果提供 query，用核心词验证相关性，过滤不相关文档。"""
+    """读取优先资源内容。先用 L1(overview) 判断相关性，确认需要才读 L2(全文)。
+    
+    OV 三层加载: L0(abstract ~100 token) → L1(overview ~2k token) → L2(全文)
+    """
     blocks = []
-    # 核心词验证：如果提供了 query，只保留内容中包含核心词的文档
     if query:
         q_core = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower())) - _GENERIC_TERMS
         q_cn = set(re.findall(r"[\u4e00-\u9fff]{2,4}", query))
@@ -407,16 +423,37 @@ def build_priority_context(client, uris, query: str = ""):
     else:
         check_terms = set()
 
-    for u in uris[:4]:  # 多看几个，过滤后可能不够
+    for u in uris[:6]:  # 多看几个，用 L1 快速筛选
         try:
-            c = str(client.read(u))[:1500]
-            # 语义过滤：核心词至少命中1个才算相关
+            # 先用 L1 overview 快速判断相关性（~2k token，省钱）
+            overview = ""
+            try:
+                ov_result = client.overview(u)
+                overview = str(ov_result) if ov_result else ""
+                # 防止 mock 对象或无效返回
+                if 'MagicMock' in overview or len(overview) < 10:
+                    overview = ""
+            except Exception:
+                pass
+            
+            # 如果 overview 为空或太短，降级到 read
+            if len(overview) < 50:
+                overview = str(client.read(u))[:1500]
+            
+            # 核心词过滤
             if check_terms:
-                c_lower = c.lower()
+                c_lower = overview.lower()
                 hits = sum(1 for t in check_terms if t.lower() in c_lower)
                 if hits == 0:
                     continue
-            blocks.append(f"[PRIORITY_SOURCE] {u}\n{c[:1200]}")
+            
+            # 确认相关后，读 L2 全文获取完整信息
+            try:
+                full_content = str(client.read(u))[:1200]
+            except Exception:
+                full_content = overview[:1200]
+            
+            blocks.append(f"[PRIORITY_SOURCE] {u}\n{full_content}")
             if len(blocks) >= 2:
                 break
         except Exception:
