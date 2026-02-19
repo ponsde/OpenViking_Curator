@@ -2,12 +2,13 @@
 
 import json
 import re
+import time
 import datetime
 from pathlib import Path
 
 from .config import (
     log, chat,
-    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, ANSWER_MODELS, CURATED_DIR,
+    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, ANSWER_MODELS, CURATED_DIR, _GENERIC_TERMS,
 )
 
 def judge_and_pack(query: str, external_text: str):

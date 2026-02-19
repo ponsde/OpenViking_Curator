@@ -54,11 +54,23 @@ def _chat(base, key, model, messages, timeout=90):
     r = requests.post(
         f"{base}/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": messages, "temperature": 0.3},
+        json={"model": model, "messages": messages, "temperature": 0.3, "stream": False},
         timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    try:
+        payload = r.json()
+    except ValueError as e:
+        ctype = r.headers.get("content-type", "")
+        preview = (r.text or "")[:240].replace("\n", " ")
+        raise RuntimeError(f"Non-JSON response from search provider (content-type={ctype}): {preview}") from e
+
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        err = payload.get("error") if isinstance(payload, dict) else payload
+        raise RuntimeError(f"Invalid chat response payload: {err}")
+
+    return choices[0]["message"]["content"]
 
 
 # ── Provider: Grok ──

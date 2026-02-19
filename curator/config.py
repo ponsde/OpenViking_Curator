@@ -93,4 +93,16 @@ def chat(base, key, model, messages, timeout=60):
         timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    try:
+        payload = r.json()
+    except ValueError as e:
+        ctype = r.headers.get("content-type", "")
+        preview = (r.text or "")[:240].replace("\n", " ")
+        raise RuntimeError(f"Non-JSON response from chat API (content-type={ctype}): {preview}") from e
+
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        err = payload.get("error") if isinstance(payload, dict) else payload
+        raise RuntimeError(f"Invalid chat response payload: {err}")
+
+    return choices[0]["message"]["content"]

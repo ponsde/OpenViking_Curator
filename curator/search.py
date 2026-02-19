@@ -2,6 +2,7 @@
 
 import json
 import datetime
+import re
 
 from .config import (
     env, log, chat,
