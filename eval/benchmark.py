@@ -124,11 +124,23 @@ def run_raw_ov(client, query: str, limit: int = 5) -> dict:
 
 
 def run_curator(query: str, client=None) -> dict:
-    """Curator 全流程"""
+    """Curator 全流程，单 query 超时 120s"""
+    import signal
+
+    class TimeoutError(Exception):
+        pass
+
+    def _handler(signum, frame):
+        raise TimeoutError("curator timeout")
+
     start = time.time()
     try:
+        old_handler = signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(120)  # 120s 超时
         from curator.pipeline import run
         result = run(query, client=client)
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
         elapsed = time.time() - start
         return {
             "answer": result.get("answer", ""),
@@ -138,6 +150,7 @@ def run_curator(query: str, client=None) -> dict:
             "elapsed": round(elapsed, 2),
         }
     except Exception as e:
+        signal.alarm(0)
         elapsed = time.time() - start
         return {"answer": "", "error": str(e), "elapsed": round(elapsed, 2)}
 

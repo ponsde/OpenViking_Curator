@@ -1,0 +1,366 @@
+{
+  "timestamp": "2026-02-19T10:05:28.921647",
+  "n_queries": 10,
+  "raw_avg_hit_rate": 0.14,
+  "curator_avg_hit_rate": 0.515,
+  "improvement_pct": 267.9,
+  "wins": {
+    "curator": 8,
+    "raw": 1,
+    "tie": 1
+  },
+  "raw_avg_time": 1.63,
+  "curator_avg_time": 91.32,
+  "details": [
+    {
+      "id": 1,
+      "query": "grok2api 怎么部署和配置",
+      "category": "部署经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "grok2api",
+          "端口",
+          "8000",
+          "API",
+          "代理"
+        ],
+        "n_results": 5,
+        "elapsed": 2.05
+      },
+      "curator": {
+        "hit_rate": 1.0,
+        "hits": [
+          "grok2api",
+          "端口",
+          "8000",
+          "API",
+          "代理"
+        ],
+        "misses": [],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 31.05,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 2,
+      "query": "OpenViking search 和 find 结果不一致怎么办",
+      "category": "踩坑经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "n_results": 5,
+        "elapsed": 1.58
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 120.0,
+        "error": "all answer models failed: curator timeout"
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 3,
+      "query": "Curator 路由怎么从正则升级到 LLM",
+      "category": "架构决策",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "规则"
+        ],
+        "misses": [
+          "LLM",
+          "意图",
+          "硬拦截",
+          "Grok"
+        ],
+        "n_results": 5,
+        "elapsed": 1.62
+      },
+      "curator": {
+        "hit_rate": 0.4,
+        "hits": [
+          "LLM",
+          "意图"
+        ],
+        "misses": [
+          "硬拦截",
+          "Grok",
+          "规则"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 22.13,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 4,
+      "query": "SSE 流式响应导致 JSON 解析失败",
+      "category": "Bug 修复",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "JSON"
+        ],
+        "misses": [
+          "SSE",
+          "stream",
+          "false",
+          "grok2api"
+        ],
+        "n_results": 5,
+        "elapsed": 1.67
+      },
+      "curator": {
+        "hit_rate": 0.4,
+        "hits": [
+          "SSE",
+          "JSON"
+        ],
+        "misses": [
+          "stream",
+          "false",
+          "grok2api"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 178.03,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 5,
+      "query": "Telegram 里消息只能看到最后一段",
+      "category": "配置经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "streamMode",
+          "off",
+          "partial",
+          "Telegram"
+        ],
+        "n_results": 5,
+        "elapsed": 1.55
+      },
+      "curator": {
+        "hit_rate": 0.75,
+        "hits": [
+          "streamMode",
+          "off",
+          "Telegram"
+        ],
+        "misses": [
+          "partial"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 135.43,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 6,
+      "query": "Python import 缺失被 try except 吞掉怎么排查",
+      "category": "调试经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "import",
+          "try",
+          "except",
+          "静默失败",
+          "隐式依赖"
+        ],
+        "n_results": 5,
+        "elapsed": 1.59
+      },
+      "curator": {
+        "hit_rate": 0.6,
+        "hits": [
+          "import",
+          "try",
+          "except"
+        ],
+        "misses": [
+          "静默失败",
+          "隐式依赖"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 29.56,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 7,
+      "query": "怎么把文件存入 OpenViking 知识库",
+      "category": "使用指南",
+      "raw_ov": {
+        "hit_rate": 0.6,
+        "hits": [
+          "target",
+          "wait",
+          "URI"
+        ],
+        "misses": [
+          "add_resource",
+          "curated"
+        ],
+        "n_results": 5,
+        "elapsed": 1.5
+      },
+      "curator": {
+        "hit_rate": 0.2,
+        "hits": [
+          "curated"
+        ],
+        "misses": [
+          "add_resource",
+          "target",
+          "wait",
+          "URI"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 17.69,
+        "error": ""
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 8,
+      "query": "curator 单文件重构为模块包的经验",
+      "category": "架构经验",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "config",
+          "router"
+        ],
+        "misses": [
+          "模块化",
+          "pipeline",
+          "重构"
+        ],
+        "n_results": 5,
+        "elapsed": 1.53
+      },
+      "curator": {
+        "hit_rate": 0.6,
+        "hits": [
+          "模块化",
+          "config",
+          "重构"
+        ],
+        "misses": [
+          "router",
+          "pipeline"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 63.03,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 9,
+      "query": "怎么做交叉验证防止回答不准确",
+      "category": "策略经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "交叉验证",
+          "cross_validate",
+          "外搜",
+          "入库",
+          "冲突"
+        ],
+        "n_results": 5,
+        "elapsed": 1.7
+      },
+      "curator": {
+        "hit_rate": 0.4,
+        "hits": [
+          "交叉验证",
+          "冲突"
+        ],
+        "misses": [
+          "cross_validate",
+          "外搜",
+          "入库"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 177.82,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 10,
+      "query": "URI 新鲜度和信任度怎么打分",
+      "category": "算法实现",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "feedback",
+          "score"
+        ],
+        "n_results": 5,
+        "elapsed": 1.5
+      },
+      "curator": {
+        "hit_rate": 0.8,
+        "hits": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "score"
+        ],
+        "misses": [
+          "feedback"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 138.46,
+        "error": ""
+      },
+      "winner": "curator"
+    }
+  ]
+}
