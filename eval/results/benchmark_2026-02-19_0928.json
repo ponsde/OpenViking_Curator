@@ -1,0 +1,365 @@
+{
+  "timestamp": "2026-02-19T09:28:10.651900",
+  "n_queries": 10,
+  "raw_avg_hit_rate": 0.22,
+  "curator_avg_hit_rate": 0.225,
+  "improvement_pct": 2.3,
+  "wins": {
+    "curator": 4,
+    "raw": 4,
+    "tie": 2
+  },
+  "raw_avg_time": 1.69,
+  "curator_avg_time": 40.42,
+  "details": [
+    {
+      "id": 1,
+      "query": "grok2api 怎么部署和配置",
+      "category": "部署经验",
+      "raw_ov": {
+        "hit_rate": 0.6,
+        "hits": [
+          "端口",
+          "API",
+          "代理"
+        ],
+        "misses": [
+          "grok2api",
+          "8000"
+        ],
+        "n_results": 5,
+        "elapsed": 2.07
+      },
+      "curator": {
+        "hit_rate": 0.8,
+        "hits": [
+          "grok2api",
+          "端口",
+          "API",
+          "代理"
+        ],
+        "misses": [
+          "8000"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 28.18,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 2,
+      "query": "OpenViking search 和 find 结果不一致怎么办",
+      "category": "踩坑经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "n_results": 5,
+        "elapsed": 1.9
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "AGFS port 1833 is already in use, cannot start service. Please check if another AGFS process is running, or use a different port."
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 3,
+      "query": "Curator 路由怎么从正则升级到 LLM",
+      "category": "架构决策",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "LLM"
+        ],
+        "misses": [
+          "意图",
+          "硬拦截",
+          "Grok",
+          "规则"
+        ],
+        "n_results": 5,
+        "elapsed": 1.19
+      },
+      "curator": {
+        "hit_rate": 0.6,
+        "hits": [
+          "LLM",
+          "意图",
+          "规则"
+        ],
+        "misses": [
+          "硬拦截",
+          "Grok"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 51.33,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 4,
+      "query": "SSE 流式响应导致 JSON 解析失败",
+      "category": "Bug 修复",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "grok2api",
+          "JSON"
+        ],
+        "misses": [
+          "SSE",
+          "stream",
+          "false"
+        ],
+        "n_results": 5,
+        "elapsed": 1.9
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "SSE",
+          "stream",
+          "false",
+          "grok2api",
+          "JSON"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "AGFS port 1833 is already in use, cannot start service. Please check if another AGFS process is running, or use a different port."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 5,
+      "query": "Telegram 里消息只能看到最后一段",
+      "category": "配置经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "streamMode",
+          "off",
+          "partial",
+          "Telegram"
+        ],
+        "n_results": 5,
+        "elapsed": 1.2
+      },
+      "curator": {
+        "hit_rate": 0.25,
+        "hits": [
+          "Telegram"
+        ],
+        "misses": [
+          "streamMode",
+          "off",
+          "partial"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 158.85,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 6,
+      "query": "Python import 缺失被 try except 吞掉怎么排查",
+      "category": "调试经验",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "import"
+        ],
+        "misses": [
+          "try",
+          "except",
+          "静默失败",
+          "隐式依赖"
+        ],
+        "n_results": 5,
+        "elapsed": 1.91
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "import",
+          "try",
+          "except",
+          "静默失败",
+          "隐式依赖"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "AGFS port 1833 is already in use, cannot start service. Please check if another AGFS process is running, or use a different port."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 7,
+      "query": "怎么把文件存入 OpenViking 知识库",
+      "category": "使用指南",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "target",
+          "URI"
+        ],
+        "misses": [
+          "add_resource",
+          "curated",
+          "wait"
+        ],
+        "n_results": 4,
+        "elapsed": 1.23
+      },
+      "curator": {
+        "hit_rate": 0.2,
+        "hits": [
+          "curated"
+        ],
+        "misses": [
+          "add_resource",
+          "target",
+          "wait",
+          "URI"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 20.05,
+        "error": ""
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 8,
+      "query": "curator 单文件重构为模块包的经验",
+      "category": "架构经验",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "router",
+          "pipeline"
+        ],
+        "misses": [
+          "模块化",
+          "config",
+          "重构"
+        ],
+        "n_results": 5,
+        "elapsed": 2.31
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "模块化",
+          "config",
+          "router",
+          "pipeline",
+          "重构"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "AGFS port 1833 is already in use, cannot start service. Please check if another AGFS process is running, or use a different port."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 9,
+      "query": "怎么做交叉验证防止回答不准确",
+      "category": "策略经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "交叉验证",
+          "cross_validate",
+          "外搜",
+          "入库",
+          "冲突"
+        ],
+        "n_results": 5,
+        "elapsed": 1.23
+      },
+      "curator": {
+        "hit_rate": 0.4,
+        "hits": [
+          "交叉验证",
+          "冲突"
+        ],
+        "misses": [
+          "cross_validate",
+          "外搜",
+          "入库"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 145.83,
+        "error": ""
+      },
+      "winner": "curator"
+    },
+    {
+      "id": 10,
+      "query": "URI 新鲜度和信任度怎么打分",
+      "category": "算法实现",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "feedback",
+          "score"
+        ],
+        "n_results": 5,
+        "elapsed": 2.0
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "feedback",
+          "score"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "AGFS port 1833 is already in use, cannot start service. Please check if another AGFS process is running, or use a different port."
+      },
+      "winner": "tie"
+    }
+  ]
+}

@@ -15,17 +15,24 @@ from .review import judge_and_pack, ingest_markdown, detect_conflict
 from .answer import answer, _build_source_footer
 
 
-def run(query: str) -> dict:
-    """Main pipeline. Returns structured result dict."""
+def run(query: str, client=None) -> dict:
+    """Main pipeline. Returns structured result dict.
+    
+    Args:
+        query: 用户查询
+        client: 可选，复用已有的 SyncOpenViking 实例（避免端口冲突）
+    """
     m = Metrics()
     validate_config()
     os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
     result = {"query": query, "answer": "", "meta": {}, "metrics": {}, "case_path": None}
 
+    _own_client = client is None
     log.info("STEP 1/8 初始化...")
-    client = ov.SyncOpenViking(path=DATA_PATH)
-    client.initialize()
+    if _own_client:
+        client = ov.SyncOpenViking(path=DATA_PATH)
+        client.initialize()
     m.step('init', True)
 
     try:
@@ -164,9 +171,10 @@ def run(query: str) -> dict:
         log.info("完成: %.1fs, coverage=%.2f, external=%s",
                  report["duration_sec"], coverage, report["flags"].get("external_triggered"))
     finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        if _own_client:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     return result

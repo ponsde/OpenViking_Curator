@@ -1,0 +1,360 @@
+{
+  "timestamp": "2026-02-19T09:12:11.443898",
+  "n_queries": 10,
+  "raw_avg_hit_rate": 0.165,
+  "curator_avg_hit_rate": 0.0,
+  "improvement_pct": -100.0,
+  "wins": {
+    "curator": 0,
+    "raw": 6,
+    "tie": 4
+  },
+  "raw_avg_time": 1.33,
+  "curator_avg_time": 0.0,
+  "details": [
+    {
+      "id": 1,
+      "query": "grok2api 怎么部署和配置",
+      "category": "部署经验",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "端口",
+          "代理"
+        ],
+        "misses": [
+          "grok2api",
+          "8000",
+          "API"
+        ],
+        "n_results": 5,
+        "elapsed": 2.46
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "grok2api",
+          "端口",
+          "8000",
+          "API",
+          "代理"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.01,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 2,
+      "query": "OpenViking search 和 find 结果不一致怎么办",
+      "category": "踩坑经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "n_results": 5,
+        "elapsed": 1.22
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "非确定性",
+          "Jaccard",
+          "向量检索",
+          "本地索引",
+          "缓解"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 3,
+      "query": "Curator 路由怎么从正则升级到 LLM",
+      "category": "架构决策",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "LLM",
+          "意图",
+          "硬拦截",
+          "Grok",
+          "规则"
+        ],
+        "n_results": 5,
+        "elapsed": 1.25
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "LLM",
+          "意图",
+          "硬拦截",
+          "Grok",
+          "规则"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 4,
+      "query": "SSE 流式响应导致 JSON 解析失败",
+      "category": "Bug 修复",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "SSE"
+        ],
+        "misses": [
+          "stream",
+          "false",
+          "grok2api",
+          "JSON"
+        ],
+        "n_results": 5,
+        "elapsed": 1.21
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "SSE",
+          "stream",
+          "false",
+          "grok2api",
+          "JSON"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 5,
+      "query": "Telegram 里消息只能看到最后一段",
+      "category": "配置经验",
+      "raw_ov": {
+        "hit_rate": 0.25,
+        "hits": [
+          "off"
+        ],
+        "misses": [
+          "streamMode",
+          "partial",
+          "Telegram"
+        ],
+        "n_results": 5,
+        "elapsed": 1.19
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "streamMode",
+          "off",
+          "partial",
+          "Telegram"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 6,
+      "query": "Python import 缺失被 try except 吞掉怎么排查",
+      "category": "调试经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "import",
+          "try",
+          "except",
+          "静默失败",
+          "隐式依赖"
+        ],
+        "n_results": 5,
+        "elapsed": 1.23
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "import",
+          "try",
+          "except",
+          "静默失败",
+          "隐式依赖"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 7,
+      "query": "怎么把文件存入 OpenViking 知识库",
+      "category": "使用指南",
+      "raw_ov": {
+        "hit_rate": 0.4,
+        "hits": [
+          "target",
+          "URI"
+        ],
+        "misses": [
+          "add_resource",
+          "curated",
+          "wait"
+        ],
+        "n_results": 5,
+        "elapsed": 1.18
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "add_resource",
+          "target",
+          "curated",
+          "wait",
+          "URI"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 8,
+      "query": "curator 单文件重构为模块包的经验",
+      "category": "架构经验",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "pipeline"
+        ],
+        "misses": [
+          "模块化",
+          "config",
+          "router",
+          "重构"
+        ],
+        "n_results": 5,
+        "elapsed": 1.2
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "模块化",
+          "config",
+          "router",
+          "pipeline",
+          "重构"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    },
+    {
+      "id": 9,
+      "query": "怎么做交叉验证防止回答不准确",
+      "category": "策略经验",
+      "raw_ov": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "交叉验证",
+          "cross_validate",
+          "外搜",
+          "入库",
+          "冲突"
+        ],
+        "n_results": 5,
+        "elapsed": 1.19
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "交叉验证",
+          "cross_validate",
+          "外搜",
+          "入库",
+          "冲突"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "tie"
+    },
+    {
+      "id": 10,
+      "query": "URI 新鲜度和信任度怎么打分",
+      "category": "算法实现",
+      "raw_ov": {
+        "hit_rate": 0.2,
+        "hits": [
+          "score"
+        ],
+        "misses": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "feedback"
+        ],
+        "n_results": 5,
+        "elapsed": 1.21
+      },
+      "curator": {
+        "hit_rate": 0.0,
+        "hits": [],
+        "misses": [
+          "freshness",
+          "trust",
+          "时间衰减",
+          "feedback",
+          "score"
+        ],
+        "routed": false,
+        "coverage": 0,
+        "elapsed": 0.0,
+        "error": "Missing required env vars: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY\nHint: copy .env.example to .env and fill in your API keys."
+      },
+      "winner": "raw"
+    }
+  ]
+}
