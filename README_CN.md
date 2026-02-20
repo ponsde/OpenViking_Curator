@@ -110,6 +110,16 @@ python3 curator_query.py "Redis 和 Memcached 高并发下怎么选？"
 | `CURATOR_JUDGE_MODELS` | | 审核/验证模型 fallback 链 |
 | `OPENVIKING_CONFIG_FILE` | | OpenViking ov.conf 路径 |
 
+### OpenClaw 模型命名说明
+
+如果你通过 OpenClaw 使用 Curator，`sonnet1m` 应固定映射到：
+
+- `whidsm/【Claude Code】Claude-Sonnet 4-6-1M`
+
+并删除旧的/不存在的项：
+
+- `whidsm/claude-sonnet-4-6-1m`
+
 ## 项目结构
 
 ```

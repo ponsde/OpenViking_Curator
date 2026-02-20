@@ -142,6 +142,16 @@ All config via environment variables (`.env` file, git-ignored):
 
 **No secrets are hardcoded.** All sensitive values come from `.env`.
 
+### OpenClaw model naming note
+
+If you use Curator via OpenClaw, keep `sonnet1m` mapped to:
+
+- `whidsm/【Claude Code】Claude-Sonnet 4-6-1M`
+
+And remove legacy/nonexistent entries like:
+
+- `whidsm/claude-sonnet-4-6-1m`
+
 ## Repo Structure
 
 ```
