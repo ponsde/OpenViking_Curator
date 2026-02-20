@@ -1,0 +1,17 @@
+{
+  "embedding": {
+    "dense": {
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "sk-your-api-key",
+      "provider": "openai",
+      "dimension": 1536,
+      "model": "text-embedding-3-small"
+    }
+  },
+  "vlm": {
+    "api_base": "https://api.openai.com/v1",
+    "api_key": "sk-your-api-key",
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  }
+}

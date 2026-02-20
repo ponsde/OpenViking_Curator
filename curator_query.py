@@ -168,17 +168,18 @@ def run_status() -> dict:
 
     # OpenViking check
     try:
-        import openviking as ov
-        config_file = os.getenv("OPENVIKING_CONFIG_FILE", "")
-        client = ov.SyncOpenViking(path=os.getenv("CURATOR_DATA_PATH", "./data"))
-        client.initialize()
-        resources = client.ls("viking://resources")
-        result["openviking"] = {
-            "status": "✅ connected",
-            "config": config_file or "(default)",
-            "resources": len(resources) if resources else 0,
-        }
-        client.close()
+        from curator.session_manager import OVClient
+        ov = OVClient()
+        healthy = ov.health()
+        if healthy:
+            resources = ov.ls("viking://resources")
+            result["openviking"] = {
+                "status": "✅ connected",
+                "mode": ov.mode,
+                "resources": len(resources) if resources else 0,
+            }
+        else:
+            result["openviking"] = {"status": "❌ not healthy", "mode": ov.mode}
     except Exception as e:
         result["openviking"] = {"status": f"❌ {e}"}
 

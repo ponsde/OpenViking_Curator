@@ -17,12 +17,11 @@ from .review import judge_and_ingest, detect_conflict
 
 
 def _init_session_manager() -> tuple:
-    """初始化 OV HTTP 客户端和 session manager。"""
-    base_url = os.environ.get("OV_BASE_URL", "http://127.0.0.1:9100")
-    ov = OVClient(base_url)
+    """初始化 OV 客户端和 session manager。自动选嵌入/HTTP模式。"""
+    ov = OVClient()  # 根据 OV_BASE_URL env 自动选模式
 
     if not ov.health():
-        raise RuntimeError(f"OV serve 不可用: {base_url}")
+        raise RuntimeError(f"OV 不可用 (mode={ov.mode})")
 
     sid_file = os.path.join(DATA_PATH, ".curator_session_id")
     sm = SessionManager(ov, sid_file)

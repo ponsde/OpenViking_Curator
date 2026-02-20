@@ -2,15 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
-# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code
 COPY . .
+RUN mkdir -p /app/data /app/curated /app/cases /app/output
 
-# Default: run as query CLI
-ENTRYPOINT ["python3", "curator_query.py"]
+ENTRYPOINT ["python3"]
+CMD ["mcp_server.py"]
