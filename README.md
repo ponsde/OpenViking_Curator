@@ -2,196 +2,197 @@
 
 English / [中文](README_CN.md)
 
-**OV 的治理层。** Not just retrieve — decide, verify, and grow. Curator doesn't answer questions — it provides structured, verified context for your LLM.
+**Knowledge governance plugin for [OpenViking](https://github.com/volcengine/OpenViking).** Query → assess → search → ingest → grow. Your OV gets smarter with every question.
 
-[![CI](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml/badge.svg)](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
 
-## What is this?
+## How it works
 
-Traditional RAG: put data in → get data out. Curator adds the governance layer:
+```
+User asks a question
+        ↓
+   Query OV first
+        ↓
+  Coverage enough?  ──yes──→  Return local context (0 LLM calls)
+        ↓ no
+  External search (Grok / OpenAI / custom)
+        ↓
+  LLM reviews quality & freshness
+        ↓
+  Pass? → Ingest back to OV (next time = instant hit)
+        ↓
+  Return merged context (local + external)
+        ↓
+  Your LLM answers with full context — one call, done.
+```
 
-| Feature | What it does |
+## What it does
+
+| Feature | Description |
 |---------|-------------|
-| **Coverage Gate** | Measures local retrieval quality (trusting OV's score); only triggers external search when needed |
-| **Pluggable External Search** | Grok, OpenAI, or your own backend — just set an env var |
-| **AI Review + Ingest** | Reviews external results for quality/freshness before storing back to OV |
-| **Cross-Validation** | Tags risky/volatile claims in external results |
-| **Conflict Detection** | Identifies contradictions between local and external sources |
-| **Case Capture** | Automatically saves Q&A as reusable experience |
+| **Coverage gate** | Trusts OV's score. Sufficient → return. Marginal/low → external search. |
+| **External search + auto-ingest** | Grok (default) or any OAI-compatible model. Reviewed results auto-stored to OV. Next query hits locally. |
+| **L0→L1→L2 on-demand loading** | Abstract first, overview if needed, full text only when necessary. Saves tokens. |
+| **Conflict detection** | Flags contradictions between local and external sources. |
+| **Session lifecycle** | Tracks which knowledge was used (`session.used`), extracts long-term memory (`session.commit`). Frequently used knowledge ranks higher. |
+| **Query logging + weak topic analysis** | Logs every query. Cluster analysis finds knowledge gaps. Proactive strengthening fills them. |
+| **Freshness scanning** | Periodic scan of all resources. Tags fresh/aging/stale. Auto-refresh stale content. |
+| **Merged context output** | Returns `context` = local + external combined. Your LLM uses it directly — no second query needed. |
 
 ### What Curator does NOT do (OV handles these)
 
-- ❌ Retrieval / semantic search (OV `find` / `search`)
-- ❌ L0/L1/L2 content loading (OV `abstract` / `overview` / `read`)
-- ❌ Memory extraction (OV `session.commit`)
-- ❌ Trust/freshness scoring (OV `active_count` + score ranking)
-- ❌ Deduplication (OV manages its own knowledge base)
-- ❌ Answer generation (caller's LLM does this)
+- Retrieval / vector search → OV `find` / `search`
+- Content storage / indexing → OV manages
+- Memory extraction / dedup → OV `session.commit`
+- Answer generation → your LLM
 
 ## Quick Start
 
-### Option A: Local install
+### Prerequisites
+
+- Python 3.10+
+- An OpenViking `ov.conf` with embedding + VLM endpoints ([docs](https://github.com/volcengine/OpenViking))
+- API key for external search (Grok recommended) and LLM review
+
+### Local install
 
 ```bash
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # Edit with your API keys
+
+cp ov.conf.example ov.conf   # Fill your embedding + VLM endpoints
+cp .env.example .env         # Fill API keys
+
+python3 curator_query.py --status            # Health check
+python3 curator_query.py "How to deploy Redis in Docker?"
 ```
 
-### Option B: Docker (embedded mode)
+### Docker (embedded mode)
 
 ```bash
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
-cp ov.conf.example ov.conf   # Fill embedding + VLM API settings
-cp .env.example .env         # Fill curator keys
+cp ov.conf.example ov.conf
+cp .env.example .env
 
 docker compose build
 docker compose run --rm curator curator_query.py --status
-docker compose run --rm curator curator_query.py "What is OpenViking?"
+docker compose run --rm curator curator_query.py "How to deploy Redis in Docker?"
 ```
 
-### First run
+### MCP Server
 
 ```bash
-# Health check
-python3 curator_query.py --status
-
-# Ask a question
-python3 curator_query.py "Redis vs Memcached for high concurrency?"
+python3 mcp_server.py   # stdio JSON-RPC, compatible with Claude Desktop / mcporter / any MCP client
 ```
 
-**Output (JSON):**
+Tools: `curator_query`, `curator_ingest`, `curator_status`
+
+### Python API
+
+```python
+from curator.pipeline_v2 import run
+
+result = run("GPT auto-registration script with Selenium")
+print(result["context"])       # merged local + external, ready for LLM
+print(result["coverage"])      # 0.0 ~ 1.0
+print(result["meta"]["ingested"])  # True if new knowledge was stored
+```
+
+## Output format
+
 ```json
 {
-  "routed": true,
-  "context_text": "...",
-  "external_text": "",
-  "coverage": 0.7,
-  "conflict": {"has_conflict": false},
-  "meta": {"external_triggered": false, "used_uris": [...]}
+  "context": "local results + external results (merged, ready to use)",
+  "coverage": 0.68,
+  "conflict": {"has_conflict": false, "summary": "", "points": []},
+  "meta": {
+    "external_triggered": true,
+    "ingested": true,
+    "llm_calls": 1,
+    "used_uris": ["viking://resources/..."],
+    "duration": 42.5
+  }
 }
 ```
 
-## Architecture
-
-```
-Query → Gate (rule-based) → OV Search (session-based, VLM intent analysis)
-                                    ↓
-                          L0→L1→L2 On-Demand Loading
-                          + Coverage Assessment (trust OV score)
-                                 ↙         ↘
-                           Sufficient?   External Search (pluggable)
-                               ↓                    ↓
-                          Return as-is      Cross-Validate (tag risks)
-                                                     ↓
-                                              Review → Ingest back to OV?
-                                                     ↓
-                                              Conflict Detection
-                                                     ↓
-                                            Structured Output
-                                            { context_text,
-                                              external_text,
-                                              coverage,
-                                              conflict, meta }
-```
-
-**5-step pipeline:** Init/Route → OV Retrieve → On-Demand Load + Coverage → External Search (optional) → Conflict Detection + Session Feedback
-
-**Key design principles:**
-- Curator returns structured data, NOT generated answers
-- Trust OV's score — no re-scoring or re-ranking
-- Strict on-demand loading: L0 first, L1 only if needed, L2 only if L1 insufficient
-- External search is supplementation, not replacement
-
-## Search Providers
-
-External search is **pluggable**. Set `CURATOR_SEARCH_PROVIDER` in `.env`:
-
-| Provider | Value | Description |
-|----------|-------|-------------|
-| Grok | `grok` (default) | Via grok2api or compatible endpoint |
-| OpenAI | `oai` | Any OAI-compatible model with internet access |
-| Custom | your name | Register in `search_providers.py` |
-
-**Adding your own provider:**
-
-```python
-# In search_providers.py
-def my_search(query: str, scope: dict, **kwargs) -> str:
-    return result_text
-
-PROVIDERS["my_search"] = my_search
-```
-
-Then set `CURATOR_SEARCH_PROVIDER=my_search`.
-
 ## Configuration
 
-All config via environment variables (`.env` file, git-ignored):
+All config via `.env` (git-ignored):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CURATOR_OAI_BASE` | ✅ | OpenAI-compatible API base URL |
-| `CURATOR_OAI_KEY` | ✅ | API key for judge/review |
-| `CURATOR_GROK_KEY` | ✅* | Grok API key (*only if using Grok provider) |
-| `CURATOR_SEARCH_PROVIDER` | | Search backend: `grok` (default), `oai`, custom |
-| `CURATOR_JUDGE_MODELS` | | Model fallback chain for review/validation |
-| `OPENVIKING_CONFIG_FILE` | | Path to OpenViking ov.conf (embedded mode) |
-| `OV_BASE_URL` | | Optional: use OV HTTP serve instead of embedded mode |
+| `OPENVIKING_CONFIG_FILE` | ✅ | Path to your `ov.conf` |
+| `OV_DATA_PATH` | | OV data directory (default: `./data`) |
+| `CURATOR_OAI_BASE` | ✅ | OpenAI-compatible API base (for LLM review) |
+| `CURATOR_OAI_KEY` | ✅ | API key for review |
+| `CURATOR_GROK_BASE` | | Grok endpoint (default: `http://127.0.0.1:8000/v1`) |
+| `CURATOR_GROK_KEY` | ✅* | Grok API key (*if using Grok search) |
+| `OV_BASE_URL` | | Optional: connect to remote OV HTTP serve instead of embedded mode |
 
-**No secrets are hardcoded.** All sensitive values come from `.env`.
+### Search providers (pluggable)
 
+| Provider | Env value | Description |
+|----------|-----------|-------------|
+| Grok | `grok` (default) | Real-time web search via grok2api |
+| OpenAI | `oai` | Any OAI-compatible model with internet |
+| Custom | your name | Register in `search_providers.py` |
 
-## Repo Structure
+### Tunable thresholds
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CURATOR_THRESHOLD_COV_SUFFICIENT` | 0.55 | Above this = skip external search |
+| `CURATOR_THRESHOLD_COV_MARGINAL` | 0.45 | Above this = marginal (still searches) |
+| `CURATOR_THRESHOLD_COV_LOW` | 0.35 | Below this = definitely search |
+
+## Scripts
+
+| Script | What it does |
+|--------|-------------|
+| `scripts/analyze_weak.py` | Cluster analysis of weak topics from query log |
+| `scripts/strengthen.py` | Proactively runs pipeline on top N weak topics |
+| `scripts/freshness_scan.py` | Scans all resources for freshness. `--act` to auto-refresh stale content |
+
+## Project structure
 
 ```
-curator/               # Core package (governance only)
-  config.py            # Env vars, thresholds, HTTP client
-  router.py            # Lightweight rule-based routing (domain + freshness)
-  retrieval_v2.py      # Strict on-demand L0→L1→L2 loading + coverage assessment
-  session_manager.py   # Dual-mode OV client (embedded / HTTP) + persistent session lifecycle
-  search.py            # External search + cross-validation (risk tagging)
-  review.py            # AI review, ingest to OV, conflict detection
-  pipeline_v2.py       # Main 5-step pipeline (returns structured data)
-  legacy/              # Archived v1 modules (answer, feedback, dedup, pipeline, retrieval)
-curator_query.py       # CLI entry (--help, --status, query)
-search_providers.py    # Pluggable search backends (grok/oai/custom)
-mcp_server.py          # MCP server (stdio JSON-RPC, 3 tools)
-feedback_store.py      # Thread-safe feedback storage
-tests/test_core.py     # Unit tests
-eval/benchmark.py      # Fair comparison benchmark
+curator/
+  pipeline_v2.py       # Main 4-step pipeline (returns structured data)
+  session_manager.py   # Dual-mode OV client (embedded / HTTP)
+  retrieval_v2.py      # L0→L1→L2 loading + coverage assessment
+  search.py            # External search + cross-validation
+  review.py            # LLM review + ingest + conflict detection
+  router.py            # Lightweight rule-based routing
+  config.py            # All config (env-overridable thresholds)
+  freshness.py         # Time-decay scoring
+  dedup.py             # Resource duplicate scanning
+  legacy/              # Archived v1 modules
+curator_query.py       # CLI entry
+mcp_server.py          # MCP server (stdio)
+search_providers.py    # Pluggable search backends
+scripts/               # Maintenance scripts
+tests/                 # Unit tests (77 passing)
 ```
-
-## MCP Server
-
-Curator includes a standard MCP server compatible with Claude Desktop, mcporter, and any MCP client:
-
-```bash
-python3 mcp_server.py   # Starts stdio JSON-RPC server
-```
-
-**Tools:** `curator_query`, `curator_ingest`, `curator_status`
 
 ## Testing
 
 ```bash
 python -m pytest tests/ -v
-python eval/benchmark.py     # 10-query benchmark (raw OV vs curator v2)
 ```
 
-## How is this different from LangChain / LlamaIndex?
+## Roadmap
 
-Those build RAG **pipelines**. Curator governs the **knowledge**:
-- Is my existing knowledge good enough?
-- Is this new information trustworthy?
-- Do my sources contradict each other?
-
-Use alongside any RAG framework. It governs knowledge, not pipelines.
+- [ ] Fix `active_count` URI format (short URI → full URI matching)
+- [ ] LLM intelligent merge for similar resources
+- [ ] Periodic cron for `analyze_weak.py` + `freshness_scan.py`
+- [ ] Self-optimization: effectiveness tracking + auto-tuning thresholds
+- [ ] Batch ingest historical notes into OV
+- [ ] OV knowledge base cleanup (deduplicate timestamp-named entries)
+- [ ] Weekly knowledge health report
 
 ## License
 
