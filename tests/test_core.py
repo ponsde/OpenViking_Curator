@@ -86,7 +86,7 @@ class TestAssessCoverage(unittest.TestCase):
     def test_marginal_coverage(self):
         items = [{"uri": "a", "score": 0.5}]
         cov, need_ext, reason = assess_coverage({"all_items": items})
-        self.assertFalse(need_ext)
+        self.assertTrue(need_ext)  # marginal 也外搜补充
         self.assertEqual(reason, "local_marginal")
 
     def test_low_score_triggers_external(self):
