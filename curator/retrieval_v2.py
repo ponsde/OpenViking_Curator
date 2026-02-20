@@ -48,78 +48,90 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
 
 
 def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
-    """严格 L0→L1→L2 分层加载内容。
+    """严格按需 L0→L1→L2 分层加载。
 
-    流程：
-    1. L0（abstract）：检索结果自带，用于快速过滤和排序
-    2. L1（overview ~2k token）：对 top 结果取 overview，判断相关性
-       大多数场景 L1 够用，直接作为上下文
-    3. L2（read 全文）：只有确认需要深入的才读，最多 max_l2 个
-
-    不跳过 L1 直接读 L2。
-
-    返回: (context_text, used_uris)
+    默认行为：
+    - 先只用 L0（abstract）构造上下文；
+    - 仅当 L0 不足时，才取 L1（overview）；
+    - 仅当 L1 仍不足时，才取 L2（read，最多 max_l2）。
     """
     if not items:
         return "", []
 
-    # 按 score 排序
     scored = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
 
+    # ---------- Stage 1: L0 only ----------
+    l0_blocks = []
+    l0_uris = []
+    for item in scored[:4]:
+        uri = item.get("uri", "")
+        abstract = (item.get("abstract", "") or "").strip()
+        if not uri or len(abstract) < 20:
+            continue
+        l0_blocks.append(f"[SOURCE: {uri}]\n{abstract[:350]}")
+        l0_uris.append(uri)
+
+    top_score = scored[0].get("score", 0) if scored else 0
+    l0_enough = top_score >= 0.62 and len(l0_blocks) >= 2
+    if l0_enough:
+        context_text = "\n\n".join(l0_blocks)
+        log.info("context 加载: stage=L0 only, sources=%d, chars=%d", len(l0_uris), len(context_text))
+        return context_text, l0_uris
+
+    # ---------- Stage 2: L1 on demand ----------
     blocks = []
     used_uris = []
     l1_count = 0
-    l2_count = 0
-
-    for item in scored[:8]:  # 最多看 8 个候选
+    for item in scored[:5]:
         uri = item.get("uri", "")
-        abstract = item.get("abstract", "") or ""
-        score = item.get("score", 0)
-
         if not uri:
             continue
 
-        # ── L0: abstract 快速过滤 ──
-        # 低分且没有 abstract 的直接跳过
-        if score < 0.3 and len(abstract) < 10:
-            continue
-
-        # ── L1: overview 判断相关性 ──
         overview = ""
         try:
             overview = ov_client.overview(uri)
         except Exception:
             pass
 
-        l1_text = overview or abstract
-        if not l1_text or len(l1_text) < 20:
+        text = (overview or item.get("abstract", "") or "").strip()
+        if len(text) < 20:
             continue
 
+        blocks.append(f"[SOURCE: {uri}]\n{text[:1000]}")
+        used_uris.append(uri)
         l1_count += 1
 
-        # ── 判断是否需要 L2 ──
-        # 高分 + top 结果才考虑 L2，且限制数量
-        need_l2 = (score > 0.55 and l2_count < max_l2 and l1_count <= 3)
+    l1_enough = top_score >= 0.5 and l1_count >= 2
+    if l1_enough or max_l2 <= 0:
+        context_text = "\n\n".join(blocks)
+        log.info("context 加载: stage=L1, sources=%d, L2=0, chars=%d", len(used_uris), len(context_text))
+        return context_text, used_uris
 
-        if need_l2:
-            # ── L2: 读全文 ──
-            try:
-                content = ov_client.read(uri)
-                if content and len(str(content)) > 20:
-                    blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
-                    used_uris.append(uri)
-                    l2_count += 1
-                    continue
-            except Exception:
-                pass
+    # ---------- Stage 3: L2 only when still insufficient ----------
+    l2_count = 0
+    for item in scored[:3]:
+        if l2_count >= max_l2:
+            break
 
-        # L2 没读到或不需要，用 L1
-        blocks.append(f"[SOURCE: {uri}]\n{l1_text[:1000]}")
-        used_uris.append(uri)
+        uri = item.get("uri", "")
+        score = item.get("score", 0)
+        if not uri or score < 0.5:
+            continue
+
+        try:
+            # 只升级已在 L1 阶段收录的 source
+            if uri not in used_uris:
+                continue
+            content = ov_client.read(uri)
+            if content and len(str(content)) > 20:
+                pos = used_uris.index(uri)
+                blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
+                l2_count += 1
+        except Exception:
+            pass
 
     context_text = "\n\n".join(blocks)
-    log.info("context 加载: %d 个源, L1=%d, L2=%d, %d chars",
-             len(used_uris), l1_count - l2_count, l2_count, len(context_text))
+    log.info("context 加载: stage=L2 fallback, sources=%d, L2=%d, chars=%d", len(used_uris), l2_count, len(context_text))
     return context_text, used_uris
 
 
