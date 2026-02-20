@@ -395,12 +395,62 @@ class SessionManager:
         except Exception as e:
             log.debug("session.used 失败: %s", e)
 
+    def _fix_active_counts(self, uris: list) -> int:
+        """Workaround for OV upstream bug: session._update_active_counts() passes
+        MongoDB-style filter/update kwargs but the backend expects (collection, id, data).
+
+        We query the vectordb directly with search_by_random to find record IDs,
+        then call update(collection, id, data) correctly.
+
+        Works in embedded mode only; HTTP mode relies on OV serve (which has the
+        same bug but we can't access the vectordb directly).
+        """
+        if self.ov.mode != "embedded" or not uris:
+            return 0
+
+        try:
+            client = self.ov._client
+            db = client._client._service._vikingdb_manager
+            coll = db._get_collection("context")
+        except Exception as e:
+            log.debug("_fix_active_counts: 无法访问 vectordb: %s", e)
+            return 0
+
+        updated = 0
+        seen_ids = set()
+        for uri in uris:
+            try:
+                result = coll.search_by_random(
+                    index_name=db.DEFAULT_INDEX_NAME,
+                    limit=10,
+                    filters={"op": "must", "field": "uri", "conds": [uri]},
+                )
+                for item in result.data:
+                    rec = dict(item.fields) if item.fields else {}
+                    rid = item.id
+                    if rid in seen_ids:
+                        continue
+                    seen_ids.add(rid)
+                    if rec.get("uri") != uri:
+                        continue
+                    old_ac = rec.get("active_count", 0) or 0
+                    ok = _ov_run(db.update("context", rid, {"active_count": old_ac + 1}))
+                    if ok:
+                        updated += 1
+            except Exception as e:
+                log.debug("_fix_active_counts: URI %s 失败: %s", uri, e)
+
+        if updated:
+            log.info("active_count 修正: %d 条记录已更新", updated)
+        return updated
+
     def search(self, query: str, limit: int = 10) -> dict:
         return self.ov.search(query, session_id=self._sid, limit=limit)
 
     def maybe_commit(self):
         elapsed = time.time() - self._last_commit
         if self._msg_count >= _COMMIT_MSG_THRESHOLD or elapsed >= _COMMIT_TIME_THRESHOLD:
+            committed_uris = list(self._used_uris)
             if self._used_uris:
                 self.record_used(self._used_uris)
                 self._used_uris = []
@@ -411,9 +461,14 @@ class SessionManager:
                     s = self._get_session()
                     result = s.commit()
 
-                log.info("session commit: memories=%s, active_count=%s, archived=%s",
+                # Workaround: OV's native active_count update is broken,
+                # so we fix it ourselves after commit.
+                fixed = self._fix_active_counts(committed_uris)
+
+                log.info("session commit: memories=%s, active_count=%s (fixed=%d), archived=%s",
                          result.get("memories_extracted", 0),
                          result.get("active_count_updated", 0),
+                         fixed,
                          result.get("archived"))
                 self._msg_count = 0
                 self._last_commit = time.time()
