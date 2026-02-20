@@ -1,4 +1,7 @@
-"""Review: judge external results, ingest, conflict detection."""
+"""Review: judge external results, ingest, conflict detection.
+
+B2 优化：judge_and_ingest 合并审核+冲突检测为一次 LLM 调用。
+"""
 
 import json
 import re
@@ -11,30 +14,119 @@ from .config import (
     OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR,
 )
 
-def judge_and_pack(query: str, external_text: str):
-    import datetime
+
+def judge_and_ingest(ov_client, query: str, local_ctx: str, external_text: str) -> dict:
+    """B2: 合并审核 + 冲突检测为一次 LLM 调用。
+
+    返回:
+        {
+            "pass": bool,          # 是否值得入库
+            "reason": str,
+            "trust": int,          # 0-10
+            "freshness": str,      # current/recent/outdated/unknown
+            "markdown": str,       # 审核通过后的入库内容
+            "has_conflict": bool,  # 本地 vs 外部是否有冲突
+            "conflict_summary": str,
+            "conflict_points": list,
+        }
+    """
     today = datetime.date.today().isoformat()
-    sys = (
-        "你是资料审核器。判断外部搜索结果是否值得入库。\n"
+
+    # 截断上下文，控制 prompt 长度
+    local_snippet = (local_ctx or "")[:2000]
+    external_snippet = (external_text or "")[:3000]
+
+    sys_prompt = (
+        "你是知识库治理助手。你需要同时完成两件事：\n\n"
+        "1. **审核外搜结果**：判断是否值得入库\n"
+        "   - 内容准确性、时效性、入库价值\n"
+        "   - 超过1年未更新的标注[可能过时]\n"
+        "   - 已取消/变更的功能当作当前事实 → pass=false\n\n"
+        "2. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
+        "   - 细节差异不算冲突，结论矛盾才算\n\n"
         f"当前日期: {today}\n\n"
-        "审核维度:\n"
-        "1. 内容准确性 — 信息是否正确、是否有来源支撑\n"
-        "2. 时效性 — 信息是否仍然有效？API流程/注册方式/技术要求等易变内容尤其注意\n"
-        "   - 超过1年未更新的项目信息：trust降低，标注[可能过时]\n"
-        "   - 引用已取消/变更的功能当作当前事实：pass=false\n"
-        "   - 将旧版本要求（如已取消的手机验证）当成现行要求：pass=false\n"
-        "3. 入库价值 — 是否值得长期保存，还是只是临时参考\n\n"
-        "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), "
-        "freshness(string: current/recent/outdated/unknown), "
-        "summary(string), markdown(string)。\n"
-        "markdown要求包含来源URL和信息日期。只输出JSON。"
+        "输出严格 JSON:\n"
+        "{\n"
+        '  "pass": bool,\n'
+        '  "reason": "审核判断理由",\n'
+        '  "trust": 0-10,\n'
+        '  "freshness": "current|recent|outdated|unknown",\n'
+        '  "summary": "内容摘要",\n'
+        '  "markdown": "如果 pass=true，输出整理后的 markdown（含来源URL和日期）",\n'
+        '  "has_conflict": bool,\n'
+        '  "conflict_summary": "冲突摘要（无冲突则空）",\n'
+        '  "conflict_points": ["冲突点1", "冲突点2"]\n'
+        "}\n只输出 JSON。"
+    )
+
+    user_content = (
+        f"用户问题: {query}\n\n"
+        f"本地知识:\n{local_snippet}\n\n"
+        f"外搜结果:\n{external_snippet}"
     )
 
     last_err = None
     out = None
     for jm in JUDGE_MODELS:
         try:
-            log.debug("judge_model_used=%s", jm)
+            out = chat(OAI_BASE, OAI_KEY, jm, [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_content},
+            ], timeout=90)
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    default = {
+        "pass": False, "reason": f"judge_fail:{last_err}",
+        "trust": 0, "freshness": "unknown", "summary": "", "markdown": "",
+        "has_conflict": False, "conflict_summary": "", "conflict_points": [],
+    }
+
+    if out is None:
+        return default
+
+    m = re.search(r"\{[\s\S]*\}", out)
+    if not m:
+        default["reason"] = "bad_json"
+        return default
+
+    try:
+        result = json.loads(m.group(0))
+        # 确保所有字段存在
+        result.setdefault("pass", False)
+        result.setdefault("reason", "")
+        result.setdefault("trust", 0)
+        result.setdefault("freshness", "unknown")
+        result.setdefault("summary", "")
+        result.setdefault("markdown", "")
+        result.setdefault("has_conflict", False)
+        result.setdefault("conflict_summary", "")
+        result.setdefault("conflict_points", [])
+        if not isinstance(result["conflict_points"], list):
+            result["conflict_points"] = []
+        return result
+    except Exception:
+        default["reason"] = "json_parse_fail"
+        return default
+
+
+def judge_and_pack(query: str, external_text: str):
+    """Legacy: 单独审核（不含冲突检测）。仅供测试/兼容。"""
+    today = datetime.date.today().isoformat()
+    sys = (
+        "你是资料审核器。判断外部搜索结果是否值得入库。\n"
+        f"当前日期: {today}\n\n"
+        "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), "
+        "freshness(string: current/recent/outdated/unknown), "
+        "summary(string), markdown(string)。只输出JSON。"
+    )
+
+    last_err = None
+    out = None
+    for jm in JUDGE_MODELS:
+        try:
             out = chat(OAI_BASE, OAI_KEY, jm, [
                 {"role": "system", "content": sys},
                 {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
@@ -57,6 +149,7 @@ def judge_and_pack(query: str, external_text: str):
 
 
 def detect_conflict(query: str, local_ctx: str, external_ctx: str):
+    """Legacy: 单独冲突检测。仅供测试/兼容。"""
     if not external_ctx.strip():
         return {"has_conflict": False, "summary": "", "points": []}
 
@@ -83,8 +176,6 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
 
 def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "unknown"):
     """通过 OV HTTP API 入库（不依赖 SyncOpenViking）。"""
-    import datetime
-
     p = Path(CURATED_DIR)
     p.mkdir(parents=True, exist_ok=True)
 
@@ -100,10 +191,8 @@ def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "u
     fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
     fn.write_text(header + markdown, encoding="utf-8")
 
-    # 通过 HTTP API 入库
     result = ov_client.add_resource(str(fn), reason="curator_ingest")
 
-    # 入库后等待 OV 处理完成（建索引），否则下次检索拿不到
     try:
         ov_client.wait_processed(timeout=30)
     except Exception as e:

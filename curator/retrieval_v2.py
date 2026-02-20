@@ -56,7 +56,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
     - 仅当 L1 仍不足时，才取 L2（read，最多 max_l2）。
     """
     if not items:
-        return "", []
+        return "", [], "none"
 
     scored = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
 
@@ -76,7 +76,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
     if l0_enough:
         context_text = "\n\n".join(l0_blocks)
         log.info("context 加载: stage=L0 only, sources=%d, chars=%d", len(l0_uris), len(context_text))
-        return context_text, l0_uris
+        return context_text, l0_uris, "L0"
 
     # ---------- Stage 2: L1 on demand ----------
     blocks = []
@@ -105,7 +105,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
     if l1_enough or max_l2 <= 0:
         context_text = "\n\n".join(blocks)
         log.info("context 加载: stage=L1, sources=%d, L2=0, chars=%d", len(used_uris), len(context_text))
-        return context_text, used_uris
+        return context_text, used_uris, "L1"
 
     # ---------- Stage 3: L2 only when still insufficient ----------
     l2_count = 0
@@ -132,7 +132,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
 
     context_text = "\n\n".join(blocks)
     log.info("context 加载: stage=L2 fallback, sources=%d, L2=%d, chars=%d", len(used_uris), l2_count, len(context_text))
-    return context_text, used_uris
+    return context_text, used_uris, "L2"
 
 
 def assess_coverage(result: dict, query: str = "") -> tuple:

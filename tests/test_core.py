@@ -103,7 +103,7 @@ class TestLoadContext(unittest.TestCase):
 
     def test_empty_items(self):
         mock_ov = MagicMock()
-        text, uris = load_context(mock_ov, [], "test query")
+        text, uris, stage = load_context(mock_ov, [], "test query")
         self.assertEqual(text, "")
         self.assertEqual(uris, [])
 
@@ -114,7 +114,7 @@ class TestLoadContext(unittest.TestCase):
             {"uri": "a", "score": 0.8, "abstract": "A detailed abstract about Docker deployment with Nginx reverse proxy and SSL configuration. " * 3},
             {"uri": "b", "score": 0.7, "abstract": "Another detailed abstract about container orchestration and systemd service management. " * 3},
         ]
-        text, uris = load_context(mock_ov, items, "test query")
+        text, uris, stage = load_context(mock_ov, items, "test query")
         # L0 is enough: overview and read should NOT be called
         mock_ov.overview.assert_not_called()
         mock_ov.read.assert_not_called()
@@ -126,7 +126,7 @@ class TestLoadContext(unittest.TestCase):
         mock_ov.overview.return_value = "This is a detailed overview of the topic with enough content."
 
         items = [{"uri": "a", "score": 0.4, "abstract": "short"}]
-        text, uris = load_context(mock_ov, items, "test query")
+        text, uris, stage = load_context(mock_ov, items, "test query")
 
         mock_ov.overview.assert_called()
         mock_ov.read.assert_not_called()
@@ -139,7 +139,7 @@ class TestLoadContext(unittest.TestCase):
 
         # Single item, score below L1-enough threshold
         items = [{"uri": "a", "score": 0.45, "abstract": "short"}]
-        text, uris = load_context(mock_ov, items, "test query")
+        text, uris, stage = load_context(mock_ov, items, "test query")
 
         # L1 not enough (only 1 source, score < 0.5), so L2 should be attempted
         self.assertIn("a", uris)
@@ -154,7 +154,7 @@ class TestLoadContext(unittest.TestCase):
             {"uri": f"item_{i}", "score": 0.8 - i * 0.01, "abstract": "abs"}
             for i in range(5)
         ]
-        text, uris = load_context(mock_ov, items, "test", max_l2=2)
+        text, uris, stage = load_context(mock_ov, items, "test", max_l2=2)
 
         self.assertLessEqual(mock_ov.read.call_count, 2)
 
@@ -164,7 +164,7 @@ class TestLoadContext(unittest.TestCase):
         mock_ov.overview.return_value = "Overview with reasonable content."
 
         items = [{"uri": "a", "score": 0.9, "abstract": "short"}]
-        text, uris = load_context(mock_ov, items, "test", max_l2=0)
+        text, uris, stage = load_context(mock_ov, items, "test", max_l2=0)
 
         mock_ov.read.assert_not_called()
 
@@ -276,6 +276,82 @@ class TestOVClientWaitProcessed(unittest.TestCase):
                 timeout=25,
             )
             self.assertEqual(result["status"], "ok")
+
+
+# ─── uri_freshness_score (restored) ──────────────────────────
+
+class TestUriFreshnessScore(unittest.TestCase):
+
+    def test_recent_uri_full_freshness(self):
+        from curator.freshness import uri_freshness_score
+        import time as _time
+        recent_ts = int(_time.time()) - 86400
+        uri = f'viking://resources/{recent_ts}_test_doc'
+        score = uri_freshness_score(uri)
+        self.assertEqual(score, 1.0)
+
+    def test_old_uri_decayed(self):
+        from curator.freshness import uri_freshness_score
+        import time as _time
+        old_ts = int(_time.time()) - 120 * 86400
+        uri = f'viking://resources/{old_ts}_old_doc'
+        score = uri_freshness_score(uri)
+        self.assertLess(score, 1.0)
+        self.assertGreater(score, 0.2)
+
+    def test_very_old_uri_stale(self):
+        from curator.freshness import uri_freshness_score
+        import time as _time
+        ancient_ts = int(_time.time()) - 400 * 86400
+        uri = f'viking://resources/{ancient_ts}_ancient_doc'
+        score = uri_freshness_score(uri)
+        self.assertEqual(score, 0.1)
+
+    def test_no_timestamp_returns_default(self):
+        from curator.freshness import uri_freshness_score
+        score = uri_freshness_score('viking://resources/no_timestamp_here')
+        self.assertEqual(score, 0.5)
+
+
+# ─── scan_duplicates (report-only) ───────────────────────────
+
+class TestScanDuplicates(unittest.TestCase):
+
+    def test_too_few_uris(self):
+        from curator.dedup import scan_duplicates
+        mock_ov = MagicMock()
+        result = scan_duplicates(mock_ov, ["viking://a"])
+        self.assertEqual(result["checked"], 0)
+        self.assertEqual(result["duplicates"], [])
+
+    def test_no_auto_delete(self):
+        """scan_duplicates should never call delete/rm on the client."""
+        from curator.dedup import scan_duplicates
+        mock_ov = MagicMock()
+        mock_ov.read.return_value = "some content " * 50
+        scan_duplicates(mock_ov, ["viking://a", "viking://b"], max_checks=1)
+        # Should never try to delete anything
+        mock_ov.rm.assert_not_called()
+        mock_ov.add_resource.assert_not_called()
+
+
+# ─── load_context returns stage ──────────────────────────────
+
+class TestLoadContextStage(unittest.TestCase):
+
+    def test_returns_stage_none_on_empty(self):
+        mock_ov = MagicMock()
+        text, uris, stage = load_context(mock_ov, [], "test")
+        self.assertEqual(stage, "none")
+
+    def test_returns_stage_l0_on_high_score(self):
+        mock_ov = MagicMock()
+        items = [
+            {"uri": "a", "score": 0.8, "abstract": "A detailed abstract about Docker deployment. " * 5},
+            {"uri": "b", "score": 0.7, "abstract": "Another detailed abstract about container management. " * 5},
+        ]
+        text, uris, stage = load_context(mock_ov, items, "test")
+        self.assertEqual(stage, "L0")
 
 
 if __name__ == '__main__':

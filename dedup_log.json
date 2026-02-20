@@ -1,0 +1,14 @@
+{
+  "checked_pairs": [
+    "viking://a|viking://b"
+  ],
+  "reports": [
+    {
+      "time": "2026-02-20T07:28:09Z",
+      "uri_a": "viking://a",
+      "uri_b": "viking://b",
+      "similarity": 1.0
+    }
+  ],
+  "last_run": "2026-02-20T07:28:09Z"
+}
