@@ -323,7 +323,8 @@ class SessionManager:
 
     def _load_or_create(self) -> str:
         if os.path.exists(self._sid_file):
-            sid = open(self._sid_file).read().strip()
+            with open(self._sid_file, encoding="utf-8") as f:
+                sid = f.read().strip()
             if sid:
                 log.info("复用 session: %s", sid)
                 return sid
@@ -334,8 +335,11 @@ class SessionManager:
             result = _ov_run(self.ov._client.create_session())
 
         sid = result.get("session_id", "")
+        if not sid:
+            raise RuntimeError("OV create_session 返回空 session_id")
         os.makedirs(os.path.dirname(self._sid_file) or ".", exist_ok=True)
-        open(self._sid_file, "w").write(sid)
+        with open(self._sid_file, "w", encoding="utf-8") as f:
+            f.write(sid)
         log.info("新建 session: %s", sid)
         return sid
 

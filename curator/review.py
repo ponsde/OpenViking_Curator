@@ -9,6 +9,50 @@ import time
 import datetime
 from pathlib import Path
 
+
+def _extract_json(text: str) -> str | None:
+    """从文本中提取第一个完整的 JSON 对象（括号深度匹配）。
+
+    比 re.search(r"\\{[\\s\\S]*\\}") 更安全：
+    - 贪婪 regex 遇到嵌套 JSON 或多个 JSON 块会匹配过头
+    - 这里用括号计数，只返回第一个平衡的 {...}
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape:
+            escape = False
+            continue
+
+        if ch == "\\":
+            if in_string:
+                escape = True
+            continue
+
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+
+    return None
+
 from .config import (
     log, chat,
     OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR,
@@ -87,13 +131,13 @@ def judge_and_ingest(ov_client, query: str, local_ctx: str, external_text: str) 
     if out is None:
         return default
 
-    m = re.search(r"\{[\s\S]*\}", out)
-    if not m:
+    json_str = _extract_json(out)
+    if not json_str:
         default["reason"] = "bad_json"
         return default
 
     try:
-        result = json.loads(m.group(0))
+        result = json.loads(json_str)
         # 确保所有字段存在
         result.setdefault("pass", False)
         result.setdefault("reason", "")
@@ -139,11 +183,11 @@ def judge_and_pack(query: str, external_text: str):
     if out is None:
         return {"pass": False, "reason": f"judge_model_fail:{last_err}", "tags": [], "trust": 0, "summary": "", "markdown": ""}
 
-    m = re.search(r"\{[\s\S]*\}", out)
-    if not m:
+    json_str = _extract_json(out)
+    if not json_str:
         return {"pass": False, "reason": "bad_json", "tags": [], "trust": 0, "summary": "", "markdown": ""}
     try:
-        return json.loads(m.group(0))
+        return json.loads(json_str)
     except Exception:
         return {"pass": False, "reason": "json_parse_fail", "tags": [], "trust": 0, "summary": "", "markdown": ""}
 
@@ -162,11 +206,11 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         {"role": "system", "content": sys},
         {"role": "user", "content": f"问题:{query}\n\n本地:\n{local_ctx[:2500]}\n\n外部:\n{external_ctx[:2500]}"},
     ], timeout=60)
-    m = re.search(r"\{[\s\S]*\}", out)
-    if not m:
+    json_str = _extract_json(out)
+    if not json_str:
         return {"has_conflict": False, "summary": "", "points": []}
     try:
-        j = json.loads(m.group(0))
+        j = json.loads(json_str)
         if "points" not in j or not isinstance(j.get("points"), list):
             j["points"] = []
         return j

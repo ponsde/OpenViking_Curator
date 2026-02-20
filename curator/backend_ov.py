@@ -71,7 +71,14 @@ class OpenVikingBackend(KnowledgeBackend):
             self._ov.wait_processed(timeout=30)
         except Exception as e:
             log.warning("ingest 等索引超时（内容已存入）: %s", e)
+        finally:
+            # L1: OV add_resource 已拷贝内容，删除临时文件
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
+        # 注意: 临时文件已在 finally 中删除，返回路径仅供日志/记录用
         return tmp_path
 
     def wait_indexed(self, timeout: int = 30):

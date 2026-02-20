@@ -164,7 +164,18 @@ def run(query: str, client=None, auto_ingest: bool = True) -> dict:
             if judge_result.get("pass") and judge_result.get("markdown"):
                 freshness = judge_result.get("freshness", "unknown")
                 if freshness != "outdated":
-                    if auto_ingest:
+                    # M5: 冲突检测结果影响入库决策
+                    # 只有 preferred == "external" 或没冲突时才自动入库
+                    conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
+                    if conflict_preferred in ("human_review", "local"):
+                        # 有冲突且不倾向外部 → 不自动入库
+                        m.step("ingest", False, {
+                            "reason": f"conflict_blocked:{conflict_preferred}",
+                            "conflict_summary": conflict.get("summary", ""),
+                        })
+                        log.info("冲突阻止入库: preferred=%s, summary=%s",
+                                 conflict_preferred, conflict.get("summary", ""))
+                    elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
                             ing = ingest_markdown_v2(ov, query[:60], judge_result["markdown"], freshness=freshness)
