@@ -37,10 +37,12 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
 
     if result.get("query_plan"):
         qp = result["query_plan"]
-        queries = qp.get("queries", [])
+        queries = getattr(qp, "queries", []) if not isinstance(qp, dict) else qp.get("queries", [])
         log.info("query_plan: %d 个子查询", len(queries))
         for q in queries[:3]:
-            log.debug("  [%s] %s", q.get("context_type", "?"), q.get("query", ""))
+            ct = getattr(q, "context_type", "?") if not isinstance(q, dict) else q.get("context_type", "?")
+            qtext = getattr(q, "query", "") if not isinstance(q, dict) else q.get("query", "")
+            log.debug("  [%s] %s", ct, qtext)
 
     return {
         "memories": memories,

@@ -1,121 +1,160 @@
-"""Session manager: OV HTTP API 的 session 生命周期管理。"""
+"""Session manager: AsyncOpenViking 嵌入模式。
 
-import json
+替代之前的 HTTP 模式，使用 OV 原生 API，支持：
+- search(session_id) — VLM 意图分析 + 三路检索
+- session.used() — 记录使用的 URI，commit 时更新 active_count
+- session.commit() — 压缩对话 + 提取长期记忆
+"""
+
+import asyncio
 import os
+import threading
 import time
-import urllib.request
 
 from .config import log
 
-_DEFAULT_BASE = "http://127.0.0.1:9100"
-_COMMIT_MSG_THRESHOLD = 2
-_COMMIT_TIME_THRESHOLD = 1800  # 30min
+_DEFAULT_DATA_PATH = os.environ.get(
+    "OV_DATA_PATH",
+    os.path.expanduser("~/OpenViking_test/data"),
+)
+
+# ── 独立 event loop，避免和 OV 内部的 run_async background loop 冲突 ──
+
+_ov_loop: asyncio.AbstractEventLoop | None = None
+_ov_thread: threading.Thread | None = None
+_ov_lock = threading.Lock()
+
+
+def _get_ov_loop() -> asyncio.AbstractEventLoop:
+    global _ov_loop, _ov_thread
+    if _ov_loop is not None and not _ov_loop.is_closed():
+        return _ov_loop
+    with _ov_lock:
+        if _ov_loop is not None and not _ov_loop.is_closed():
+            return _ov_loop
+        _ov_loop = asyncio.new_event_loop()
+        _ov_thread = threading.Thread(target=_ov_loop.run_forever, daemon=True)
+        _ov_thread.start()
+    return _ov_loop
+
+
+def _ov_run(coro):
+    """在独立 loop 上执行 OV async 调用。不会和 OV 内部 run_async 死锁。"""
+    loop = _get_ov_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result(timeout=120)
+
+
+# ── 单例 AsyncOpenViking 客户端 ──
+
+_async_client = None
+_client_lock = threading.Lock()
+
+
+def _get_async_client():
+    global _async_client
+    if _async_client is not None:
+        return _async_client
+    with _client_lock:
+        if _async_client is not None:
+            return _async_client
+        from openviking import AsyncOpenViking
+        data_path = os.environ.get("OV_DATA_PATH", _DEFAULT_DATA_PATH)
+        _async_client = AsyncOpenViking(path=data_path)
+        _ov_run(_async_client.initialize())
+        log.info("OV 嵌入模式初始化完成: %s", data_path)
+    return _async_client
 
 
 class OVClient:
-    """轻量 OV HTTP 客户端，不依赖 openviking 包。"""
+    """OV 客户端 — 嵌入模式，接口兼容原 HTTP 版本。"""
 
     def __init__(self, base_url: str = None):
-        self.base = (base_url or os.environ.get("OV_BASE_URL") or _DEFAULT_BASE).rstrip("/")
-
-    def _post(self, path: str, data: dict, timeout: int = 60) -> dict:
-        req = urllib.request.Request(
-            f"{self.base}{path}",
-            data=json.dumps(data).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-
-    def _get(self, path: str, timeout: int = 30) -> dict:
-        with urllib.request.urlopen(f"{self.base}{path}", timeout=timeout) as resp:
-            return json.loads(resp.read())
+        # base_url 参数保留兼容性但不再使用
+        self._client = _get_async_client()
 
     def health(self) -> bool:
         try:
-            r = self._get("/health")
-            return r.get("status") == "ok"
+            return self._client.is_healthy()
         except Exception:
             return False
 
     # ── 检索 ──
 
     def find(self, query: str, limit: int = 10, target_uri: str = "") -> dict:
-        """纯语义检索，不需要 session。快（~1.5s）。"""
-        r = self._post("/api/v1/search/find", {
-            "query": query, "limit": limit, "target_uri": target_uri,
-        })
-        return r.get("result", r)
+        """纯语义检索，不需要 session。快（~1s）。"""
+        result = _ov_run(self._client.find(query, target_uri=target_uri, limit=limit))
+        return self._find_result_to_dict(result)
 
     def search(self, query: str, session_id: str = None, limit: int = 10) -> dict:
-        """VLM 意图分析 + 层次化检索。需要 session_id。慢（~10s）但更准。"""
-        payload = {"query": query, "limit": limit}
-        if session_id:
-            payload["session_id"] = session_id
-        r = self._post("/api/v1/search/search", payload)
-        return r.get("result", r)
+        """VLM 意图分析 + 三路检索。可带 session 做上下文感知。"""
+        result = _ov_run(self._client.search(
+            query, session_id=session_id, limit=limit,
+        ))
+        return self._find_result_to_dict(result)
+
+    @staticmethod
+    def _find_result_to_dict(result) -> dict:
+        """把 FindResult 对象转为 dict（兼容原 HTTP 返回格式）。"""
+        def _ctx_to_dict(ctx):
+            return {
+                "uri": getattr(ctx, "uri", ""),
+                "context_type": getattr(ctx, "context_type", ""),
+                "abstract": getattr(ctx, "abstract", ""),
+                "overview": getattr(ctx, "overview", None),
+                "score": getattr(ctx, "score", 0),
+                "match_reason": getattr(ctx, "match_reason", ""),
+                "category": getattr(ctx, "category", ""),
+                "relations": getattr(ctx, "relations", []),
+            }
+        memories = [_ctx_to_dict(m) for m in getattr(result, "memories", [])]
+        resources = [_ctx_to_dict(r) for r in getattr(result, "resources", [])]
+        skills = [_ctx_to_dict(s) for s in getattr(result, "skills", [])]
+        return {
+            "memories": memories,
+            "resources": resources,
+            "skills": skills,
+            "query_plan": getattr(result, "query_plan", None),
+            "total": len(memories) + len(resources) + len(skills),
+        }
 
     # ── 内容分层 ──
 
     def abstract(self, uri: str) -> str:
-        """L0 摘要 ~100 token。"""
-        r = self._get(f"/api/v1/content/abstract?uri={urllib.request.quote(uri, safe='/:')}")
-        return r.get("result", "")
+        return _ov_run(self._client.abstract(uri))
 
     def overview(self, uri: str) -> str:
-        """L1 概览 ~2k token。"""
-        r = self._get(f"/api/v1/content/overview?uri={urllib.request.quote(uri, safe='/:')}")
-        return r.get("result", "")
+        return _ov_run(self._client.overview(uri))
 
     def read(self, uri: str) -> str:
-        """L2 全文。"""
-        r = self._get(f"/api/v1/content/read?uri={urllib.request.quote(uri, safe='/:')}")
-        return r.get("result", "")
+        return _ov_run(self._client.read(uri))
 
     # ── 资源管理 ──
 
     def add_resource(self, path: str, reason: str = "", wait: bool = False) -> dict:
-        r = self._post("/api/v1/resources", {
-            "path": path, "reason": reason, "wait": wait,
-        })
-        return r.get("result", r)
+        return _ov_run(self._client.add_resource(path, reason=reason, wait=wait))
+
+    def ls(self, uri: str, **kwargs) -> list:
+        return _ov_run(self._client.ls(uri, **kwargs))
 
     def grep(self, uri: str, pattern: str) -> dict:
-        r = self._post("/api/v1/search/grep", {
-            "uri": uri, "pattern": pattern, "case_insensitive": True,
-        })
-        return r.get("result", r)
-
-    # ── Session ──
-
-    def create_session(self) -> str:
-        r = self._post("/api/v1/sessions", {})
-        return r["result"]["session_id"]
-
-    def add_message(self, session_id: str, role: str, content: str):
-        self._post(f"/api/v1/sessions/{session_id}/messages", {
-            "role": role, "content": content,
-        })
-
-    def commit(self, session_id: str) -> dict:
-        r = self._post(f"/api/v1/sessions/{session_id}/commit", {})
-        return r.get("result", r)
-
-    # ── 关系 ──
+        return _ov_run(self._client.grep(uri, pattern, case_insensitive=True))
 
     def wait_processed(self, timeout: int = 30) -> dict:
-        """等待 OV 处理队列完成（入库后索引建立）。"""
-        r = self._post("/api/v1/system/wait", {"timeout": timeout}, timeout=timeout + 10)
-        return r
+        return _ov_run(self._client.wait_processed(timeout=timeout))
 
     def link(self, from_uri: str, to_uris: list, reason: str = ""):
-        self._post("/api/v1/relations/link", {
-            "from_uri": from_uri, "to_uris": to_uris, "reason": reason,
-        })
+        _ov_run(self._client.link(from_uri, to_uris, reason))
+
+
+# ── Session 管理（使用 OV 原生 Session） ──
+
+_COMMIT_MSG_THRESHOLD = 2
+_COMMIT_TIME_THRESHOLD = 1800  # 30min
 
 
 class SessionManager:
-    """管理 Curator 的持久 session。"""
+    """管理 Curator 的持久 session — 使用 OV 原生 Session 对象。"""
 
     def __init__(self, ov: OVClient, session_id_file: str = None):
         self.ov = ov
@@ -123,8 +162,10 @@ class SessionManager:
             os.environ.get("CURATOR_DATA_PATH", "./data"), ".curator_session_id"
         )
         self._sid = self._load_or_create()
+        self._session = None
         self._msg_count = 0
         self._last_commit = time.time()
+        self._used_uris = []
 
     def _load_or_create(self) -> str:
         if os.path.exists(self._sid_file):
@@ -132,53 +173,81 @@ class SessionManager:
             if sid:
                 log.info("复用 session: %s", sid)
                 return sid
-        sid = self.ov.create_session()
+        # 用 OV 原生创建
+        result = _ov_run(self.ov._client.create_session())
+        sid = result.get("session_id", "")
         os.makedirs(os.path.dirname(self._sid_file) or ".", exist_ok=True)
         open(self._sid_file, "w").write(sid)
         log.info("新建 session: %s", sid)
         return sid
+
+    def _get_session(self):
+        """获取 OV 原生 Session 对象。"""
+        if self._session is None:
+            self._session = self.ov._client.session(self._sid)
+            self._session.load()
+        return self._session
 
     @property
     def session_id(self) -> str:
         return self._sid
 
     def add_user_query(self, query: str):
-        """记录用户提问到 session。"""
         try:
-            self.ov.add_message(self._sid, "user", query)
+            from openviking.message import TextPart
+            s = self._get_session()
+            s.add_message("user", [TextPart(text=query)])
             self._msg_count += 1
         except Exception as e:
             log.debug("add user msg 失败: %s", e)
 
     def add_assistant_response(self, answer: str, used_uris: list = None):
-        """记录回答到 session。"""
         try:
-            # 截断太长的回答
+            from openviking.message import TextPart
+            s = self._get_session()
             content = answer[:800]
             if used_uris:
                 content += "\n\n引用: " + ", ".join(used_uris[:5])
-            self.ov.add_message(self._sid, "assistant", content)
+            s.add_message("assistant", [TextPart(text=content)])
             self._msg_count += 1
+            # 记录 used URIs，commit 时传给 OV
+            if used_uris:
+                self._used_uris.extend(used_uris)
         except Exception as e:
             log.debug("add assistant msg 失败: %s", e)
 
-    def search(self, query: str, limit: int = 10) -> dict:
-        """通过当前 session 做 VLM 智能检索。"""
+    def record_used(self, uris: list):
+        """显式记录使用了哪些 URI（调 OV session.used）。"""
+        if not uris:
+            return
         try:
-            return self.ov.search(query, session_id=self._sid, limit=limit)
+            s = self._get_session()
+            s.used(contexts=list(uris))
+            log.info("session.used: %d URIs", len(uris))
         except Exception as e:
-            log.warning("session search 失败，降级 find: %s", e)
-            return self.ov.find(query, limit=limit)
+            log.debug("session.used 失败: %s", e)
+
+    def search(self, query: str, limit: int = 10) -> dict:
+        """通过 session 做 VLM 智能检索。"""
+        return self.ov.search(query, session_id=self._sid, limit=limit)
 
     def maybe_commit(self):
-        """达到条件时 commit（提取记忆）。"""
+        """达到条件时 commit（提取记忆 + 更新 active_count）。"""
         elapsed = time.time() - self._last_commit
         if self._msg_count >= _COMMIT_MSG_THRESHOLD or elapsed >= _COMMIT_TIME_THRESHOLD:
+            # 先调 used() 记录本轮使用的 URI
+            if self._used_uris:
+                self.record_used(self._used_uris)
+                self._used_uris = []
             try:
-                result = self.ov.commit(self._sid)
-                log.info("session commit: extracted=%s, archived=%s",
-                         result.get("memories_extracted", 0), result.get("archived"))
+                s = self._get_session()
+                result = s.commit()
+                log.info("session commit: memories=%s, active_count=%s, archived=%s",
+                         result.get("memories_extracted", 0),
+                         result.get("active_count_updated", 0),
+                         result.get("archived"))
                 self._msg_count = 0
                 self._last_commit = time.time()
+                self._session = None  # commit 后重新 load
             except Exception as e:
                 log.debug("commit 失败: %s", e)
