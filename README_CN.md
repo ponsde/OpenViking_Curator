@@ -2,11 +2,10 @@
 
 [English](README.md) / 中文
 
-**[OpenViking](https://github.com/volcengine/OpenViking) 的主动知识治理层。** 不只是检索——判断、验证、积累。
+**[OpenViking](https://github.com/volcengine/OpenViking) 的知识治理层。** 不只是检索——判断、验证、积累。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
-[![Tests: 22 passing](https://img.shields.io/badge/Tests-22%20passing-brightgreen.svg)](tests/)
 
 ## 这是什么？
 
@@ -14,14 +13,21 @@
 
 | 功能 | 说明 |
 |------|------|
-| **覆盖率门控** | 评估本地检索质量，只在不够时触发外搜 |
+| **覆盖率门控** | 评估本地检索质量（信任 OV 的 score），只在不够时触发外搜 |
 | **可插拔外部搜索** | Grok、OpenAI 或自定义后端——换个环境变量就行 |
-| **AI 审核入库** | 外搜结果经过质量/时效审核才入库 |
-| **交叉验证** | 易变声明自动对官方源交叉验证 |
+| **AI 审核入库** | 外搜结果经过质量/时效审核才存回 OV |
+| **交叉验证** | 标记外搜结果中的易变/高风险声明 |
 | **冲突检测** | 识别本地与外部信息的矛盾 |
-| **时效追踪** | TTL 元数据、过期扫描、过时知识检测 |
-| **反馈闭环** | 用户反馈影响未来检索排序 |
 | **案例沉淀** | 自动保存问答为可复用经验 |
+
+### Curator 不做的事（由 OV 负责）
+
+- ❌ 检索 / 语义搜索（OV `find` / `search`）
+- ❌ L0/L1/L2 内容加载（OV `abstract` / `overview` / `read`）
+- ❌ 记忆提取（OV `session.commit`）
+- ❌ 信任/时效评分（OV `active_count` + score 排序）
+- ❌ 去重（OV 自身管理知识库）
+- ❌ 生成最终回答（调用方的 LLM 做）
 
 ## 快速开始
 
@@ -48,28 +54,38 @@ docker compose run curator "OpenViking 是什么？"
 ### 试一下
 
 ```bash
-# 健康检查
 python3 curator_query.py --status
-
-# 提问
 python3 curator_query.py "Redis 和 Memcached 高并发下怎么选？"
 ```
 
 ## 架构
 
 ```
-查询 → 门控（纯规则，不调 LLM）→ 路由 → 本地检索（OpenViking）
-                                               ↓
-                                     覆盖率 + 核心词检查
-                                          ↙         ↘
-                                    足够？       外部搜索（可插拔）
-                                      ↓                ↓
-                                    回答       交叉验证 → 审核 → 入库？
-                                      ↓                         ↓
-                                  来源透明度                   回答
-                                      ↓                         ↓
-                                  案例沉淀                  冲突检测
+查询 → 门控（纯规则） → OV Search（session + VLM 意图分析）
+                                    ↓
+                          L0→L1→L2 严格按需加载
+                          + 覆盖率评估（信任 OV score）
+                                 ↙         ↘
+                           足够？       外部搜索（可插拔）
+                               ↓                ↓
+                          直接返回      交叉验证（标记风险）
+                                                 ↓
+                                          审核 → 入库回 OV？
+                                                 ↓
+                                          冲突检测
+                                                 ↓
+                                        结构化输出
+                                        { context_text,
+                                          external_text,
+                                          coverage,
+                                          conflict, meta }
 ```
+
+**设计原则：**
+- 返回结构化数据，不生成回答
+- 信任 OV 的 score，不重新打分
+- 严格按需加载：先 L0，不够才 L1，还不够才 L2
+- 外搜是补充，不是替代
 
 ## 搜索后端
 
@@ -81,15 +97,6 @@ python3 curator_query.py "Redis 和 Memcached 高并发下怎么选？"
 | OpenAI | `oai` | 任意有联网能力的 OAI 兼容模型 |
 | 自定义 | 你的名字 | 在 `search_providers.py` 注册 |
 
-```python
-# search_providers.py 里加你自己的
-def bing_search(query, scope, **kwargs) -> str:
-    ...
-    return result_text
-
-PROVIDERS["bing"] = bing_search
-```
-
 ## 配置
 
 所有配置通过环境变量（`.env` 文件，已 git-ignored）：
@@ -97,60 +104,48 @@ PROVIDERS["bing"] = bing_search
 | 变量 | 必填 | 说明 |
 |------|------|------|
 | `CURATOR_OAI_BASE` | ✅ | OAI 兼容 API 地址 |
-| `CURATOR_OAI_KEY` | ✅ | API key |
+| `CURATOR_OAI_KEY` | ✅ | API key（用于审核/验证） |
 | `CURATOR_GROK_KEY` | ✅* | Grok API key（*仅使用 Grok 后端时） |
 | `CURATOR_SEARCH_PROVIDER` | | 搜索后端：`grok`（默认）、`oai`、自定义 |
-
-### 可调阈值
-
-所有阈值支持 env 覆盖：
-
-| 变量 | 默认 | 含义 |
-|------|------|------|
-| `CURATOR_THRESHOLD_LOW_COV` | 0.45 | 低于此值触发外搜 |
-| `CURATOR_THRESHOLD_CORE_COV` | 0.4 | 核心词覆盖 ≤ 此值触发外搜 |
-| `CURATOR_THRESHOLD_LOW_TRUST` | 5.4 | 低于此值触发质量补充搜索 |
+| `CURATOR_JUDGE_MODELS` | | 审核/验证模型 fallback 链 |
+| `OPENVIKING_CONFIG_FILE` | | OpenViking ov.conf 路径 |
 
 ## 项目结构
 
 ```
-curator/               # 核心包（模块化）
+curator/               # 核心包（治理层）
   config.py            # 环境变量、阈值、HTTP 客户端
-  router.py            # 路由（规则 + LLM）
-  retrieval_v2.py      # OV 原生检索 + 覆盖率评估
+  router.py            # 轻量路由（领域 + 时效性判断）
+  retrieval_v2.py      # 严格按需 L0→L1→L2 加载 + 覆盖率评估
   session_manager.py   # OV HTTP client + 持久 session 生命周期
-  feedback.py          # trust/freshness/反馈打分
-  search.py            # 外搜 + 交叉验证
+  search.py            # 外搜 + 交叉验证（风险标记）
   review.py            # 审核入库 + 冲突检测
-  # answer.py 已移入 legacy（Curator 不再直接生成最终回答）
-  pipeline_v2.py       # 主流程（6 步）
-curator_query.py       # CLI 入口（--help, --status, 查询）
+  pipeline_v2.py       # 主流程（5 步，返回结构化数据）
+  legacy/              # 归档的 v1 模块（answer, feedback, dedup, pipeline, retrieval）
+curator_query.py       # CLI 入口
 search_providers.py    # 可插拔搜索后端
-mcp_server.py          # MCP 服务器（stdio JSON-RPC，3 个工具）
+mcp_server.py          # MCP 服务器（stdio JSON-RPC）
 feedback_store.py      # 线程安全反馈存储
-batch_ingest.py        # 批量入库（冷启动）
-eval_batch.py          # 批量评测
-freshness_rescan.py    # URL 可达性 + TTL 扫描
 Dockerfile             # 容器构建
 docker-compose.yml     # 一键启动
-tests/test_core.py     # 46 个单元测试
+tests/test_core.py     # 单元测试
 ```
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -v   # 46 个测试，全部离线（不调外部 API）
-python eval/benchmark.py     # 10题 benchmark（裸 OV vs curator v2）
-python eval/deadlock_repro.py --mode both  # 嵌入模式 vs HTTP 死锁复验
+python -m pytest tests/ -v
+python eval/benchmark.py     # 10 题 benchmark（裸 OV vs curator v2）
 ```
 
-## 路线图
+## 和 LangChain / LlamaIndex 有什么区别？
 
-见 [ROADMAP.md](ROADMAP.md)。当前版本 **v0.9**（OV 原生 v2 管线）。
+它们构建 RAG **管道**。Curator 治理**知识**：
+- 现有知识够不够？
+- 新信息可信吗？
+- 来源之间有没有矛盾？
 
-## 贡献
-
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+可以和任何 RAG 框架配合使用。治理知识，不是管道。
 
 ## License
 

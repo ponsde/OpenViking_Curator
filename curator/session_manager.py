@@ -8,8 +8,8 @@ import urllib.request
 from .config import log
 
 _DEFAULT_BASE = "http://127.0.0.1:9100"
-_COMMIT_MSG_THRESHOLD = 5
-_COMMIT_TIME_THRESHOLD = 3600  # 1h
+_COMMIT_MSG_THRESHOLD = 2
+_COMMIT_TIME_THRESHOLD = 1800  # 30min
 
 
 class OVClient:

@@ -39,20 +39,11 @@ JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gemini-3-flash-preview")
 JUDGE_MODELS = [
     m.strip() for m in env("CURATOR_JUDGE_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5").split(",") if m.strip()
 ]
-ANSWER_MODELS = [
-    m.strip() for m in env("CURATOR_ANSWER_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5").split(",") if m.strip()
-]
-
 GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
 GROK_KEY = env("CURATOR_GROK_KEY")
 GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
 
 # ── Tunable thresholds ──
-THRESHOLD_LOW_COV = float(env("CURATOR_THRESHOLD_LOW_COV", "0.45"))
-THRESHOLD_LOW_COV_INTERNAL = float(env("CURATOR_THRESHOLD_LOW_COV_INTERNAL", "0.35"))
-THRESHOLD_CORE_COV = float(env("CURATOR_THRESHOLD_CORE_COV", "0.4"))
-THRESHOLD_LOW_TRUST = float(env("CURATOR_THRESHOLD_LOW_TRUST", "5.4"))
-THRESHOLD_LOW_FRESH = float(env("CURATOR_THRESHOLD_LOW_FRESH", "0.25"))
 THRESHOLD_CURATED_OVERLAP = float(env("CURATOR_THRESHOLD_CURATED_OVERLAP", "0.25"))
 THRESHOLD_CURATED_MIN_HITS = int(env("CURATOR_THRESHOLD_CURATED_MIN_HITS", "3"))
 

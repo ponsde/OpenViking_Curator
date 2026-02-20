@@ -11,7 +11,7 @@ from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH
 from .router import route_scope
 from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
 from .session_manager import OVClient, SessionManager
-from .search import external_boost_needed, external_search, cross_validate
+from .search import external_search, cross_validate
 from .review import judge_and_pack, ingest_markdown_v2, detect_conflict
 
 
@@ -132,7 +132,7 @@ def run(query: str, client=None) -> dict:
                 freshness = j.get("freshness", "unknown")
                 if freshness != "outdated":
                     try:
-                        ing = ingest_markdown_v2(ov, "curated", j["markdown"], freshness=freshness)
+                        ing = ingest_markdown_v2(ov, query[:60], j["markdown"], freshness=freshness)
                         ingested = True
                         m.step("ingest", True, {"uri": ing.get("root_uri", "")})
                         log.info("已入库: %s", ing.get("root_uri", ""))
