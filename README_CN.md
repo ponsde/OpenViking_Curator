@@ -41,14 +41,17 @@ pip install -r requirements.txt
 cp .env.example .env   # 填入你的 API key
 ```
 
-### 方式 B：Docker
+### 方式 B：Docker（嵌入模式）
 
 ```bash
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
-cp .env.example .env   # 填入你的 API key
+cp ov.conf.example ov.conf   # 填 embedding + VLM 配置
+cp .env.example .env         # 填 curator 的 key
+
 docker compose build
-docker compose run curator "OpenViking 是什么？"
+docker compose run --rm curator curator_query.py --status
+docker compose run --rm curator curator_query.py "OpenViking 是什么？"
 ```
 
 ### 试一下
@@ -108,17 +111,9 @@ python3 curator_query.py "Redis 和 Memcached 高并发下怎么选？"
 | `CURATOR_GROK_KEY` | ✅* | Grok API key（*仅使用 Grok 后端时） |
 | `CURATOR_SEARCH_PROVIDER` | | 搜索后端：`grok`（默认）、`oai`、自定义 |
 | `CURATOR_JUDGE_MODELS` | | 审核/验证模型 fallback 链 |
-| `OPENVIKING_CONFIG_FILE` | | OpenViking ov.conf 路径 |
+| `OPENVIKING_CONFIG_FILE` | | OpenViking ov.conf 路径（嵌入模式） |
+| `OV_BASE_URL` | | 可选：使用 OV HTTP serve（不走嵌入） |
 
-### OpenClaw 模型命名说明
-
-如果你通过 OpenClaw 使用 Curator，`sonnet1m` 应固定映射到：
-
-- `whidsm/【Claude Code】Claude-Sonnet 4-6-1M`
-
-并删除旧的/不存在的项：
-
-- `whidsm/claude-sonnet-4-6-1m`
 
 ## 项目结构
 
@@ -127,7 +122,7 @@ curator/               # 核心包（治理层）
   config.py            # 环境变量、阈值、HTTP 客户端
   router.py            # 轻量路由（领域 + 时效性判断）
   retrieval_v2.py      # 严格按需 L0→L1→L2 加载 + 覆盖率评估
-  session_manager.py   # OV HTTP client + 持久 session 生命周期
+  session_manager.py   # 双模式 OV client（嵌入/HTTP）+ 持久 session 生命周期
   search.py            # 外搜 + 交叉验证（风险标记）
   review.py            # 审核入库 + 冲突检测
   pipeline_v2.py       # 主流程（5 步，返回结构化数据）

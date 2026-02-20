@@ -42,14 +42,17 @@ pip install -r requirements.txt
 cp .env.example .env   # Edit with your API keys
 ```
 
-### Option B: Docker
+### Option B: Docker (embedded mode)
 
 ```bash
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
-cp .env.example .env   # Edit with your API keys
+cp ov.conf.example ov.conf   # Fill embedding + VLM API settings
+cp .env.example .env         # Fill curator keys
+
 docker compose build
-docker compose run curator "What is OpenViking?"
+docker compose run --rm curator curator_query.py --status
+docker compose run --rm curator curator_query.py "What is OpenViking?"
 ```
 
 ### First run
@@ -138,19 +141,11 @@ All config via environment variables (`.env` file, git-ignored):
 | `CURATOR_GROK_KEY` | ✅* | Grok API key (*only if using Grok provider) |
 | `CURATOR_SEARCH_PROVIDER` | | Search backend: `grok` (default), `oai`, custom |
 | `CURATOR_JUDGE_MODELS` | | Model fallback chain for review/validation |
-| `OPENVIKING_CONFIG_FILE` | | Path to OpenViking ov.conf |
+| `OPENVIKING_CONFIG_FILE` | | Path to OpenViking ov.conf (embedded mode) |
+| `OV_BASE_URL` | | Optional: use OV HTTP serve instead of embedded mode |
 
 **No secrets are hardcoded.** All sensitive values come from `.env`.
 
-### OpenClaw model naming note
-
-If you use Curator via OpenClaw, keep `sonnet1m` mapped to:
-
-- `whidsm/【Claude Code】Claude-Sonnet 4-6-1M`
-
-And remove legacy/nonexistent entries like:
-
-- `whidsm/claude-sonnet-4-6-1m`
 
 ## Repo Structure
 
@@ -159,7 +154,7 @@ curator/               # Core package (governance only)
   config.py            # Env vars, thresholds, HTTP client
   router.py            # Lightweight rule-based routing (domain + freshness)
   retrieval_v2.py      # Strict on-demand L0→L1→L2 loading + coverage assessment
-  session_manager.py   # OV HTTP client + persistent session lifecycle
+  session_manager.py   # Dual-mode OV client (embedded / HTTP) + persistent session lifecycle
   search.py            # External search + cross-validation (risk tagging)
   review.py            # AI review, ingest to OV, conflict detection
   pipeline_v2.py       # Main 5-step pipeline (returns structured data)
