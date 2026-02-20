@@ -14,7 +14,13 @@ from difflib import SequenceMatcher
 
 from .config import log
 
-DEDUP_LOG_FILE = os.getenv("CURATOR_DEDUP_LOG", "dedup_log.json")
+DEDUP_LOG_FILE = os.getenv(
+    "CURATOR_DEDUP_LOG",
+    os.path.join(
+        os.environ.get("CURATOR_DATA_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")),
+        "dedup_log.json",
+    ),
+)
 SIMILARITY_THRESHOLD = 0.55
 
 

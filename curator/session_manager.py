@@ -413,9 +413,29 @@ class SessionManager:
             return 0
 
         try:
+            # NOTE: 穿透三层私有 API（AsyncOpenViking._client._service._vikingdb_manager）
+            # 这是 OV upstream active_count bug 的临时 workaround。
+            # OV 上游重构后可能 break，所以用 hasattr 守卫每一层。
             client = self.ov._client
-            db = client._client._service._vikingdb_manager
+            inner = getattr(client, '_client', None)
+            if inner is None:
+                log.warning("_fix_active_counts: OV 内部结构变更，_client 不存在，跳过 active_count 修正")
+                return 0
+            service = getattr(inner, '_service', None)
+            if service is None:
+                log.warning("_fix_active_counts: OV 内部结构变更，_service 不存在，跳过 active_count 修正")
+                return 0
+            db = getattr(service, '_vikingdb_manager', None)
+            if db is None:
+                log.warning("_fix_active_counts: OV 内部结构变更，_vikingdb_manager 不存在，跳过 active_count 修正")
+                return 0
+            if not hasattr(db, '_get_collection'):
+                log.warning("_fix_active_counts: OV 内部结构变更，_get_collection 不存在，跳过 active_count 修正")
+                return 0
             coll = db._get_collection("context")
+        except AttributeError as e:
+            log.warning("_fix_active_counts: OV 内部 API 穿透失败（上游可能已重构）: %s", e)
+            return 0
         except Exception as e:
             log.debug("_fix_active_counts: 无法访问 vectordb: %s", e)
             return 0

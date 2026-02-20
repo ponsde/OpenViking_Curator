@@ -58,15 +58,6 @@ THRESHOLD_COV_LOW = float(env("CURATOR_THRESHOLD_COV_LOW", "0.35"))
 
 FAST_ROUTE = env("CURATOR_FAST_ROUTE", "1") == "1"
 
-# ── Module-level constants ──
-_GENERIC_TERMS = {
-    "2.0", "3.0", "1.0", "0.1", "2025", "2026", "2024", "最新", "latest",
-    "对比", "比较", "区别", "最佳", "实践", "方案", "选型", "推荐",
-    "怎么", "如何", "什么", "为什么", "哪些", "入门", "指南",
-    "compare", "best", "practice", "guide", "tutorial", "how",
-    "vs", "versus", "performance", "benchmark",
-}
-
 
 def validate_config() -> None:
     missing = []

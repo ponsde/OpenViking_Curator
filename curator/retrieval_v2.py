@@ -114,6 +114,8 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
         return context_text, used_uris, "L1"
 
     # ---------- Stage 3: L2 only when still insufficient ----------
+    # L2 按原始 score 排序取 top N，不限制 used_uris，
+    # 这样 L1 阶段因 overview 返回空而被跳过的高分 URI 也有机会被深度加载。
     l2_count = 0
     for item in scored[:3]:
         if l2_count >= max_l2:
@@ -125,13 +127,16 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
             continue
 
         try:
-            # 只升级已在 L1 阶段收录的 source
-            if uri not in used_uris:
-                continue
             content = ov_client.read(uri)
             if content and len(str(content)) > 20:
-                pos = used_uris.index(uri)
-                blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
+                if uri in used_uris:
+                    # 升级已有的 L1 块
+                    pos = used_uris.index(uri)
+                    blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
+                else:
+                    # L1 阶段被跳过的高分 URI，现在补上
+                    blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
+                    used_uris.append(uri)
                 l2_count += 1
         except Exception:
             pass

@@ -33,8 +33,6 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
     user = (
         f"问题: {query}\n"
         f"关键词: {scope.get('keywords', [])}\n"
-        f"排除: {scope.get('exclude', [])}\n"
-        f"偏好来源: {scope.get('source_pref', [])}\n"
         f"当前日期: {today}\n\n"
         "要求:\n"
         "1. 返回5条高质量来源，格式：标题+URL+发布/更新日期+关键点\n"

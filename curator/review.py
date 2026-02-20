@@ -4,6 +4,7 @@ B2 优化：judge_and_ingest 合并审核+冲突检测为一次 LLM 调用。
 """
 
 import json
+import os
 import re
 import time
 import datetime
@@ -219,10 +220,12 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
 
 
 def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "unknown"):
-    """通过 OV HTTP API 入库（不依赖 SyncOpenViking）。"""
-    p = Path(CURATED_DIR)
-    p.mkdir(parents=True, exist_ok=True)
+    """入库 markdown 到 OV。
 
+    嵌入模式：写本地文件 → add_resource(path)
+    HTTP 模式：先写本地备份，再用 OVClient 公开方法入库。
+               如果 add_resource 失败（远端读不到本地路径），会 warning。
+    """
     today = datetime.date.today().isoformat()
     ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
     ttl_days = ttl_map.get(freshness, 60)
@@ -232,14 +235,37 @@ def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "u
         f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n\n"
     )
 
+    full_content = header + markdown
+
+    # 写本地文件（嵌入模式用于入库，HTTP 模式做备份）
+    p = Path(CURATED_DIR)
+    p.mkdir(parents=True, exist_ok=True)
     fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
-    fn.write_text(header + markdown, encoding="utf-8")
+    fn.write_text(full_content, encoding="utf-8")
 
-    result = ov_client.add_resource(str(fn), reason="curator_ingest")
+    # 检测 OV 模式
+    is_http = bool(os.environ.get("OV_BASE_URL", "").strip()) or getattr(ov_client, 'mode', '') == 'http'
 
-    try:
-        ov_client.wait_processed(timeout=30)
-    except Exception as e:
-        log.debug("wait_processed 失败: %s", e)
-
-    return result
+    if is_http:
+        log.info("ingest_markdown_v2: HTTP 模式，本地备份已写 %s", fn)
+        # HTTP 模式下 add_resource(local_path) 可能远端不可达
+        # OV HTTP API 的 add_resource 某些部署支持 URL/内容上传，某些不支持
+        # 这里仍然调用，让 OV 自己决定能不能处理
+        try:
+            result = ov_client.add_resource(str(fn), reason="curator_ingest")
+            log.info("HTTP 模式 add_resource 返回: %s", result)
+            return result
+        except Exception as e:
+            log.warning(
+                "HTTP 模式 add_resource 失败（远端可能读不到本地路径 %s）: %s。"
+                "内容已备份到本地文件，可手动入库。", fn, e
+            )
+            return {"status": "local_backup_only", "path": str(fn), "error": str(e)}
+    else:
+        # 嵌入模式：add_resource + wait_processed
+        result = ov_client.add_resource(str(fn), reason="curator_ingest")
+        try:
+            ov_client.wait_processed(timeout=30)
+        except Exception as e:
+            log.debug("wait_processed 失败: %s", e)
+        return result

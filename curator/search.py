@@ -54,7 +54,16 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
 
         result = json.loads(match.group(0))
         claims = result.get("claims", [])
-        warnings = [c.get("claim", "") for c in claims if c.get("risk") == "high"]
+        warnings = []
+        for c in claims:
+            risk = c.get("risk", "low")
+            claim_text = c.get("claim", "")
+            if not claim_text:
+                continue
+            if risk == "high":
+                warnings.append(f"[⚠️ high] {claim_text}")
+            elif risk == "medium":
+                warnings.append(f"[❓ medium] {claim_text}")
 
         return {"validated": external_text, "warnings": warnings}
 

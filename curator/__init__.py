@@ -20,7 +20,7 @@ from .config import (
     OPENVIKING_CONFIG_FILE, DATA_PATH, CURATED_DIR,
     OAI_BASE, OAI_KEY, ROUTER_MODELS, JUDGE_MODEL, JUDGE_MODELS,
     GROK_BASE, GROK_KEY, GROK_MODEL,
-    _GENERIC_TERMS, FAST_ROUTE,
+    FAST_ROUTE,
 )
 from .search import external_search, cross_validate
 from .review import judge_and_pack, judge_and_ingest, ingest_markdown_v2, detect_conflict
