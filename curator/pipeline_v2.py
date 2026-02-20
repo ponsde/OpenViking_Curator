@@ -3,6 +3,7 @@
 import os
 import json
 import time
+from datetime import datetime, timezone
 
 from metrics import Metrics
 from memory_capture import capture_case
@@ -213,7 +214,33 @@ def run(query: str, client=None) -> dict:
              report["duration_sec"], coverage,
              report["flags"].get("external_triggered"), trace["llm_calls"])
 
+    # 写 query 日志
+    _log_query(query, coverage, need_external, cov_reason, used_uris, trace)
+
     return result
+
+
+def _log_query(query: str, coverage: float, need_external: bool,
+               reason: str, used_uris: list, trace: dict) -> None:
+    """写 query 日志到 data/query_log.jsonl（append 模式，失败不影响主流程）。"""
+    try:
+        log_dir = DATA_PATH
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "query_log.jsonl")
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "coverage": round(coverage, 4),
+            "external_triggered": bool(need_external),
+            "reason": reason,
+            "used_uris": list(used_uris) if used_uris else [],
+            "load_stage": trace.get("load_stage", "unknown"),
+            "llm_calls": trace.get("llm_calls", 0),
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.warning("query log 写入失败（不影响主流程）: %s", e)
 
 
 def _verify_ingest(ov: OVClient, query: str, new_uri: str, m: Metrics):

@@ -17,10 +17,17 @@
 - 37 unit tests + CI
 
 ### 🔜 Next
+- Phase 1 知识积累闭环（补强自动化、定期分析 cron）
 - Evaluation framework (fixed benchmark, CI-integrated)
 - Demo GIF for README
 - PyPI packaging
 - OV upstream: propose `POST /sessions/{id}/used` HTTP endpoint
+
+### ✅ Phase 1: 知识积累闭环
+- Query 日志（`_log_query` in pipeline_v2.py → data/query_log.jsonl）
+- 弱点分析脚本（scripts/analyze_weak.py）
+- 主动补强脚本（scripts/strengthen.py）
+- 8 个新增单元测试（45 total, 0 regression）
 
 ## Future
 - Knowledge graph relations

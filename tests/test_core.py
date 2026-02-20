@@ -354,5 +354,169 @@ class TestLoadContextStage(unittest.TestCase):
         self.assertEqual(stage, "L0")
 
 
+# ─── _log_query (Phase 1: query logging) ────────────────────
+
+class TestLogQuery(unittest.TestCase):
+    """Test query log writing."""
+
+    def test_log_query_writes_jsonl(self):
+        """_log_query should write a valid JSONL entry."""
+        from curator.pipeline_v2 import _log_query
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import curator.pipeline_v2 as pv2
+            import curator.config as cfg
+            old_data_path = cfg.DATA_PATH
+            # Patch DATA_PATH at module level in pipeline_v2
+            pv2_old = pv2.DATA_PATH if hasattr(pv2, 'DATA_PATH') else None
+            try:
+                # _log_query uses DATA_PATH from config import
+                cfg.DATA_PATH = tmpdir
+                # Re-import or patch the module-level reference
+                import importlib
+                importlib.reload(pv2)
+
+                pv2._log_query(
+                    query="test query",
+                    coverage=0.75,
+                    need_external=True,
+                    reason="low_coverage",
+                    used_uris=["viking://a", "viking://b"],
+                    trace={"load_stage": "L1", "llm_calls": 1},
+                )
+
+                log_path = os.path.join(tmpdir, "query_log.jsonl")
+                self.assertTrue(os.path.exists(log_path))
+                with open(log_path, "r") as f:
+                    lines = f.readlines()
+                self.assertEqual(len(lines), 1)
+
+                entry = json.loads(lines[0])
+                self.assertEqual(entry["query"], "test query")
+                self.assertAlmostEqual(entry["coverage"], 0.75, places=2)
+                self.assertTrue(entry["external_triggered"])
+                self.assertEqual(entry["reason"], "low_coverage")
+                self.assertEqual(entry["used_uris"], ["viking://a", "viking://b"])
+                self.assertEqual(entry["load_stage"], "L1")
+                self.assertEqual(entry["llm_calls"], 1)
+                self.assertIn("timestamp", entry)
+            finally:
+                cfg.DATA_PATH = old_data_path
+                importlib.reload(pv2)
+
+    def test_log_query_appends(self):
+        """_log_query should append, not overwrite."""
+        from curator.pipeline_v2 import _log_query
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import curator.pipeline_v2 as pv2
+            import curator.config as cfg
+            old_data_path = cfg.DATA_PATH
+            try:
+                cfg.DATA_PATH = tmpdir
+                import importlib
+                importlib.reload(pv2)
+
+                for i in range(3):
+                    pv2._log_query(f"query_{i}", 0.5, False, "ok", [], {"load_stage": "L0", "llm_calls": 0})
+
+                log_path = os.path.join(tmpdir, "query_log.jsonl")
+                with open(log_path, "r") as f:
+                    lines = f.readlines()
+                self.assertEqual(len(lines), 3)
+            finally:
+                cfg.DATA_PATH = old_data_path
+                importlib.reload(pv2)
+
+    def test_log_query_failure_silent(self):
+        """_log_query should not raise even if writing fails."""
+        from curator.pipeline_v2 import _log_query
+        with patch("builtins.open", side_effect=PermissionError("denied")):
+            import curator.pipeline_v2 as pv2
+            import curator.config as cfg
+            old = cfg.DATA_PATH
+            cfg.DATA_PATH = "/nonexistent/path"
+            try:
+                import importlib
+                importlib.reload(pv2)
+                # Should not raise
+                pv2._log_query("q", 0.5, False, "ok", [], {"load_stage": "L0", "llm_calls": 0})
+            finally:
+                cfg.DATA_PATH = old
+                importlib.reload(pv2)
+
+
+# ─── analyze_weak (Phase 1: weakness analysis) ──────────────
+
+class TestAnalyzeWeak(unittest.TestCase):
+    """Test weakness analysis from query logs."""
+
+    def _write_log(self, tmpdir, entries):
+        log_path = os.path.join(tmpdir, "query_log.jsonl")
+        with open(log_path, "w") as f:
+            for e in entries:
+                f.write(json.dumps(e) + "\n")
+
+    def test_identifies_weak_topics(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from analyze_weak import analyze
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Same topic extracted ("redis cluster"), all triggering external search
+            entries = [
+                {"query": "redis cluster 部署", "coverage": 0.2, "external_triggered": True, "reason": "low_coverage"},
+                {"query": "redis cluster 部署", "coverage": 0.3, "external_triggered": True, "reason": "low_coverage"},
+                {"query": "redis cluster 部署", "coverage": 0.25, "external_triggered": True, "reason": "low_coverage"},
+            ]
+            self._write_log(tmpdir, entries)
+            weak = analyze(tmpdir, min_queries=2)
+            self.assertGreater(len(weak), 0)
+            # At least one topic should have external_rate > 0.5
+            self.assertTrue(any(t["external_rate"] > 0.5 for t in weak))
+
+    def test_no_weak_when_coverage_good(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from analyze_weak import analyze
+        with tempfile.TemporaryDirectory() as tmpdir:
+            entries = [
+                {"query": "docker compose 部署", "coverage": 0.8, "external_triggered": False, "reason": "local_sufficient"},
+                {"query": "docker compose 配置", "coverage": 0.9, "external_triggered": False, "reason": "local_sufficient"},
+            ]
+            self._write_log(tmpdir, entries)
+            weak = analyze(tmpdir, min_queries=2)
+            self.assertEqual(len(weak), 0)
+
+    def test_min_queries_filter(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from analyze_weak import analyze
+        with tempfile.TemporaryDirectory() as tmpdir:
+            entries = [
+                {"query": "kubernetes helm", "coverage": 0.1, "external_triggered": True, "reason": "no_results"},
+            ]
+            self._write_log(tmpdir, entries)
+            # min_queries=2, only 1 query → no weak topics
+            weak = analyze(tmpdir, min_queries=2)
+            self.assertEqual(len(weak), 0)
+            # min_queries=1 → should find it
+            weak = analyze(tmpdir, min_queries=1)
+            self.assertGreater(len(weak), 0)
+
+    def test_empty_log(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from analyze_weak import analyze
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No log file
+            weak = analyze(tmpdir)
+            self.assertEqual(len(weak), 0)
+
+    def test_extract_keywords(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from analyze_weak import extract_keywords
+        kws = extract_keywords("Redis 和 Memcached 怎么选")
+        kw_lower = [k.lower() for k in kws]
+        self.assertIn("redis", kw_lower)
+        self.assertIn("memcached", kw_lower)
+        # 停用词应被过滤
+        self.assertNotIn("怎么", kw_lower)
+        self.assertNotIn("和", kw_lower)
+
+
 if __name__ == '__main__':
     unittest.main()
