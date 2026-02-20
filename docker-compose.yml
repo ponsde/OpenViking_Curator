@@ -3,19 +3,17 @@ services:
     build: .
     env_file: .env
     volumes:
-      - ./ov.conf:/app/ov.conf:ro      # OpenViking 配置
-      - curator-data:/app/data          # 知识库数据（持久化）
-      - ./curated:/app/curated          # 入库的文件
+      - ./ov.conf:/app/ov.conf:ro
+      - curator-data:/app/data
     environment:
       - OPENVIKING_CONFIG_FILE=/app/ov.conf
       - OV_DATA_PATH=/app/data
       - CURATOR_DATA_PATH=/app/data
-      - CURATOR_CURATED_DIR=/app/curated
 
-    # 用法:
-    #   docker compose run --rm curator curator_query.py "你的问题"
+    # Usage:
     #   docker compose run --rm curator curator_query.py --status
-    #   docker compose run --rm curator mcp_server.py     # MCP server
+    #   docker compose run --rm curator curator_query.py "your question"
+    #   docker compose run --rm curator mcp_server.py
 
 volumes:
   curator-data:

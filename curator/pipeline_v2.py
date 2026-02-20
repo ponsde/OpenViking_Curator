@@ -1,4 +1,8 @@
-"""Pipeline v2: OV-native pipeline — 返回结构化数据，不生成回答。"""
+"""Pipeline v2: 返回结构化数据，不生成回答。
+
+通过 KnowledgeBackend 接口与知识库交互，默认使用 OpenViking 后端。
+可替换为 Milvus / Qdrant / Chroma / pgvector 等任何实现了 KnowledgeBackend 的后端。
+"""
 
 import os
 import json
@@ -16,6 +20,12 @@ from .search import external_search, cross_validate
 from .review import judge_and_ingest, detect_conflict
 
 
+def _init_backend():
+    """Initialize the knowledge backend. Uses OV by default."""
+    from .backend_ov import OpenVikingBackend
+    return OpenVikingBackend()
+
+
 def _init_session_manager() -> tuple:
     """初始化 OV 客户端和 session manager。自动选嵌入/HTTP模式。"""
     ov = OVClient()  # 根据 OV_BASE_URL env 自动选模式
@@ -28,7 +38,7 @@ def _init_session_manager() -> tuple:
     return ov, sm
 
 
-def run(query: str, client=None) -> dict:
+def run(query: str, client=None, auto_ingest: bool = True) -> dict:
     """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
 
     LLM 调用策略（省 token）：
@@ -148,22 +158,28 @@ def run(query: str, client=None) -> dict:
                 "has_conflict": judge_result.get("has_conflict", False),
                 "summary": judge_result.get("conflict_summary", ""),
                 "points": judge_result.get("conflict_points", []),
+                "resolution": _resolve_conflict(judge_result),
             }
 
             if judge_result.get("pass") and judge_result.get("markdown"):
                 freshness = judge_result.get("freshness", "unknown")
                 if freshness != "outdated":
-                    try:
-                        from .review import ingest_markdown_v2
-                        ing = ingest_markdown_v2(ov, query[:60], judge_result["markdown"], freshness=freshness)
-                        ingested = True
-                        m.step("ingest", True, {"uri": ing.get("root_uri", "")})
-                        log.info("已入库: %s", ing.get("root_uri", ""))
+                    if auto_ingest:
+                        try:
+                            from .review import ingest_markdown_v2
+                            ing = ingest_markdown_v2(ov, query[:60], judge_result["markdown"], freshness=freshness)
+                            ingested = True
+                            m.step("ingest", True, {"uri": ing.get("root_uri", "")})
+                            log.info("已入库: %s", ing.get("root_uri", ""))
 
-                        # C1: 入库后轻量验证
-                        _verify_ingest(ov, query, ing.get("root_uri", ""), m)
-                    except Exception as e:
-                        m.step("ingest", False, {"error": str(e)})
+                            # C1: 入库后轻量验证
+                            _verify_ingest(ov, query, ing.get("root_uri", ""), m)
+                        except Exception as e:
+                            m.step("ingest", False, {"error": str(e)})
+                    else:
+                        # Review mode: mark as pending, don't auto-ingest
+                        m.step("ingest", False, {"reason": "review_mode_pending"})
+                        log.info("审核模式: 内容待人工确认，未自动入库")
     else:
         # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
@@ -257,3 +273,38 @@ def _verify_ingest(ov: OVClient, query: str, new_uri: str, m: Metrics):
             log.warning("入库验证未命中（可能需要更长索引时间）: %s", new_uri)
     except Exception as e:
         m.step("ingest_verify", False, {"error": str(e)})
+
+
+def _resolve_conflict(judge_result: dict) -> dict:
+    """Conflict resolution strategy.
+
+    When local and external sources contradict, decide which to trust:
+    - trust > 7 + freshness=current → prefer external
+    - trust < 4 → prefer local
+    - otherwise → flag for human review
+
+    Returns:
+        {"strategy": str, "preferred": "local"|"external"|"human_review", "reason": str}
+    """
+    if not judge_result.get("has_conflict"):
+        return {"strategy": "no_conflict", "preferred": "none", "reason": ""}
+
+    trust = judge_result.get("trust", 5)
+    freshness = judge_result.get("freshness", "unknown")
+
+    strategy = os.environ.get("CURATOR_CONFLICT_STRATEGY", "auto")
+
+    if strategy == "local":
+        return {"strategy": "local_always", "preferred": "local", "reason": "config: always prefer local"}
+    elif strategy == "external":
+        return {"strategy": "external_always", "preferred": "external", "reason": "config: always prefer external"}
+    elif strategy == "human":
+        return {"strategy": "human_always", "preferred": "human_review", "reason": "config: always human review"}
+
+    # Auto strategy: decide based on trust + freshness
+    if trust >= 7 and freshness in ("current", "recent"):
+        return {"strategy": "auto", "preferred": "external", "reason": f"high trust ({trust}/10) + fresh ({freshness})"}
+    elif trust <= 3:
+        return {"strategy": "auto", "preferred": "local", "reason": f"low trust ({trust}/10), prefer local knowledge"}
+    else:
+        return {"strategy": "auto", "preferred": "human_review", "reason": f"medium trust ({trust}/10), needs human judgment"}

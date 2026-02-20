@@ -1,2 +1,3 @@
 requests>=2.31.0
 openviking>=0.1.17
+pytest>=7.0

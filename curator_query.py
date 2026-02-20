@@ -215,17 +215,18 @@ def run_status() -> dict:
     return result
 
 
-def run_curator(query: str) -> dict:
+def run_curator(query: str, auto_ingest: bool = True) -> dict:
     """调用 curator v2 pipeline 获取结构化结果。
 
     v2 不再生成回答，只返回结构化数据。调用方自己组装 LLM 上下文。
+    auto_ingest=False 时进入审核模式：外搜结果不自动入库。
     """
     load_env()
     sys.path.insert(0, str(Path(__file__).parent))
 
     try:
         from curator.pipeline_v2 import run
-        result = run(query)
+        result = run(query, auto_ingest=auto_ingest)
     except Exception as e:
         return {"routed": True, "error": str(e)}
 
@@ -261,7 +262,8 @@ def run_curator(query: str) -> dict:
 HELP_TEXT = """OpenViking Curator — Knowledge-governed Q&A with retrieval + external search
 
 Usage:
-  python3 curator_query.py "your question"     Query with auto routing gate
+  python3 curator_query.py "your question"     Query with auto routing + auto ingest
+  python3 curator_query.py --review "question"  Query but don't auto-ingest (human review mode)
   python3 curator_query.py --status             Health check (config + OpenViking + stats)
   python3 curator_query.py --help               Show this help
 
@@ -269,9 +271,15 @@ Environment:
   Configure via .env file (see .env.example) or env vars.
   Key settings: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY
 
+  CURATOR_CONFLICT_STRATEGY=auto|local|external|human
+    auto (default): decide based on trust score + freshness
+    local: always prefer local knowledge
+    external: always prefer external source
+    human: always flag for human review
+
 Output (JSON):
-  {"routed": false, "reason": "..."}                Not routed (no plugin needed)
-  {"routed": true, "context_text": "...", "meta": {...}}   Plugin structured result with metadata
+  {"routed": false, "reason": "..."}                       Not routed (no plugin needed)
+  {"routed": true, "context": "...", "meta": {...}}        Plugin structured result
 """
 
 
@@ -287,11 +295,14 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(0)
 
+    review_mode = "--review" in args or "--no-ingest" in args
     q = " ".join(a for a in args if not a.startswith("--")).strip()
     route, reason = should_route(q)
     if not route:
         print(json.dumps({"routed": False, "reason": reason}, ensure_ascii=False))
         sys.exit(0)
 
-    result = run_curator(q)
+    result = run_curator(q, auto_ingest=not review_mode)
+    if review_mode:
+        result["review_mode"] = True
     print(json.dumps(result, ensure_ascii=False, indent=2))

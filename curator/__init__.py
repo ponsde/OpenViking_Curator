@@ -1,14 +1,20 @@
-"""OpenViking Curator — OV 的知识治理层。
+"""OpenViking Curator — Knowledge governance layer.
 
-边界：
-- OV 负责检索 / 分层加载 / session 记忆提取 / memory 去重
-- Curator 做治理层：覆盖率判断、外搜补充、审核入库、冲突检测
-- Curator 补充 OV 没有的：时效评分（语义层）、resources 相似度检测
-- Curator 不生成回答（调用方自己用 LLM 组装上下文）
-- Curator 不重新排序 OV 检索结果（信任 OV 的 score）
+Architecture:
+- KnowledgeBackend: abstract interface for any knowledge store
+- OpenVikingBackend: default implementation (embedded + HTTP mode)
+- Pipeline: query → retrieve → assess → search → review → ingest → return context
+- Curator does NOT generate answers — returns structured data for the caller's LLM
+
+Boundaries:
+- Backend handles: retrieval, storage, indexing, session tracking
+- Curator handles: coverage assessment, external search, review, ingest,
+                   conflict detection + resolution, freshness scoring, dedup scanning
 """
 
-# Re-export public API (v2 only)
+# Re-export public API
+from .backend import KnowledgeBackend, SearchResult, SearchResponse
+from .backend_ov import OpenVikingBackend
 from .config import (
     env, validate_config, chat, log,
     OPENVIKING_CONFIG_FILE, DATA_PATH, CURATED_DIR,
@@ -21,12 +27,15 @@ from .review import judge_and_pack, judge_and_ingest, ingest_markdown_v2, detect
 from .router import route_scope
 from .freshness import uri_freshness_score
 from .dedup import scan_duplicates
-# v2 core
 from .session_manager import OVClient, SessionManager
 from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
 from .pipeline_v2 import run
 
 __all__ = [
+    # Abstract backend interface
+    "KnowledgeBackend", "SearchResult", "SearchResponse",
+    # OpenViking backend (default)
+    "OpenVikingBackend",
     # v2 pipeline
     "run", "ov_retrieve", "load_context", "assess_coverage",
     "OVClient", "SessionManager",
