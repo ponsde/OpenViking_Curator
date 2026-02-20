@@ -52,6 +52,7 @@ def head_info(url: str, timeout=12):
 
 
 def score_freshness(item: dict):
+    """基于 URL 可达性的时效评分（与 curator/freshness.py 的时间衰减评分互补）。"""
     if not item.get("ok"):
         return 0.2
     # if server exposes freshness metadata, score higher

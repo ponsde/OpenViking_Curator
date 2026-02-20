@@ -6,7 +6,11 @@
 - assess_coverage(): 基于 OV score 评估覆盖率（简化版）
 """
 
-from .config import log
+from .config import (
+    log,
+    THRESHOLD_L0_SUFFICIENT, THRESHOLD_L1_SUFFICIENT,
+    THRESHOLD_COV_SUFFICIENT, THRESHOLD_COV_MARGINAL, THRESHOLD_COV_LOW,
+)
 
 
 def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
@@ -72,7 +76,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
         l0_uris.append(uri)
 
     top_score = scored[0].get("score", 0) if scored else 0
-    l0_enough = top_score >= 0.62 and len(l0_blocks) >= 2
+    l0_enough = top_score >= THRESHOLD_L0_SUFFICIENT and len(l0_blocks) >= 2
     if l0_enough:
         context_text = "\n\n".join(l0_blocks)
         log.info("context 加载: stage=L0 only, sources=%d, chars=%d", len(l0_uris), len(context_text))
@@ -101,7 +105,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
         used_uris.append(uri)
         l1_count += 1
 
-    l1_enough = top_score >= 0.5 and l1_count >= 2
+    l1_enough = top_score >= THRESHOLD_L1_SUFFICIENT and l1_count >= 2
     if l1_enough or max_l2 <= 0:
         context_text = "\n\n".join(blocks)
         log.info("context 加载: stage=L1, sources=%d, L2=0, chars=%d", len(used_uris), len(context_text))
@@ -115,7 +119,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
 
         uri = item.get("uri", "")
         score = item.get("score", 0)
-        if not uri or score < 0.5:
+        if not uri or score < THRESHOLD_L1_SUFFICIENT:
             continue
 
         try:
@@ -163,15 +167,15 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     count = len(scores)
 
     # 简单判断：信任 OV score
-    if top_score > 0.55 and count >= 2:
+    if top_score > THRESHOLD_COV_SUFFICIENT and count >= 2:
         coverage = min(1.0, avg_score + 0.2)
         reason = "local_sufficient"
         need_external = False
-    elif top_score > 0.45 and count >= 1:
+    elif top_score > THRESHOLD_COV_MARGINAL and count >= 1:
         coverage = avg_score
         reason = "local_marginal"
         need_external = False
-    elif top_score > 0.35 and count >= 1:
+    elif top_score > THRESHOLD_COV_LOW and count >= 1:
         coverage = avg_score * 0.8
         reason = "low_coverage"
         need_external = True

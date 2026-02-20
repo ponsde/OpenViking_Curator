@@ -115,69 +115,44 @@ def _tool_curator_query(args: dict) -> dict:
     return result
 
 
+
 def _tool_curator_ingest(args: dict) -> dict:
     title = args.get("title", "").strip()
     content = args.get("content", "").strip()
     if not title or not content:
         return {"error": "title and content are required"}
 
-    import openviking as ov
-    import time
-    import re
+    from curator.session_manager import OVClient
+    from curator.review import ingest_markdown_v2
 
-    config_file = os.environ.get(
-        "OPENVIKING_CONFIG_FILE",
-        str(Path.home() / ".openviking" / "ov.conf"),
-    )
-    os.environ["OPENVIKING_CONFIG_FILE"] = config_file
-    data_path = os.environ.get("CURATOR_DATA_PATH", str(Path(__file__).parent / "data"))
-    curated_dir = Path(os.environ.get("CURATOR_CURATED_DIR", str(Path(__file__).parent / "curated")))
-    curated_dir.mkdir(parents=True, exist_ok=True)
+    ov = OVClient()
+    if not ov.health():
+        return {"error": "OV serve not available"}
 
-    fn = curated_dir / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
-    fn.write_text(content, encoding="utf-8")
-
-    client = ov.SyncOpenViking(path=data_path)
-    client.initialize()
     try:
-        ing = client.add_resource(path=str(fn))
-        try:
-            client.wait_processed()
-        except Exception:
-            pass
-        return {
-            "success": True,
-            "uri": ing.get("root_uri", ""),
-            "file": str(fn),
-        }
-    finally:
-        client.close()
+        ing = ingest_markdown_v2(ov, title[:60], content)
+        return {"success": True, "uri": ing.get("root_uri", "")}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _tool_curator_status(args: dict) -> dict:
-    import openviking as ov
+    import json
+    import urllib.request
 
-    config_file = os.environ.get(
-        "OPENVIKING_CONFIG_FILE",
-        str(Path.home() / ".openviking" / "ov.conf"),
-    )
-    os.environ["OPENVIKING_CONFIG_FILE"] = config_file
-    data_path = os.environ.get("CURATOR_DATA_PATH", str(Path(__file__).parent / "data"))
-
-    client = ov.SyncOpenViking(path=data_path)
-    client.initialize()
+    base = os.environ.get("OV_BASE_URL", "http://127.0.0.1:9100")
     try:
-        resources = client.ls("viking://resources")
-        resource_list = list(resources) if resources else []
-        return {
-            "resource_count": len(resource_list),
-            "data_path": data_path,
-            "config_file": config_file,
-        }
+        with urllib.request.urlopen(f"{base}/health", timeout=10) as r:
+            health = json.loads(r.read())
+        req = urllib.request.Request(
+            f"{base}/api/v1/fs/ls?uri=viking://resources/&simple=true",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            ls_result = json.loads(r.read()).get("result", [])
+        return {"health": health.get("status", "unknown"), "resource_count": len(ls_result), "base_url": base}
     except Exception as e:
-        return {"resource_count": -1, "error": str(e)}
-    finally:
-        client.close()
+        return {"error": str(e)}
 
 
 TOOL_DISPATCH = {

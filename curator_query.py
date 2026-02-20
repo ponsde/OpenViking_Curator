@@ -5,7 +5,7 @@ curator_query.py — 一体化查询入口
 
 输出 JSON:
   {"routed": false, "reason": "..."}                    — 不需要调插件
-  {"routed": true, "answer": "...", "meta": {...}}      — 插件回答
+  {"routed": true, "context_text": "...", "meta": {...}} — 插件结构化结果
 """
 import json, os, re, sys
 from pathlib import Path
@@ -261,7 +261,7 @@ Environment:
 
 Output (JSON):
   {"routed": false, "reason": "..."}                Not routed (no plugin needed)
-  {"routed": true, "answer": "...", "meta": {...}}   Plugin answer with metadata
+  {"routed": true, "context_text": "...", "meta": {...}}   Plugin structured result with metadata
 """
 
 

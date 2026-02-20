@@ -5,6 +5,7 @@ __pycache__/
 output/
 .env
 feedback.json
+dedup_log.json
 .star_state.json
 cases/
 data/
@@ -13,3 +14,4 @@ quick_eval.py
 .pytest_cache/
 .failed_topics.json
 .curated_index.json
+archive/
