@@ -12,39 +12,40 @@ English / [中文](README_CN.md)
 ```
 User asks a question
         ↓
-   Query OV first
+   Query backend (OV / Milvus / Qdrant / ...)
         ↓
   Coverage enough?  ──yes──→  Return local context (0 LLM calls)
         ↓ no
-  External search (Grok / OpenAI / custom)
+  External search (Grok / Tavily / Brave / OpenAI)
         ↓
   LLM reviews quality & freshness
         ↓
-  Pass? → Ingest back to OV (next time = instant hit)
+  Conflict?  → Auto-resolve (trust + freshness) or flag for human review
+        ↓
+  Pass? → Ingest back to backend (next time = instant hit)
         ↓
   Return merged context (local + external)
-        ↓
-  Your LLM answers with full context — one call, done.
 ```
 
 ## What it does
 
 | Feature | Description |
 |---------|-------------|
-| **Coverage gate** | Trusts OV's score. Sufficient → return. Marginal/low → external search. |
-| **External search + auto-ingest** | Grok (default) or any OAI-compatible model. Reviewed results auto-stored to OV. Next query hits locally. |
+| **Pluggable backend** | `KnowledgeBackend` interface — OV is default, any vector store can be plugged in. |
+| **Coverage gate** | Trusts backend's score. Sufficient → return. Marginal/low → external search. |
+| **External search + auto-ingest** | Grok (default) or any OAI-compatible model. Reviewed results auto-stored. `--review` mode for human-in-the-loop. |
 | **L0→L1→L2 on-demand loading** | Abstract first, overview if needed, full text only when necessary. Saves tokens. |
-| **Conflict detection** | Flags contradictions between local and external sources. |
-| **Session lifecycle** | Tracks which knowledge was used (`session.used`), extracts long-term memory (`session.commit`). Frequently used knowledge ranks higher. |
+| **Conflict detection + resolution** | Detects contradictions. Auto-resolves based on trust score + freshness, or flags for human review. Configurable: `auto/local/external/human`. |
+| **Session lifecycle** | Tracks which knowledge was used, extracts long-term memory. Frequently used knowledge ranks higher. |
 | **Query logging + weak topic analysis** | Logs every query. Cluster analysis finds knowledge gaps. Proactive strengthening fills them. |
 | **Freshness scanning** | Periodic scan of all resources. Tags fresh/aging/stale. Auto-refresh stale content. |
-| **Merged context output** | Returns `context` = local + external combined. Your LLM uses it directly — no second query needed. |
+| **Review mode** | `--review` flag: runs pipeline but doesn't auto-ingest. Human verifies before storing. |
 
-### What Curator does NOT do (OV handles these)
+### What Curator does NOT do (backend handles these)
 
-- Retrieval / vector search → OV `find` / `search`
-- Content storage / indexing → OV manages
-- Memory extraction / dedup → OV `session.commit`
+- Retrieval / vector search → backend `find` / `search`
+- Content storage / indexing → backend manages
+- Memory extraction / dedup → backend (if supported)
 - Answer generation → your LLM
 
 ## Quick Start
@@ -68,6 +69,7 @@ cp .env.example .env         # Fill API keys
 
 python3 curator_query.py --status            # Health check
 python3 curator_query.py "How to deploy Redis in Docker?"
+python3 curator_query.py --review "sensitive topic"   # Don't auto-ingest
 ```
 
 ### Docker (embedded mode)
@@ -133,6 +135,15 @@ All config via `.env` (git-ignored):
 | `CURATOR_GROK_KEY` | ✅* | Grok API key (*if using Grok search) |
 | `OV_BASE_URL` | | Optional: connect to remote OV HTTP serve instead of embedded mode |
 
+### Conflict resolution
+
+| `CURATOR_CONFLICT_STRATEGY` | Default | Behavior |
+|---|---|---|
+| `auto` | ✅ | Trust ≥ 7 + fresh → prefer external. Trust ≤ 3 → prefer local. Otherwise → human review. |
+| `local` | | Always prefer local knowledge |
+| `external` | | Always prefer external source |
+| `human` | | Always flag for human review |
+
 ### Search providers (pluggable)
 
 | Provider | Env value | Description |
@@ -161,6 +172,8 @@ All config via `.env` (git-ignored):
 
 ```
 curator/
+  backend.py           # KnowledgeBackend abstract interface
+  backend_ov.py        # OpenViking implementation (embedded + HTTP)
   pipeline_v2.py       # Main 4-step pipeline (returns structured data)
   session_manager.py   # Dual-mode OV client (embedded / HTTP)
   retrieval_v2.py      # L0→L1→L2 loading + coverage assessment
@@ -175,7 +188,7 @@ curator_query.py       # CLI entry
 mcp_server.py          # MCP server (stdio)
 search_providers.py    # Pluggable search backends
 scripts/               # Maintenance scripts
-tests/                 # Unit tests (77 passing)
+tests/                 # Unit tests (90 passing)
 ```
 
 ## Testing
@@ -186,13 +199,16 @@ python -m pytest tests/ -v
 
 ## Roadmap
 
-- [ ] Fix `active_count` URI format (short URI → full URI matching)
-- [ ] LLM intelligent merge for similar resources
-- [ ] Periodic cron for `analyze_weak.py` + `freshness_scan.py`
-- [ ] Self-optimization: effectiveness tracking + auto-tuning thresholds
-- [ ] Batch ingest historical notes into OV
-- [ ] OV knowledge base cleanup (deduplicate timestamp-named entries)
-- [ ] Weekly knowledge health report
+- [x] Storage abstraction layer (`KnowledgeBackend` interface)
+- [x] Conflict resolution strategy (auto / local / external / human)
+- [x] Review mode (`--review` for human-in-the-loop)
+- [ ] More search providers (Tavily, Brave Search, SerpAPI)
+- [ ] Example backend implementations (Chroma, pgvector)
+- [ ] Coverage auto-tuning (track hit rate → adjust thresholds)
+- [ ] Integration tests with real OV + API
+- [ ] Prometheus / OpenTelemetry metrics export
+- [ ] Knowledge health dashboard
+- [ ] Batch rollback / trust marking for ingested content
 
 ## License
 
