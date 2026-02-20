@@ -228,11 +228,20 @@ def run_curator(query: str) -> dict:
     except Exception as e:
         return {"routed": True, "error": str(e)}
 
+    # 组合上下文：本地 + 外搜，AI 直接拿去用
+    context = result.get("context_text", "")
+    external = result.get("external_text", "")
+    if external:
+        combined = f"{context}\n\n--- 以下为外部搜索补充 ---\n\n{external}"
+    else:
+        combined = context
+
     return {
         "routed": True,
         "query": result.get("query", query),
+        "context": combined,  # AI 直接用这个
         "context_text": result.get("context_text", ""),
-        "external_text": result.get("external_text", ""),
+        "external_text": external,
         "coverage": result.get("coverage", 0),
         "conflict": result.get("conflict", {}),
         "meta": {
