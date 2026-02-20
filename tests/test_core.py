@@ -19,15 +19,13 @@ from curator import (
     uri_trust_score,
     uri_freshness_score,
     build_feedback_priority_uris,
-    external_boost_needed,
     validate_config,
     # v2 modules
     ov_retrieve,
     load_context,
     assess_coverage,
-    answer,
-    _build_source_footer,
 )
+from curator.search import external_boost_needed
 from curator_query import should_route
 
 
@@ -251,31 +249,6 @@ class TestExternalBoostNeeded(unittest.TestCase):
         )
         self.assertTrue(triggered)
         self.assertEqual(reason, 'low_core_coverage')
-
-
-# ─── _build_source_footer (answer.py, optional) ─────────────
-
-class TestSourceFooter(unittest.TestCase):
-
-    def test_high_coverage_footer(self):
-        footer = _build_source_footer(
-            meta={'core_cov': 0.8, 'priority_uris': ['viking://resources/a/a.md']},
-            coverage=0.9, external_used=False,
-        )
-        self.assertIn('90%', footer)
-        self.assertIn('✅ 高', footer)
-        self.assertIn('本地知识库', footer)
-        self.assertNotIn('外部搜索', footer)
-
-    def test_low_coverage_with_external(self):
-        footer = _build_source_footer(
-            meta={'core_cov': 0.2, 'priority_uris': []},
-            coverage=0.3, external_used=True, warnings=['某API可能过时'],
-        )
-        self.assertIn('30%', footer)
-        self.assertIn('❌ 低', footer)
-        self.assertIn('外部搜索', footer)
-        self.assertIn('1 条待验证', footer)
 
 
 # ─── feedback_store (with file lock) ─────────────────────────

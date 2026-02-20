@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import (
     log, chat,
-    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, ANSWER_MODELS, CURATED_DIR, _GENERIC_TERMS,
+    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR,
 )
 
 def judge_and_pack(query: str, external_text: str):
@@ -54,64 +54,6 @@ def judge_and_pack(query: str, external_text: str):
         return json.loads(m.group(0))
     except Exception:
         return {"pass": False, "reason": "json_parse_fail", "tags": [], "trust": 0, "summary": "", "markdown": ""}
-
-
-def ingest_markdown(client, title: str, markdown: str, freshness: str = "unknown"):
-    import datetime
-    p = Path(CURATED_DIR)
-    p.mkdir(parents=True, exist_ok=True)
-
-    # P2: 入库时写入 metadata（日期 + 时效标签）
-    today = datetime.date.today().isoformat()
-    ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
-    ttl_days = ttl_map.get(freshness, 60)
-
-    header = (
-        f"<!-- curator_meta: ingested={today} freshness={freshness} ttl_days={ttl_days} -->\n"
-        f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n\n"
-    )
-
-    fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
-    fn.write_text(header + markdown, encoding="utf-8")
-    ing = client.add_resource(path=str(fn))
-
-    # 关键修复：入库后等待语义索引完成，否则下一次检索拿不到新文档
-    try:
-        uri = ing.get("root_uri", "") if isinstance(ing, dict) else ""
-        if uri:
-            client.wait_processed()  # 不传参：等全部队列完成
-    except Exception:
-        pass
-
-    return ing
-
-
-def build_priority_context(client, uris, query: str = ""):
-    """读取优先资源内容。如果提供 query，用核心词验证相关性，过滤不相关文档。"""
-    blocks = []
-    # 核心词验证：如果提供了 query，只保留内容中包含核心词的文档
-    if query:
-        q_core = set(re.findall(r"[a-zA-Z0-9_\-]{3,}", query.lower())) - _GENERIC_TERMS
-        q_cn = set(re.findall(r"[\u4e00-\u9fff]{2,4}", query))
-        check_terms = q_core | q_cn
-    else:
-        check_terms = set()
-
-    for u in uris[:4]:  # 多看几个，过滤后可能不够
-        try:
-            c = str(client.read(u))[:1500]
-            # 语义过滤：核心词至少命中1个才算相关
-            if check_terms:
-                c_lower = c.lower()
-                hits = sum(1 for t in check_terms if t.lower() in c_lower)
-                if hits == 0:
-                    continue
-            blocks.append(f"[PRIORITY_SOURCE] {u}\n{c[:1200]}")
-            if len(blocks) >= 2:
-                break
-        except Exception:
-            continue
-    return "\n\n".join(blocks)
 
 
 def detect_conflict(query: str, local_ctx: str, external_ctx: str):

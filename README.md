@@ -154,7 +154,7 @@ curator/               # Core package (modular)
   feedback.py          # Trust/freshness scoring, feedback ranking
   search.py            # External search + cross-validation
   review.py            # AI review, ingest, conflict detection
-  answer.py            # Answer generation (optional, caller decides)
+  # answer.py moved to legacy (Curator no longer generates final answers)
   pipeline_v2.py       # Main 5-step pipeline (returns structured data)
   legacy/              # v1 modules (kept for reference)
 curator_query.py       # CLI entry (--help, --status, query)

@@ -122,7 +122,7 @@ curator/               # 核心包（模块化）
   feedback.py          # trust/freshness/反馈打分
   search.py            # 外搜 + 交叉验证
   review.py            # 审核入库 + 冲突检测
-  answer.py            # 回答生成 + 来源透明度
+  # answer.py 已移入 legacy（Curator 不再直接生成最终回答）
   pipeline_v2.py       # 主流程（6 步）
 curator_query.py       # CLI 入口（--help, --status, 查询）
 search_providers.py    # 可插拔搜索后端
