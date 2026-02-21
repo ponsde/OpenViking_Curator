@@ -264,13 +264,13 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
     def test_meta_fields_present(self):
         """Ensure ingested, freshness, ttl_days, review_after all written."""
         from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
 
-        mock_ov = MagicMock()
-        mock_ov.add_resource.return_value = {"root_uri": "viking://test"}
+        backend = InMemoryBackend()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('curator.review.CURATED_DIR', tmpdir):
-                ingest_markdown_v2(mock_ov, "test_doc", "# Content", freshness="current")
+                ingest_markdown_v2(backend, "test_doc", "# Content", freshness="current")
 
             # Find the written file
             files = list(os.listdir(tmpdir))
@@ -286,14 +286,14 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
     def test_ttl_varies_by_freshness(self):
         """TTL should differ based on freshness level."""
         from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
 
         for freshness, expected_ttl in [("current", 180), ("recent", 90), ("unknown", 60), ("outdated", 0)]:
-            mock_ov = MagicMock()
-            mock_ov.add_resource.return_value = {"root_uri": "viking://test"}
+            backend = InMemoryBackend()
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 with patch('curator.review.CURATED_DIR', tmpdir):
-                    ingest_markdown_v2(mock_ov, f"test_{freshness}", "# Content", freshness=freshness)
+                    ingest_markdown_v2(backend, f"test_{freshness}", "# Content", freshness=freshness)
                 files = list(os.listdir(tmpdir))
                 content = open(os.path.join(tmpdir, files[0])).read()
                 self.assertIn(f"ttl_days={expected_ttl}", content, f"Failed for freshness={freshness}")

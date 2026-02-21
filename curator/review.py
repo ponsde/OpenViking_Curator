@@ -1,7 +1,11 @@
 """Review: judge external results, ingest, conflict detection.
 
 B2 优化：judge_and_ingest 合并审核+冲突检测为一次 LLM 调用。
+
+All knowledge-store operations go through KnowledgeBackend; no direct OVClient use.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -9,6 +13,54 @@ import re
 import time
 import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from .backend import KnowledgeBackend
+
+
+# ── Pydantic model for judge output ──
+
+
+class JudgeResult(BaseModel):
+    """Structured output from the judge LLM call.
+
+    Validates and normalises the JSON produced by the judge prompt.
+    Uses ``alias="pass"`` because ``pass`` is a Python keyword.
+    """
+
+    passed: bool = Field(default=False, alias="pass")
+    reason: str = ""
+    trust: int = Field(default=0, ge=0, le=10)
+    freshness: Literal["current", "recent", "outdated", "unknown"] = "unknown"
+    summary: str = ""
+    markdown: str = ""
+    has_conflict: bool = False
+    conflict_summary: str = ""
+    conflict_points: list[str] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+    def to_pipeline_dict(self) -> dict:
+        """Convert to the dict format expected by pipeline_v2.
+
+        Returns:
+            Dict with ``"pass"`` key (not ``"passed"``), compatible with
+            the existing pipeline result structure.
+        """
+        return {
+            "pass": self.passed,
+            "reason": self.reason,
+            "trust": self.trust,
+            "freshness": self.freshness,
+            "summary": self.summary,
+            "markdown": self.markdown,
+            "has_conflict": self.has_conflict,
+            "conflict_summary": self.conflict_summary,
+            "conflict_points": list(self.conflict_points),
+        }
 
 
 def _extract_json(text: str) -> str | None:
@@ -60,20 +112,51 @@ from .config import (
 )
 
 
-def judge_and_ingest(ov_client, query: str, local_ctx: str, external_text: str) -> dict:
+def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> JudgeResult:
+    """Parse LLM output into a validated JudgeResult.
+
+    Args:
+        raw_text: Raw LLM response text (may contain JSON).
+        fallback_reason: Reason string if parsing fails entirely.
+
+    Returns:
+        A validated :class:`JudgeResult`.
+    """
+    if raw_text is None:
+        return JudgeResult(**{"pass": False, "reason": fallback_reason or "no_response"})
+
+    json_str = _extract_json(raw_text)
+    if not json_str:
+        return JudgeResult(**{"pass": False, "reason": fallback_reason or "bad_json"})
+
+    try:
+        return JudgeResult.model_validate_json(json_str)
+    except Exception:
+        # Fallback: try plain json.loads then construct
+        try:
+            data = json.loads(json_str)
+            # Ensure conflict_points is a list
+            if not isinstance(data.get("conflict_points"), list):
+                data["conflict_points"] = []
+            return JudgeResult.model_validate(data)
+        except Exception:
+            return JudgeResult(**{"pass": False, "reason": fallback_reason or "json_parse_fail"})
+
+
+def judge_and_ingest(backend: KnowledgeBackend, query: str,
+                     local_ctx: str, external_text: str) -> dict:
     """B2: 合并审核 + 冲突检测为一次 LLM 调用。
 
-    返回:
-        {
-            "pass": bool,          # 是否值得入库
-            "reason": str,
-            "trust": int,          # 0-10
-            "freshness": str,      # current/recent/outdated/unknown
-            "markdown": str,       # 审核通过后的入库内容
-            "has_conflict": bool,  # 本地 vs 外部是否有冲突
-            "conflict_summary": str,
-            "conflict_points": list,
-        }
+    Args:
+        backend: Knowledge backend (used for type context only here;
+                 actual ingest is done by caller via :func:`ingest_markdown_v2`).
+        query: User query string.
+        local_ctx: Local context text from OV.
+        external_text: External search result text.
+
+    Returns:
+        Dict with keys: ``pass``, ``reason``, ``trust``, ``freshness``,
+        ``markdown``, ``has_conflict``, ``conflict_summary``, ``conflict_points``.
     """
     today = datetime.date.today().isoformat()
 
@@ -123,38 +206,8 @@ def judge_and_ingest(ov_client, query: str, local_ctx: str, external_text: str) 
             last_err = e
             continue
 
-    default = {
-        "pass": False, "reason": f"judge_fail:{last_err}",
-        "trust": 0, "freshness": "unknown", "summary": "", "markdown": "",
-        "has_conflict": False, "conflict_summary": "", "conflict_points": [],
-    }
-
-    if out is None:
-        return default
-
-    json_str = _extract_json(out)
-    if not json_str:
-        default["reason"] = "bad_json"
-        return default
-
-    try:
-        result = json.loads(json_str)
-        # 确保所有字段存在
-        result.setdefault("pass", False)
-        result.setdefault("reason", "")
-        result.setdefault("trust", 0)
-        result.setdefault("freshness", "unknown")
-        result.setdefault("summary", "")
-        result.setdefault("markdown", "")
-        result.setdefault("has_conflict", False)
-        result.setdefault("conflict_summary", "")
-        result.setdefault("conflict_points", [])
-        if not isinstance(result["conflict_points"], list):
-            result["conflict_points"] = []
-        return result
-    except Exception:
-        default["reason"] = "json_parse_fail"
-        return default
+    result = _parse_judge_output(out, fallback_reason=f"judge_fail:{last_err}")
+    return result.to_pipeline_dict()
 
 
 def judge_and_pack(query: str, external_text: str):
@@ -219,12 +272,21 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         return {"has_conflict": False, "summary": "", "points": []}
 
 
-def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "unknown"):
-    """入库 markdown 到 OV。
+def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
+                       markdown: str, freshness: str = "unknown"):
+    """入库 markdown 到知识后端。
 
-    嵌入模式：写本地文件 → add_resource(path)
-    HTTP 模式：先写本地备份，再用 OVClient 公开方法入库。
-               如果 add_resource 失败（远端读不到本地路径），会 warning。
+    Builds a curator_meta header, writes local backup, then ingests
+    via the backend's :meth:`ingest` method.
+
+    Args:
+        backend: Knowledge backend to ingest into.
+        title: Document title.
+        markdown: Markdown content.
+        freshness: One of ``current``, ``recent``, ``outdated``, ``unknown``.
+
+    Returns:
+        Dict with at least ``root_uri`` key.
     """
     today = datetime.date.today().isoformat()
     ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
@@ -237,35 +299,21 @@ def ingest_markdown_v2(ov_client, title: str, markdown: str, freshness: str = "u
 
     full_content = header + markdown
 
-    # 写本地文件（嵌入模式用于入库，HTTP 模式做备份）
+    # 写本地文件备份
     p = Path(CURATED_DIR)
     p.mkdir(parents=True, exist_ok=True)
     fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
     fn.write_text(full_content, encoding="utf-8")
 
-    # 检测 OV 模式
-    is_http = bool(os.environ.get("OV_BASE_URL", "").strip()) or getattr(ov_client, 'mode', '') == 'http'
-
-    if is_http:
-        log.info("ingest_markdown_v2: HTTP 模式，本地备份已写 %s", fn)
-        # HTTP 模式下 add_resource(local_path) 可能远端不可达
-        # OV HTTP API 的 add_resource 某些部署支持 URL/内容上传，某些不支持
-        # 这里仍然调用，让 OV 自己决定能不能处理
-        try:
-            result = ov_client.add_resource(str(fn), reason="curator_ingest")
-            log.info("HTTP 模式 add_resource 返回: %s", result)
-            return result
-        except Exception as e:
-            log.warning(
-                "HTTP 模式 add_resource 失败（远端可能读不到本地路径 %s）: %s。"
-                "内容已备份到本地文件，可手动入库。", fn, e
-            )
-            return {"status": "local_backup_only", "path": str(fn), "error": str(e)}
-    else:
-        # 嵌入模式：add_resource + wait_processed
-        result = ov_client.add_resource(str(fn), reason="curator_ingest")
-        try:
-            ov_client.wait_processed(timeout=30)
-        except Exception as e:
-            log.debug("wait_processed 失败: %s", e)
-        return result
+    # 通过 backend 接口入库
+    try:
+        uri = backend.ingest(full_content, title=title, metadata={
+            "freshness": freshness,
+            "ttl_days": ttl_days,
+            "ingested": today,
+        })
+        log.info("ingest_markdown_v2: 已入库 uri=%s, backup=%s", uri, fn)
+        return {"root_uri": uri, "path": str(fn)}
+    except Exception as e:
+        log.warning("ingest_markdown_v2: 入库失败 (备份已写 %s): %s", fn, e)
+        return {"status": "local_backup_only", "path": str(fn), "error": str(e)}

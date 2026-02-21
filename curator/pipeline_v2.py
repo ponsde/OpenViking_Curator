@@ -4,10 +4,13 @@
 可替换为 Milvus / Qdrant / Chroma / pgvector 等任何实现了 KnowledgeBackend 的后端。
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from metrics import Metrics
 from memory_capture import capture_case
@@ -19,15 +22,26 @@ from .session_manager import OVClient, SessionManager
 from .search import external_search, cross_validate
 from .review import judge_and_ingest, detect_conflict
 
+if TYPE_CHECKING:
+    from .backend import KnowledgeBackend
+
 
 def _init_backend():
-    """Initialize the knowledge backend. Uses OV by default."""
+    """Initialize the knowledge backend. Uses OV by default.
+
+    Returns:
+        An :class:`OpenVikingBackend` instance.
+    """
     from .backend_ov import OpenVikingBackend
     return OpenVikingBackend()
 
 
 def _init_session_manager() -> tuple:
-    """初始化 OV 客户端和 session manager。自动选嵌入/HTTP模式。"""
+    """初始化 OV 客户端和 session manager。自动选嵌入/HTTP模式。
+
+    Returns:
+        Tuple of ``(OVClient, SessionManager)``.
+    """
     ov = OVClient()  # 根据 OV_BASE_URL env 自动选模式
 
     if not ov.health():
@@ -38,8 +52,21 @@ def _init_session_manager() -> tuple:
     return ov, sm
 
 
-def run(query: str, client=None, auto_ingest: bool = True) -> dict:
+def run(query: str, client=None, auto_ingest: bool = True,
+        backend: KnowledgeBackend = None) -> dict:
     """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
+
+    Args:
+        query: User query string.
+        client: Deprecated. Use ``backend`` instead.
+        auto_ingest: Whether to automatically ingest passing external results.
+        backend: Optional :class:`KnowledgeBackend`. If ``None``, initialises
+                 the default OpenViking backend.
+
+    Returns:
+        Dict with keys: ``query``, ``ov_results``, ``context_text``,
+        ``external_text``, ``coverage``, ``conflict``, ``meta``, ``metrics``,
+        ``case_path``.
 
     LLM 调用策略（省 token）：
     - 覆盖率足够 → 0 次 LLM
@@ -71,6 +98,11 @@ def run(query: str, client=None, auto_ingest: bool = True) -> dict:
 
     # ── Step 1: 初始化 + 路由 ──
     log.info("STEP 1/4 初始化 + 路由...")
+
+    # Init backend (used for ingest / verify)
+    if backend is None:
+        backend = _init_backend()
+
     try:
         ov, sm = _init_session_manager()
     except Exception as e:
@@ -101,7 +133,7 @@ def run(query: str, client=None, auto_ingest: bool = True) -> dict:
 
     # ── Step 3: 分层加载 + 覆盖率评估 ──
     log.info("STEP 3/4 加载内容...")
-    context_text, used_uris, load_stage = load_context(ov, all_items, query, max_l2=2)
+    context_text, used_uris, load_stage = load_context(backend, all_items, query, max_l2=2)
     coverage, need_external, cov_reason = assess_coverage(retrieval_result, query=query)
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
@@ -145,7 +177,7 @@ def run(query: str, client=None, auto_ingest: bool = True) -> dict:
 
             # B2: judge + conflict 合并为一次 LLM 调用
             judge_result = judge_and_ingest(
-                ov, query, context_text, external_txt,
+                backend, query, context_text, external_txt,
             )
             trace["llm_calls"] += 1
             m.step("judge_and_conflict", True, {
@@ -178,13 +210,13 @@ def run(query: str, client=None, auto_ingest: bool = True) -> dict:
                     elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
-                            ing = ingest_markdown_v2(ov, query[:60], judge_result["markdown"], freshness=freshness)
+                            ing = ingest_markdown_v2(backend, query[:60], judge_result["markdown"], freshness=freshness)
                             ingested = True
                             m.step("ingest", True, {"uri": ing.get("root_uri", "")})
                             log.info("已入库: %s", ing.get("root_uri", ""))
 
                             # C1: 入库后轻量验证
-                            _verify_ingest(ov, query, ing.get("root_uri", ""), m)
+                            _verify_ingest(backend, query, ing.get("root_uri", ""), m)
                         except Exception as e:
                             m.step("ingest", False, {"error": str(e)})
                     else:
@@ -269,13 +301,21 @@ def _log_query(query: str, coverage: float, need_external: bool,
         log.warning("query log 写入失败（不影响主流程）: %s", e)
 
 
-def _verify_ingest(ov: OVClient, query: str, new_uri: str, m: Metrics):
-    """C1: 入库后轻量验证 — 检查新 URI 是否出现在检索结果中。"""
+def _verify_ingest(backend: KnowledgeBackend, query: str,
+                   new_uri: str, m: Metrics):
+    """C1: 入库后轻量验证 — 检查新 URI 是否出现在检索结果中。
+
+    Args:
+        backend: Knowledge backend to search against.
+        query: Original user query.
+        new_uri: URI of the newly ingested resource.
+        m: Metrics collector.
+    """
     if not new_uri:
         return
     try:
-        check = ov.find(query, limit=5)
-        found_uris = [r.get("uri", "") for r in check.get("resources", [])]
+        resp = backend.find(query, limit=5)
+        found_uris = [r.uri for r in resp.results]
         hit = any(new_uri in u for u in found_uris)
         m.step("ingest_verify", True, {"hit": hit, "new_uri": new_uri})
         if hit:

@@ -115,7 +115,12 @@ class OpenVikingBackend(KnowledgeBackend):
     def session_add_message(self, session_id: str, role: str, text: str):
         if self._ov.mode == "http":
             self._ov._impl.session_add_message(session_id, role, text)
-        # Embedded mode: caller manages session objects directly
+        else:
+            try:
+                from .session_manager import _ov_run
+                _ov_run(self._ov._client.session_add_message(session_id, role, text))
+            except Exception:
+                pass  # Embedded mode: caller manages session objects directly
 
     def session_used(self, session_id: str, uris: list[str]):
         if self._ov.mode == "http":
@@ -152,5 +157,13 @@ class OpenVikingBackend(KnowledgeBackend):
 
     @property
     def raw_client(self):
-        """Access the underlying OVClient (for advanced use cases)."""
+        """Access the underlying OVClient (for advanced use cases).
+
+        Returns:
+            The wrapped :class:`OVClient` instance.
+
+        Warning:
+            Using raw_client bypasses the backend abstraction.
+            Only use for OV-specific features not covered by the interface.
+        """
         return self._ov

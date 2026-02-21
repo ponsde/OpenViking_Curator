@@ -3,6 +3,7 @@
 Architecture:
 - KnowledgeBackend: abstract interface for any knowledge store
 - OpenVikingBackend: default implementation (embedded + HTTP mode)
+- InMemoryBackend: pure-Python backend for testing (no external deps)
 - Pipeline: query → retrieve → assess → search → review → ingest → return context
 - Curator does NOT generate answers — returns structured data for the caller's LLM
 
@@ -15,6 +16,7 @@ Boundaries:
 # Re-export public API
 from .backend import KnowledgeBackend, SearchResult, SearchResponse
 from .backend_ov import OpenVikingBackend
+from .backend_memory import InMemoryBackend
 from .config import (
     env, validate_config, chat, log,
     OPENVIKING_CONFIG_FILE, DATA_PATH, CURATED_DIR,
@@ -23,7 +25,10 @@ from .config import (
     FAST_ROUTE,
 )
 from .search import external_search, cross_validate
-from .review import judge_and_pack, judge_and_ingest, ingest_markdown_v2, detect_conflict
+from .review import (
+    judge_and_pack, judge_and_ingest, ingest_markdown_v2, detect_conflict,
+    JudgeResult,
+)
 from .router import route_scope
 from .freshness import uri_freshness_score
 from .dedup import scan_duplicates
@@ -36,6 +41,8 @@ __all__ = [
     "KnowledgeBackend", "SearchResult", "SearchResponse",
     # OpenViking backend (default)
     "OpenVikingBackend",
+    # In-memory backend (testing)
+    "InMemoryBackend",
     # v2 pipeline
     "run", "ov_retrieve", "load_context", "assess_coverage",
     "OVClient", "SessionManager",
@@ -43,6 +50,7 @@ __all__ = [
     "route_scope",
     "external_search", "cross_validate",
     "judge_and_pack", "judge_and_ingest", "ingest_markdown_v2", "detect_conflict",
+    "JudgeResult",
     # supplementary (OV doesn't have these)
     "uri_freshness_score", "scan_duplicates",
     # config

@@ -260,6 +260,23 @@ class _EmbeddedClient:
     def link(self, from_uri, to_uris, reason=""):
         _ov_run(self._client.link(from_uri, to_uris, reason))
 
+    def create_session(self) -> dict:
+        return _ov_run(self._client.create_session())
+
+    def session_add_message(self, session_id: str, role: str, text: str):
+        # Embedded mode: the AsyncOpenViking session API uses session objects,
+        # not raw session_add_message.  This is provided for parity with _HTTPClient.
+        # Callers using SessionManager._get_session() handle this differently.
+        log.debug("embedded session_add_message: sid=%s role=%s (delegated to session object)", session_id, role)
+
+    def session_used(self, session_id: str, uris: list):
+        log.debug("embedded session_used: sid=%s uris=%d (delegated to session object)", session_id, len(uris))
+
+    def session_commit(self, session_id: str) -> dict:
+        # In embedded mode, commit is done via session object, not raw API
+        log.debug("embedded session_commit: sid=%s (delegated to session object)", session_id)
+        return {}
+
 
 # ══════════════════════════════════════════════════
 #  统一入口
@@ -293,6 +310,10 @@ class OVClient:
     def grep(self, uri, pattern): return self._impl.grep(uri, pattern)
     def wait_processed(self, timeout=30): return self._impl.wait_processed(timeout=timeout)
     def link(self, from_uri, to_uris, reason=""): return self._impl.link(from_uri, to_uris, reason)
+    def create_session(self): return self._impl.create_session()
+    def session_add_message(self, session_id, role, text): return self._impl.session_add_message(session_id, role, text)
+    def session_used(self, session_id, uris): return self._impl.session_used(session_id, uris)
+    def session_commit(self, session_id): return self._impl.session_commit(session_id)
 
     @property
     def _client(self):

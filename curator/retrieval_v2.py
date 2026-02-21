@@ -4,13 +4,22 @@
 - ov_retrieve(): 主力检索，返回三路结果
 - load_context(): L0→L1→L2 严格按需下钻
 - assess_coverage(): 基于 OV score 评估覆盖率（简化版）
+
+所有知识库操作通过 KnowledgeBackend 接口（或 duck-typed 兼容对象）。
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from .config import (
     log,
     THRESHOLD_L0_SUFFICIENT, THRESHOLD_L1_SUFFICIENT,
     THRESHOLD_COV_SUFFICIENT, THRESHOLD_COV_MARGINAL, THRESHOLD_COV_LOW,
 )
+
+if TYPE_CHECKING:
+    from .backend import KnowledgeBackend
 
 
 def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
@@ -53,8 +62,18 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
     }
 
 
-def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
+def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     """严格按需 L0→L1→L2 分层加载。
+
+    Args:
+        backend: A :class:`KnowledgeBackend` instance (or any object with
+                 ``overview(uri)`` and ``read(uri)`` methods).
+        items: List of search result dicts with ``uri``, ``score``, ``abstract``.
+        query: Original user query (for logging).
+        max_l2: Maximum number of items to load at L2 (full read).
+
+    Returns:
+        Tuple of ``(context_text, used_uris, stage)``.
 
     默认行为：
     - 先只用 L0（abstract）构造上下文；
@@ -95,7 +114,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
 
         overview = ""
         try:
-            overview = ov_client.overview(uri)
+            overview = backend.overview(uri)
         except Exception:
             pass
 
@@ -127,7 +146,7 @@ def load_context(ov_client, items: list, query: str, max_l2: int = 2) -> tuple:
             continue
 
         try:
-            content = ov_client.read(uri)
+            content = backend.read(uri)
             if content and len(str(content)) > 20:
                 if uri in used_uris:
                     # 升级已有的 L1 块
