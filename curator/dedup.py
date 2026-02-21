@@ -37,7 +37,10 @@ def _save_dedup_log(state: dict):
     state["last_run"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     state["checked_pairs"] = state["checked_pairs"][-500:]
     state["reports"] = state["reports"][-100:]
-    Path(DEDUP_LOG_FILE).write_text(json.dumps(state, ensure_ascii=False, indent=2))
+
+    log_path = Path(DEDUP_LOG_FILE)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _text_similarity(a: str, b: str) -> float:
