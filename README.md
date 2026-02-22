@@ -2,7 +2,7 @@
 
 English / [中文](README_CN.md)
 
-**Knowledge governance plugin for [OpenViking](https://github.com/volcengine/OpenViking).** Curator sits on top of your knowledge base — it decides when local knowledge is enough, when to search externally, reviews what comes back, and ingests the good stuff. Your knowledge base grows with every question.
+**Knowledge governance plugin for [OpenViking](https://github.com/volcengine/OpenViking).** Curator sits on top of your OV knowledge base — it decides when local knowledge is enough, when to search externally, reviews what comes back, and ingests the good stuff. Your knowledge base grows with every question.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
@@ -12,7 +12,7 @@ English / [中文](README_CN.md)
 ```mermaid
 flowchart TD
     Q[Query] --> R[Route]
-    R --> OV[Retrieve from backend]
+    R --> OV[Retrieve from OV]
     OV --> L[Load L0→L1→L2]
     L --> COV{Coverage OK?}
     COV -- yes --> OUT1[Return local context]
@@ -43,13 +43,13 @@ Curator is the **governance layer** — it decides what goes in and out of your 
 | **Route** | Rule-based: domain, keywords, freshness detection. No LLM. | `router.py` |
 | **Retrieve** | Dual-path: `find` (vector) + `search` (LLM intent). Deduplicates by URI. | `retrieval_v2.py` |
 | **Load on demand** | L0 (abstract) → L1 (overview) → L2 (full). Only goes deeper when needed. Saves tokens. | `retrieval_v2.py` |
-| **Assess coverage** | Backend scores: top > 0.55 + multiple hits = sufficient. Otherwise → external search. | `retrieval_v2.py` |
-| **External search** | Pluggable providers. Default: Grok (recommended for real-time web search). Any OAI-compatible endpoint works. | `search.py` + `search_providers.py` |
+| **Assess coverage** | OV scores: top > 0.55 + multiple hits = sufficient. Otherwise → external search. | `retrieval_v2.py` |
+| **External search** | Pluggable providers. Grok recommended. Any OAI-compatible endpoint works. | `search.py` + `search_providers.py` |
 | **Cross-validate** | Only when `need_fresh=true`. Flags risky/outdated claims. | `search.py` |
 | **Judge + conflict** | Single LLM call: trust score 0-10, freshness, pass/fail, contradiction detection. Pydantic validated. | `review.py` |
 | **Conflict resolution** | Configurable: `auto` / `local` / `external` / `human`. Can block ingest. | `pipeline_v2.py` |
-| **Ingest** | Writes to backend with metadata: `source_urls`, `version`, `quality_feedback`, TTL. Local backup in `curated/`. | `review.py` |
-| **Verify ingest** | Searches backend again to confirm new content is retrievable. | `pipeline_v2.py` |
+| **Ingest** | Writes to OV with metadata: `source_urls`, `version`, `quality_feedback`, TTL. Local backup in `curated/`. | `review.py` |
+| **Verify ingest** | Searches OV again to confirm new content is retrievable. | `pipeline_v2.py` |
 | **Scan duplicates** | Title similarity (SequenceMatcher). Reports only — no auto-delete. | `dedup.py` |
 | **Score freshness** | URI timestamp → decay score (fresh → stale). | `freshness.py` |
 | **Track sessions** | Records queries + used URIs. Commits to extract long-term memory. | `session_manager.py` |
@@ -60,7 +60,7 @@ Curator is the **governance layer** — it decides what goes in and out of your 
 
 ### What Curator does NOT do
 
-- **Vector search / indexing** → your backend handles this
+- **Vector search / indexing** → OpenViking handles this
 - **Answer generation** → your LLM; Curator returns structured context, not answers
 
 ## Quick Start
@@ -68,9 +68,9 @@ Curator is the **governance layer** — it decides what goes in and out of your 
 ### Prerequisites
 
 - Python 3.10+
-- A knowledge backend (OpenViking is the default, any `KnowledgeBackend` implementation works)
-- An OpenAI-compatible API endpoint for LLM review/routing
-- An API endpoint for external search (Grok recommended, or any OAI-compatible model)
+- A working [OpenViking](https://github.com/volcengine/OpenViking) setup with `ov.conf`
+- An OpenAI-compatible API endpoint (for LLM review and routing)
+- A search API (Grok recommended for real-time web search, or any OAI-compatible endpoint)
 
 ### Install
 
@@ -79,14 +79,27 @@ git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env         # Fill in your API endpoints and keys
+cp .env.example .env
 ```
 
-If using OpenViking as backend:
+### Configure
+
+Edit `.env` with your actual endpoints and keys:
+
 ```bash
-cp ov.conf.example ov.conf   # Fill your embedding + VLM endpoints
+# Point to your existing OpenViking ov.conf
+OPENVIKING_CONFIG_FILE=/path/to/your/ov.conf
+
+# LLM for review & routing (any OpenAI-compatible endpoint)
+CURATOR_OAI_BASE=https://your-llm-api.com/v1
+CURATOR_OAI_KEY=sk-your-key
+
+# External search (Grok recommended, or use any OAI-compatible endpoint)
+CURATOR_GROK_BASE=https://your-grok-endpoint/v1
+CURATOR_GROK_KEY=your-grok-key
 ```
+
+That's it. Three endpoints, three keys.
 
 ### Run
 
@@ -96,20 +109,21 @@ python3 curator_query.py "How to deploy Redis in Docker?" # Query
 python3 curator_query.py --review "sensitive topic"       # Review mode (no auto-ingest)
 ```
 
-### Common errors
+### Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `Missing required env vars` | `.env` not configured | Copy `.env.example` → `.env`, fill your keys |
-| `OV 不可用` | Backend not reachable | Check config path and backend status |
-| `401 Unauthorized` | Wrong API key | Check key in `.env` |
+| `Missing required env vars` | `.env` not configured | Fill in `CURATOR_OAI_BASE`, `CURATOR_OAI_KEY`, `CURATOR_GROK_KEY` |
+| `OV 不可用` | OpenViking not reachable | Check `OPENVIKING_CONFIG_FILE` path, make sure OV data exists |
+| `401 Unauthorized` | Wrong API key | Check keys in `.env` |
 | `timeout` on search | Search endpoint unreachable | Check endpoint URL and service status |
 | `Non-JSON response` | API returned HTML error | URL should end with `/v1` |
+| Embeddings mismatch | OV embedding model differs from indexed data | Re-index with matching model |
 
 ### Docker
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # Fill your config
 docker compose build
 docker compose run --rm curator curator_query.py --status
 ```
@@ -140,7 +154,7 @@ print(result["conflict"])             # conflict detection
 ```json
 {
   "query": "...",
-  "context_text": "local backend results",
+  "context_text": "local OV results",
   "external_text": "external search results (if triggered)",
   "coverage": 0.68,
   "conflict": {
@@ -164,41 +178,29 @@ print(result["conflict"])             # conflict detection
 
 All via `.env` (git-ignored). See `.env.example` for a full template.
 
-### Required
+### Core (required)
 
 | Variable | Description |
 |----------|-------------|
+| `OPENVIKING_CONFIG_FILE` | Path to your existing `ov.conf` |
 | `CURATOR_OAI_BASE` | OpenAI-compatible API base URL (for LLM review + routing) |
-| `CURATOR_OAI_KEY` | API key for above endpoint |
-
-If using Grok for external search (recommended):
-
-| Variable | Description |
-|----------|-------------|
-| `CURATOR_GROK_BASE` | Grok API endpoint |
-| `CURATOR_GROK_KEY` | Grok API key |
-
-If using OpenViking as backend:
-
-| Variable | Description |
-|----------|-------------|
-| `OPENVIKING_CONFIG_FILE` | Path to `ov.conf` |
+| `CURATOR_OAI_KEY` | API key for above |
+| `CURATOR_GROK_KEY` | Grok API key (for external search; not needed if using `oai` provider) |
 
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OV_DATA_PATH` | `./data` | Backend data directory |
+| `OV_DATA_PATH` | `./data` | OV data directory |
 | `OV_BASE_URL` | _(empty)_ | Remote OV HTTP serve (empty = embedded mode) |
-| `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model for search |
-| `CURATOR_JUDGE_MODELS` | _(config default)_ | Models for review (comma-separated fallback chain) |
+| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok endpoint |
+| `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model |
+| `CURATOR_JUDGE_MODELS` | _(config default)_ | Models for review (comma-separated fallback) |
 | `CURATOR_ROUTER_MODELS` | _(config default)_ | Models for LLM routing |
 | `CURATOR_SEARCH_PROVIDER` | `grok` | `grok` / `oai` / custom |
 | `CURATOR_LLM_ROUTE` | `1` | `1` = LLM routing, `0` = rule-only |
 | `CURATOR_VERSION` | `0.7.0` | Version tag in ingest metadata |
 | `CURATOR_CHAT_RETRY_MAX` | `3` | Retry attempts (transient errors only) |
-| `CURATOR_CHAT_RETRY_BACKOFF_SEC` | `0.6` | Retry backoff base (seconds) |
-| `CURATOR_CAPTURE_CASE` | `1` | Save pipeline debug cases |
 | `CURATOR_CONFLICT_STRATEGY` | `auto` | Conflict resolution strategy |
 
 ### Coverage thresholds
@@ -276,7 +278,7 @@ python -m pytest tests/ -v
 
 ## Roadmap
 
-- [x] KnowledgeBackend abstraction (pluggable storage)
+- [x] KnowledgeBackend abstraction
 - [x] Conflict detection + configurable resolution
 - [x] Review mode (`--review`)
 - [x] Ingest metadata (source_urls, version, quality_feedback)
