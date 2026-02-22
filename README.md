@@ -134,6 +134,9 @@ All config via `.env` (git-ignored):
 | `CURATOR_GROK_BASE` | | Grok endpoint (default: `http://127.0.0.1:8000/v1`) |
 | `CURATOR_GROK_KEY` | ✅* | Grok API key (*if using Grok search) |
 | `OV_BASE_URL` | | Optional: connect to remote OV HTTP serve instead of embedded mode |
+| `CURATOR_VERSION` | | Version tag written into ingest metadata |
+| `CURATOR_CHAT_RETRY_MAX` | | Chat retry attempts (default: `3`) |
+| `CURATOR_CHAT_RETRY_BACKOFF_SEC` | | Retry backoff base seconds (default: `0.6`) |
 
 ### Conflict resolution
 
@@ -160,7 +163,19 @@ All config via `.env` (git-ignored):
 | `CURATOR_THRESHOLD_COV_MARGINAL` | 0.45 | Above this = marginal (still searches) |
 | `CURATOR_THRESHOLD_COV_LOW` | 0.35 | Below this = definitely search |
 
-## Scripts
+### Ingest metadata (for traceability)
+
+When Curator auto-ingests reviewed external content, it writes metadata alongside content:
+
+- `freshness`: `current|recent|unknown|outdated`
+- `ttl_days`: freshness-based TTL
+- `ingested`: ingest date (ISO)
+- `version`: Curator version tag (`CURATOR_VERSION`)
+- `source_urls`: deduplicated source URLs extracted from external text
+- `quality_feedback`: judge signals (e.g. trust/reason/conflict summary)
+
+This keeps each ingested document auditable and ready for future quality loops.
+
 
 | Script | What it does |
 |--------|-------------|

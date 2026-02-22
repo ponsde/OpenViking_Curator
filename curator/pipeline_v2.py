@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import json
 import time
 from datetime import datetime, timezone
@@ -210,7 +211,19 @@ def run(query: str, client=None, auto_ingest: bool = True,
                     elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
-                            ing = ingest_markdown_v2(backend, query[:60], judge_result["markdown"], freshness=freshness)
+                            ing = ingest_markdown_v2(
+                                backend,
+                                query[:60],
+                                judge_result["markdown"],
+                                freshness=freshness,
+                                source_urls=_extract_urls(external_txt),
+                                quality_feedback={
+                                    "judge_trust": judge_result.get("trust", 0),
+                                    "judge_reason": judge_result.get("reason", ""),
+                                    "has_conflict": judge_result.get("has_conflict", False),
+                                    "conflict_summary": judge_result.get("conflict_summary", ""),
+                                },
+                            )
                             ingested = True
                             m.step("ingest", True, {"uri": ing.get("root_uri", "")})
                             log.info("已入库: %s", ing.get("root_uri", ""))
@@ -276,6 +289,20 @@ def run(query: str, client=None, auto_ingest: bool = True,
     _log_query(query, coverage, need_external, cov_reason, used_uris, trace)
 
     return result
+
+
+def _extract_urls(text: str) -> list[str]:
+    """Extract unique URLs from text, preserving order."""
+    if not text:
+        return []
+    raw = re.findall(r"https?://[^\s)\]>\"']+", text)
+    out: list[str] = []
+    seen = set()
+    for u in raw:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def _log_query(query: str, coverage: float, need_external: bool,

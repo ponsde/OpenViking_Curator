@@ -108,7 +108,7 @@ def _extract_json(text: str) -> str | None:
 
 from .config import (
     log, chat,
-    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR,
+    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR, CURATOR_VERSION,
 )
 
 
@@ -273,7 +273,9 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
 
 
 def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
-                       markdown: str, freshness: str = "unknown"):
+                       markdown: str, freshness: str = "unknown",
+                       source_urls: list[str] | None = None,
+                       quality_feedback: dict | None = None):
     """入库 markdown 到知识后端。
 
     Builds a curator_meta header, writes local backup, then ingests
@@ -307,11 +309,30 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
 
     # 通过 backend 接口入库
     try:
-        uri = backend.ingest(full_content, title=title, metadata={
+        # 基础来源信息：优先使用显式传入 source_urls；未传(None)则从 markdown 里抽取 URL
+        if source_urls is not None:
+            extracted_urls = [u.strip() for u in source_urls if isinstance(u, str) and u.strip()]
+        else:
+            extracted_urls = re.findall(r"https?://[^\s)\]>\"']+", markdown or "")
+
+        # 去重并保持顺序
+        dedup_urls = []
+        seen = set()
+        for u in extracted_urls:
+            if u not in seen:
+                seen.add(u)
+                dedup_urls.append(u)
+
+        meta = {
             "freshness": freshness,
             "ttl_days": ttl_days,
             "ingested": today,
-        })
+            "version": CURATOR_VERSION,
+            "source_urls": dedup_urls,
+            "quality_feedback": quality_feedback if isinstance(quality_feedback, dict) else {},
+        }
+
+        uri = backend.ingest(full_content, title=title, metadata=meta)
         log.info("ingest_markdown_v2: 已入库 uri=%s, backup=%s", uri, fn)
         return {"root_uri": uri, "path": str(fn)}
     except Exception as e:

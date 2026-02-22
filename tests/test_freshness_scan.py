@@ -298,6 +298,76 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
                 content = open(os.path.join(tmpdir, files[0])).read()
                 self.assertIn(f"ttl_days={expected_ttl}", content, f"Failed for freshness={freshness}")
 
+    def test_metadata_contains_version_source_urls_and_quality_feedback(self):
+        """ingest metadata should include version/source_urls/quality_feedback."""
+        from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
+
+        backend = InMemoryBackend()
+
+        md = "# Doc\nSee https://example.com/a and https://example.com/b"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('curator.review.CURATED_DIR', tmpdir):
+                out = ingest_markdown_v2(
+                    backend,
+                    "meta_doc",
+                    md,
+                    freshness="recent",
+                    source_urls=["https://example.com/a", "https://example.com/a"],
+                    quality_feedback={"judge_trust": 8, "judge_reason": "ok"},
+                )
+
+        uri = out.get("root_uri")
+        self.assertTrue(uri)
+        rec = backend._store.get(uri)
+        self.assertIsNotNone(rec)
+        metadata = rec.get("metadata", {})
+
+        self.assertIn("version", metadata)
+        self.assertEqual(metadata.get("source_urls"), ["https://example.com/a"])
+        self.assertEqual(metadata.get("quality_feedback", {}).get("judge_trust"), 8)
+
+    def test_source_urls_none_falls_back_to_markdown_extraction(self):
+        from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
+
+        backend = InMemoryBackend()
+        md = "ref: https://example.com/x and https://example.com/y"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('curator.review.CURATED_DIR', tmpdir):
+                out = ingest_markdown_v2(backend, "meta_doc", md, source_urls=None)
+
+        rec = backend._store.get(out["root_uri"])
+        metadata = rec.get("metadata", {})
+        self.assertEqual(metadata.get("source_urls"), ["https://example.com/x", "https://example.com/y"])
+
+    def test_source_urls_empty_list_respected(self):
+        from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
+
+        backend = InMemoryBackend()
+        md = "ref: https://example.com/x"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('curator.review.CURATED_DIR', tmpdir):
+                out = ingest_markdown_v2(backend, "meta_doc", md, source_urls=[])
+
+        rec = backend._store.get(out["root_uri"])
+        metadata = rec.get("metadata", {})
+        self.assertEqual(metadata.get("source_urls"), [])
+
+    def test_quality_feedback_non_dict_becomes_empty_dict(self):
+        from curator.review import ingest_markdown_v2
+        from curator.backend_memory import InMemoryBackend
+
+        backend = InMemoryBackend()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('curator.review.CURATED_DIR', tmpdir):
+                out = ingest_markdown_v2(backend, "meta_doc", "# x", quality_feedback="bad-type")
+
+        rec = backend._store.get(out["root_uri"])
+        metadata = rec.get("metadata", {})
+        self.assertEqual(metadata.get("quality_feedback"), {})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -232,6 +232,72 @@ class TestValidateConfig(unittest.TestCase):
             cfg.OAI_BASE, cfg.OAI_KEY = old_base, old_key
 
 
+class TestChatRetryPolicy(unittest.TestCase):
+
+    def test_retry_on_http_500_then_success(self):
+        import requests
+        import curator.config as cfg
+
+        resp_500 = MagicMock()
+        http_err = requests.HTTPError("500")
+        http_err.response = MagicMock(status_code=500)
+        resp_500.raise_for_status.side_effect = http_err
+
+        resp_ok = MagicMock()
+        resp_ok.raise_for_status.return_value = None
+        resp_ok.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+
+        old_retry_max = cfg.CHAT_RETRY_MAX
+        old_backoff = cfg.CHAT_RETRY_BACKOFF_SEC
+        try:
+            cfg.CHAT_RETRY_MAX = 3
+            cfg.CHAT_RETRY_BACKOFF_SEC = 0
+            with patch("curator.config.requests.post", side_effect=[resp_500, resp_ok]) as mock_post:
+                out = cfg.chat("http://x", "k", "m", [{"role": "user", "content": "hi"}], timeout=1)
+            self.assertEqual(out, "ok")
+            self.assertEqual(mock_post.call_count, 2)
+        finally:
+            cfg.CHAT_RETRY_MAX = old_retry_max
+            cfg.CHAT_RETRY_BACKOFF_SEC = old_backoff
+
+    def test_no_retry_on_invalid_payload(self):
+        import curator.config as cfg
+
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"unexpected": True}
+
+        old_retry_max = cfg.CHAT_RETRY_MAX
+        old_backoff = cfg.CHAT_RETRY_BACKOFF_SEC
+        try:
+            cfg.CHAT_RETRY_MAX = 3
+            cfg.CHAT_RETRY_BACKOFF_SEC = 0
+            with patch("curator.config.requests.post", return_value=resp) as mock_post:
+                with self.assertRaises(RuntimeError):
+                    cfg.chat("http://x", "k", "m", [{"role": "user", "content": "hi"}], timeout=1)
+            self.assertEqual(mock_post.call_count, 1)
+        finally:
+            cfg.CHAT_RETRY_MAX = old_retry_max
+            cfg.CHAT_RETRY_BACKOFF_SEC = old_backoff
+
+    def test_retry_max_clamped_to_one(self):
+        import curator.config as cfg
+
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+
+        old_retry_max = cfg.CHAT_RETRY_MAX
+        try:
+            cfg.CHAT_RETRY_MAX = 0
+            with patch("curator.config.requests.post", return_value=resp) as mock_post:
+                out = cfg.chat("http://x", "k", "m", [{"role": "user", "content": "hi"}], timeout=1)
+            self.assertEqual(out, "ok")
+            self.assertEqual(mock_post.call_count, 1)
+        finally:
+            cfg.CHAT_RETRY_MAX = old_retry_max
+
+
 # ─── should_route (curator_query gate) ───────────────────────
 
 class TestShouldRoute(unittest.TestCase):
