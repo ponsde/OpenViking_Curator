@@ -25,3 +25,11 @@ jobs:
           CURATOR_GROK_KEY: test-key
         run: |
           pytest tests/ -q
+      - name: Run smoke minimal
+        env:
+          CURATOR_OAI_BASE: http://localhost:8000/v1
+          CURATOR_OAI_KEY: test-key
+          CURATOR_GROK_KEY: test-key
+          CURATOR_LLM_ROUTE: "0"
+        run: |
+          bash scripts/smoke_minimal.sh
