@@ -24,4 +24,4 @@ jobs:
           CURATOR_OAI_KEY: test-key
           CURATOR_GROK_KEY: test-key
         run: |
-          pytest tests/test_core.py -q
+          pytest tests/ -q
