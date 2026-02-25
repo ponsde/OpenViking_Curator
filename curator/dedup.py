@@ -74,11 +74,22 @@ def _url_overlap(hashes_a: frozenset, hashes_b: frozenset) -> bool:
 # ── Layer 2: Jaccard 词相似度 ─────────────────────────────────────────────────
 
 def _tokenize(text: str) -> frozenset:
-    """简单分词：小写化 + 按非字母数字分割，过滤短词。"""
-    return frozenset(
-        w for w in re.split(r"[^a-z0-9\u4e00-\u9fff]+", text.lower())
-        if len(w) >= 2
-    )
+    """简单分词：小写化 + 按非字母数字分割，过滤短词。
+
+    CJK 字符（\\u4e00-\\u9fff）保留单字，因为中文里单个汉字也有区分性
+    （技术文档里「库、图、型、表」等单字有意义）。
+    其他字符（拉丁、数字等）过滤掉 len < 2 的词（单字母无意义）。
+    """
+    tokens = re.split(r"[^a-z0-9\u4e00-\u9fff]+", text.lower())
+    result = set()
+    for w in tokens:
+        if not w:
+            continue
+        # CJK 单字保留，其他词过滤掉单字符
+        if len(w) == 1 and not ('\u4e00' <= w <= '\u9fff'):
+            continue
+        result.add(w)
+    return frozenset(result)
 
 
 def _jaccard_similarity(a: str, b: str) -> float:
@@ -199,6 +210,9 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
 
             # Layer 1: URL hash 精确匹配
             if _url_overlap(uri_url_hashes[uri_a], uri_url_hashes[uri_b]):
+                # sim=1.0 是哨兵值，表示「共享来源 URL」，不代表内容 100% 一致
+                # （同一 URL 的摘要 vs 全文仍可能内容不同）
+                # method="url_hash" 时 similarity 字段含义：来源重叠，非内容相似度
                 sim = 1.0
                 method = "url_hash"
             else:

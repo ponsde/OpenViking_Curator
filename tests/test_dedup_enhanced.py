@@ -193,29 +193,3 @@ class TestScanDuplicates(unittest.TestCase):
         result = scan_duplicates(MagicMock(), ["viking://a"])
         self.assertEqual(result["checked"], 0)
         self.assertEqual(result["duplicates"], [])
-        common = "some repeated content words " * 50
-        contents = {"viking://a": common, "viking://b": common}
-        backend = self._make_backend(contents)
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"CURATOR_DEDUP_LOG": os.path.join(tmp, "dedup.json")}):
-                result = scan_duplicates(backend, list(contents.keys()))
-        if result["duplicates"]:
-            self.assertIn("method", result["duplicates"][0])
-
-    def test_no_auto_delete(self):
-        """scan_duplicates must never call delete or rm."""
-        from curator.dedup import scan_duplicates
-        mock = MagicMock()
-        mock.read.return_value = "content " * 50
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"CURATOR_DEDUP_LOG": os.path.join(tmp, "dedup.json")}):
-                scan_duplicates(mock, ["viking://a", "viking://b"])
-        mock.rm.assert_not_called()
-        mock.delete.assert_not_called()
-
-    def test_too_few_uris_returns_empty(self):
-        """Single URI → no pairs to compare."""
-        from curator.dedup import scan_duplicates
-        result = scan_duplicates(MagicMock(), ["viking://a"])
-        self.assertEqual(result["checked"], 0)
-        self.assertEqual(result["duplicates"], [])
