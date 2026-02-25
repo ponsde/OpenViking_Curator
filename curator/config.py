@@ -1,10 +1,11 @@
 """Configuration: env vars, thresholds, logging, HTTP client."""
 
+import logging
 import os
 import time
-import logging
-import requests
 from pathlib import Path
+
+import requests
 
 
 def env(name: str, default: str = "") -> str:
@@ -32,14 +33,20 @@ OAI_KEY = env("CURATOR_OAI_KEY")
 CURATOR_VERSION = env("CURATOR_VERSION", "0.7.0")
 
 ROUTER_MODELS = [
-    m.strip() for m in env(
+    m.strip()
+    for m in env(
         "CURATOR_ROUTER_MODELS",
         "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5",
-    ).split(",") if m.strip()
+    ).split(",")
+    if m.strip()
 ]
 JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gemini-3-flash-preview")
 JUDGE_MODELS = [
-    m.strip() for m in env("CURATOR_JUDGE_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5").split(",") if m.strip()
+    m.strip()
+    for m in env(
+        "CURATOR_JUDGE_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5"
+    ).split(",")
+    if m.strip()
 ]
 GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
 GROK_KEY = env("CURATOR_GROK_KEY")
@@ -61,9 +68,7 @@ SEARCH_CONCURRENT = env("CURATOR_SEARCH_CONCURRENT", "0") == "1"
 SEARCH_TIMEOUT = float(env("CURATOR_SEARCH_TIMEOUT", "60"))
 # Per-provider timeout should be below global timeout so concurrent coordinator can
 # still cancel/return before straggler calls fully block the run.
-SEARCH_PROVIDER_TIMEOUT = float(
-    env("CURATOR_SEARCH_PROVIDER_TIMEOUT", str(max(1.0, SEARCH_TIMEOUT - 5.0)))
-)
+SEARCH_PROVIDER_TIMEOUT = float(env("CURATOR_SEARCH_PROVIDER_TIMEOUT", str(max(1.0, SEARCH_TIMEOUT - 5.0))))
 if SEARCH_PROVIDER_TIMEOUT >= SEARCH_TIMEOUT:
     SEARCH_PROVIDER_TIMEOUT = max(1.0, SEARCH_TIMEOUT * 0.8)
 
@@ -93,10 +98,9 @@ MAX_L2_DEPTH = int(env("CURATOR_MAX_L2_DEPTH", "2"))
 #   L1 overview (key-point list): prepended to markdown as '## 摘要' section
 AUTO_SUMMARIZE = env("CURATOR_AUTO_SUMMARIZE", "0") == "1"
 SUMMARIZE_MODELS = [
-    m.strip() for m in env(
-        "CURATOR_SUMMARIZE_MODELS",
-        env("CURATOR_ROUTER_MODELS", "gpt-4o-mini")
-    ).split(",") if m.strip()
+    m.strip()
+    for m in env("CURATOR_SUMMARIZE_MODELS", env("CURATOR_ROUTER_MODELS", "gpt-4o-mini")).split(",")
+    if m.strip()
 ]
 
 # Chat retry (lightweight, dependency-free)
@@ -179,4 +183,3 @@ def chat(base, key, model, messages, timeout=60):
             time.sleep(sleep_s)
 
     raise RuntimeError(f"chat failed after retries: {last_err}") from last_err
-

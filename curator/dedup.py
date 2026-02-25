@@ -23,8 +23,8 @@ Layer 2 — Jaccard 词集合（无外部依赖）：
 from __future__ import annotations
 
 import hashlib
-import os
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -38,7 +38,9 @@ if TYPE_CHECKING:
 DEDUP_LOG_FILE = os.getenv(
     "CURATOR_DEDUP_LOG",
     os.path.join(
-        os.environ.get("CURATOR_DATA_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")),
+        os.environ.get(
+            "CURATOR_DATA_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+        ),
         "dedup_log.json",
     ),
 )
@@ -49,16 +51,14 @@ _URL_RE = re.compile(r"https?://[^\s)\]>\"']{8,}")
 
 # ── Layer 1: URL hash ────────────────────────────────────────────────────────
 
+
 def _url_hashes(text: str) -> frozenset:
     """从文本中提取所有 http(s) URL，返回其 md5 哈希集合。
 
     使用哈希而非原始 URL，避免查询时泄漏完整 URL，同时保持 O(1) 交集判断。
     """
     urls = _URL_RE.findall(text or "")
-    return frozenset(
-        hashlib.md5(u.strip().lower().encode("utf-8")).hexdigest()
-        for u in urls
-    )
+    return frozenset(hashlib.md5(u.strip().lower().encode("utf-8")).hexdigest() for u in urls)
 
 
 def _url_overlap(hashes_a: frozenset, hashes_b: frozenset) -> bool:
@@ -73,6 +73,7 @@ def _url_overlap(hashes_a: frozenset, hashes_b: frozenset) -> bool:
 
 # ── Layer 2: Jaccard 词相似度 ─────────────────────────────────────────────────
 
+
 def _tokenize(text: str) -> frozenset:
     """简单分词：小写化 + 按非字母数字分割，过滤短词。
 
@@ -86,7 +87,7 @@ def _tokenize(text: str) -> frozenset:
         if not w:
             continue
         # CJK 单字保留，其他词过滤掉单字符
-        if len(w) == 1 and not ('\u4e00' <= w <= '\u9fff'):
+        if len(w) == 1 and not ("\u4e00" <= w <= "\u9fff"):
             continue
         result.add(w)
     return frozenset(result)
@@ -113,6 +114,7 @@ def _jaccard_similarity(a: str, b: str) -> float:
 
 # ── 去重日志 I/O ─────────────────────────────────────────────────────────────
 
+
 def _load_dedup_log() -> dict:
     try:
         if os.path.exists(DEDUP_LOG_FILE):
@@ -137,6 +139,7 @@ def _pair_key(uri_a: str, uri_b: str) -> str:
 
 
 # ── 公开接口 ──────────────────────────────────────────────────────────────────
+
 
 def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
     """扫描 resources 中的疑似重复（只报告，不删除）。
@@ -189,9 +192,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
         return result
 
     # 预计算 URL hash 集合（Layer 1）
-    uri_url_hashes: dict[str, frozenset] = {
-        u: _url_hashes(text) for u, text in uri_contents.items()
-    }
+    uri_url_hashes: dict[str, frozenset] = {u: _url_hashes(text) for u, text in uri_contents.items()}
 
     checks_done = 0
     uri_list = list(uri_contents.keys())
@@ -227,8 +228,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
                 method = "jaccard"
 
             if sim >= SIMILARITY_THRESHOLD:
-                log.info("dedup: 疑似重复 (%.2f, %s): %s vs %s",
-                         sim, method, uri_a, uri_b)
+                log.info("dedup: 疑似重复 (%.2f, %s): %s vs %s", sim, method, uri_a, uri_b)
                 dup = {
                     "uri_a": uri_a,
                     "uri_b": uri_b,
@@ -236,10 +236,12 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
                     "method": method,
                 }
                 result["duplicates"].append(dup)
-                state["reports"].append({
-                    "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    **dup,
-                })
+                state["reports"].append(
+                    {
+                        "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        **dup,
+                    }
+                )
 
     _save_dedup_log(state)
     return result

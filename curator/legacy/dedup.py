@@ -4,10 +4,10 @@ import json
 import os
 import re
 import time
-from pathlib import Path
 from difflib import SequenceMatcher
+from pathlib import Path
 
-from .config import log, chat, OAI_BASE, OAI_KEY, ANSWER_MODELS
+from .config import ANSWER_MODELS, OAI_BASE, OAI_KEY, chat, log
 
 DEDUP_LOG_FILE = os.getenv("CURATOR_DEDUP_LOG", "dedup_log.json")
 SIMILARITY_THRESHOLD = 0.55  # 文本相似度阈值，超过则认为可能重复
@@ -90,14 +90,14 @@ def incremental_dedup(client, uris: list[str], max_checks: int = 3) -> dict:
     """
     state = _load_dedup_log()
     checked_set = set(state["checked_pairs"])
-    
+
     result = {"checked": 0, "merged": 0, "details": []}
-    
+
     # 过滤有效 URI（只处理 curated 的，不动原始数据）
     valid_uris = [u for u in uris if "curated" in u.lower() and u.startswith("viking://")]
     if len(valid_uris) < 2:
         return result
-    
+
     # 读取内容
     uri_contents = {}
     for u in valid_uris[:10]:  # 最多看 10 个
@@ -107,58 +107,58 @@ def incremental_dedup(client, uris: list[str], max_checks: int = 3) -> dict:
                 uri_contents[u] = content
         except Exception:
             continue
-    
+
     if len(uri_contents) < 2:
         return result
-    
+
     # 两两比较（只检查未检查过的对）
     checks_done = 0
     uri_list = list(uri_contents.keys())
-    
+
     for i in range(len(uri_list)):
         if checks_done >= max_checks:
             break
         for j in range(i + 1, len(uri_list)):
             if checks_done >= max_checks:
                 break
-                
+
             uri_a, uri_b = uri_list[i], uri_list[j]
             pk = _pair_key(uri_a, uri_b)
-            
+
             if pk in checked_set:
                 continue
-            
+
             # 快速文本相似度检查
             sim = _text_similarity(uri_contents[uri_a], uri_contents[uri_b])
             checked_set.add(pk)
             state["checked_pairs"].append(pk)
             checks_done += 1
             result["checked"] += 1
-            
+
             if sim < SIMILARITY_THRESHOLD:
                 continue
-            
+
             log.info("dedup: 发现相似对 (%.2f): %s vs %s", sim, uri_a, uri_b)
-            
+
             # LLM 合并
             merged_content = _llm_merge(
                 uri_a, uri_contents[uri_a],
                 uri_b, uri_contents[uri_b],
             )
-            
+
             if not merged_content:
                 log.warning("dedup: LLM 合并失败，跳过")
                 continue
-            
+
             # 保留较新的 URI，用合并内容替换
             # 写入合并后的文件，重新入库
             curated_dir = os.getenv("CURATOR_CURATED_DIR", "curated")
             os.makedirs(curated_dir, exist_ok=True)
-            
+
             ts = int(time.time())
             merge_path = os.path.join(curated_dir, f"merged_{ts}.md")
             Path(merge_path).write_text(merged_content, encoding="utf-8")
-            
+
             try:
                 # 入库合并后的文档
                 client.add_resource(path=merge_path, target="curated",
@@ -170,7 +170,7 @@ def incremental_dedup(client, uris: list[str], max_checks: int = 3) -> dict:
                         log.info("dedup: 已删除 %s", old_uri)
                     except Exception as e:
                         log.warning("dedup: 删除 %s 失败: %s", old_uri, e)
-                
+
                 result["merged"] += 1
                 state["merged"].append({
                     "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -180,9 +180,9 @@ def incremental_dedup(client, uris: list[str], max_checks: int = 3) -> dict:
                     "merged_path": merge_path,
                 })
                 result["details"].append(f"合并: {uri_a} + {uri_b} (相似度 {sim:.2f})")
-                
+
             except Exception as e:
                 log.warning("dedup: 入库合并文档失败: %s", e)
-    
+
     _save_dedup_log(state)
     return result

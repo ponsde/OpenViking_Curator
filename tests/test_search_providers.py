@@ -9,14 +9,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _reload_module():
     """Force-reload search_providers so env var patches take effect."""
     if "curator.search_providers" in sys.modules:
         del sys.modules["curator.search_providers"]
     import curator.search_providers as m
+
     return m
 
 
@@ -24,6 +25,7 @@ SCOPE = {"keywords": ["test"]}
 
 
 # ─── Grok provider ────────────────────────────────────────────────────────────
+
 
 class TestSearchGrok:
     def test_returns_result_on_success(self):
@@ -59,6 +61,7 @@ class TestSearchGrok:
 
 
 # ─── DuckDuckGo provider ──────────────────────────────────────────────────────
+
 
 class TestSearchDuckDuckGo:
     def _make_ddg_results(self):
@@ -117,6 +120,7 @@ class TestSearchDuckDuckGo:
 
 
 # ─── Tavily provider ──────────────────────────────────────────────────────────
+
 
 class TestSearchTavily:
     def _make_tavily_response(self):
@@ -189,13 +193,16 @@ class TestSearchTavily:
 
 # ─── Fallback chain ────────────────────────────────────────────────────────────
 
+
 class TestFallbackChain:
     def test_first_provider_success_returns_immediately(self, monkeypatch):
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", return_value="grok result") as mock_grok, \
-             patch.object(m, "_search_duckduckgo", return_value="ddg result") as mock_ddg:
+        with (
+            patch.object(m, "_search_grok", return_value="grok result") as mock_grok,
+            patch.object(m, "_search_duckduckgo", return_value="ddg result") as mock_ddg,
+        ):
             result = m.search("query", SCOPE)
 
         assert result == "grok result"
@@ -206,8 +213,10 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")), \
-             patch.object(m, "_search_duckduckgo", return_value="ddg result"):
+        with (
+            patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")),
+            patch.object(m, "_search_duckduckgo", return_value="ddg result"),
+        ):
             result = m.search("query", SCOPE)
 
         assert result == "ddg result"
@@ -217,8 +226,10 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", return_value="   "), \
-             patch.object(m, "_search_duckduckgo", return_value="ddg result"):
+        with (
+            patch.object(m, "_search_grok", return_value="   "),
+            patch.object(m, "_search_duckduckgo", return_value="ddg result"),
+        ):
             result = m.search("query", SCOPE)
 
         assert result == "ddg result"
@@ -227,8 +238,10 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")), \
-             patch.object(m, "_search_duckduckgo", side_effect=RuntimeError("ddg down")):
+        with (
+            patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")),
+            patch.object(m, "_search_duckduckgo", side_effect=RuntimeError("ddg down")),
+        ):
             result = m.search("query", SCOPE)
 
         assert result == ""
@@ -238,9 +251,10 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "duckduckgo,grok")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_duckduckgo",
-                          side_effect=ImportError("duckduckgo-search not installed")), \
-             patch.object(m, "_search_grok", return_value="grok fallback"):
+        with (
+            patch.object(m, "_search_duckduckgo", side_effect=ImportError("duckduckgo-search not installed")),
+            patch.object(m, "_search_grok", return_value="grok fallback"),
+        ):
             result = m.search("query", SCOPE)
 
         assert result == "grok fallback"
@@ -251,6 +265,7 @@ class TestFallbackChain:
 
         with patch.object(m, "_search_grok", return_value="grok result"):
             import logging
+
             with caplog.at_level(logging.WARNING, logger="curator"):
                 result = m.search("query", SCOPE)
 
@@ -262,8 +277,10 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", return_value="grok result") as mock_grok, \
-             patch.object(m, "_search_duckduckgo", return_value="ddg result") as mock_ddg:
+        with (
+            patch.object(m, "_search_grok", return_value="grok result") as mock_grok,
+            patch.object(m, "_search_duckduckgo", return_value="ddg result") as mock_ddg,
+        ):
             result = m.search("query", SCOPE, provider="duckduckgo")
 
         assert result == "ddg result"
@@ -274,9 +291,11 @@ class TestFallbackChain:
         monkeypatch.setenv("CURATOR_SEARCH_PROVIDERS", "grok,duckduckgo,tavily")
         import curator.search_providers as m
 
-        with patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")), \
-             patch.object(m, "_search_duckduckgo", return_value="ddg result"), \
-             patch.object(m, "_search_tavily", return_value="tavily result") as mock_tav:
+        with (
+            patch.object(m, "_search_grok", side_effect=RuntimeError("grok down")),
+            patch.object(m, "_search_duckduckgo", return_value="ddg result"),
+            patch.object(m, "_search_tavily", return_value="tavily result") as mock_tav,
+        ):
             result = m.search("query", SCOPE)
 
         assert result == "ddg result"
@@ -285,24 +304,29 @@ class TestFallbackChain:
 
 # ─── get_provider (backward compat) ───────────────────────────────────────────
 
+
 class TestGetProvider:
     def test_get_known_provider(self):
         import curator.search_providers as m
+
         fn = m.get_provider("grok")
         assert callable(fn)
 
     def test_get_unknown_provider_raises(self):
         import curator.search_providers as m
+
         with pytest.raises(ValueError, match="Unknown search provider"):
             m.get_provider("bogus_provider")
 
     def test_all_known_providers_registered(self):
         import curator.search_providers as m
+
         for name in ("grok", "oai", "duckduckgo", "tavily"):
             assert name in m._PROVIDERS, f"{name} not in _PROVIDERS"
 
 
 # ─── Concurrent search ────────────────────────────────────────────────────────
+
 
 class TestSearchConcurrent:
     def test_returns_first_non_empty_result(self, monkeypatch):
@@ -358,4 +382,3 @@ class TestSearchConcurrent:
         monkeypatch.setattr(m, "_async_search_provider", fake_dispatch)
         result = m.search_concurrent("q", SCOPE, providers=["grok", "duckduckgo"], timeout=0.2)
         assert result == "fallback-ok"
-

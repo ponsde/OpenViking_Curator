@@ -16,8 +16,8 @@ import os
 import re
 import sys
 import time
-import urllib.request
 import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add project root to path
@@ -37,6 +37,7 @@ URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 
 
 # ── OV HTTP helpers ──
+
 
 def _ov_get(path: str, timeout: int = 30):
     """GET request to OV API."""
@@ -58,6 +59,7 @@ def _ov_post(path: str, data: dict, timeout: int = 30):
 
 
 # ── Core logic ──
+
 
 def list_resources() -> list[dict]:
     """List all OV resources via HTTP API."""
@@ -189,6 +191,7 @@ def categorize(results: list[dict]) -> dict[str, list[dict]]:
 
 # ── URL check ──
 
+
 def extract_urls_from_content(content: str) -> list[str]:
     """Extract HTTP(S) URLs from content."""
     if not content:
@@ -247,6 +250,7 @@ def check_urls_for_resources(scored_results: list[dict], categories: list[str] =
 
 # ── Act mode: re-search stale resources ──
 
+
 def extract_topic(uri: str, abstract: str, content: str = "") -> str:
     """Extract topic/keywords from resource for re-search."""
     # Use abstract if available
@@ -264,8 +268,7 @@ def extract_topic(uri: str, abstract: str, content: str = "") -> str:
 def act_on_stale(stale_results: list[dict]) -> list[dict]:
     """For stale resources, trigger external search and potential re-ingest."""
     # Import pipeline components
-    os.environ.setdefault("OPENVIKING_CONFIG_FILE",
-                          str(os.path.expanduser("~/.openviking/ov.conf")))
+    os.environ.setdefault("OPENVIKING_CONFIG_FILE", str(os.path.expanduser("~/.openviking/ov.conf")))
 
     from curator.pipeline_v2 import run as pipeline_run
 
@@ -279,30 +282,35 @@ def act_on_stale(stale_results: list[dict]) -> list[dict]:
         try:
             result = pipeline_run(topic)
             ingested = result.get("meta", {}).get("ingested", False)
-            actions.append({
-                "uri": uri,
-                "topic": topic,
-                "action": "re-searched",
-                "ingested": ingested,
-                "coverage": result.get("meta", {}).get("coverage", 0),
-            })
+            actions.append(
+                {
+                    "uri": uri,
+                    "topic": topic,
+                    "action": "re-searched",
+                    "ingested": ingested,
+                    "coverage": result.get("meta", {}).get("coverage", 0),
+                }
+            )
             if ingested:
                 print(f"    ✅ New content ingested for: {topic[:50]}")
             else:
                 print(f"    ℹ️  No new content found for: {topic[:50]}")
         except Exception as e:
-            actions.append({
-                "uri": uri,
-                "topic": topic,
-                "action": "error",
-                "error": str(e)[:200],
-            })
+            actions.append(
+                {
+                    "uri": uri,
+                    "topic": topic,
+                    "action": "error",
+                    "error": str(e)[:200],
+                }
+            )
             print(f"    ❌ Error: {e}")
 
     return actions
 
 
 # ── Report ──
+
 
 def print_report(categories: dict, url_results: dict = None, actions: list = None):
     """Print human-readable report to stdout."""
@@ -391,9 +399,7 @@ def generate_json_report(
             "fresh": len(fresh),
             "aging": len(aging),
             "stale": len(stale),
-            "review_expired": sum(
-                1 for cat in categories.values() for r in cat if r.get("review_expired")
-            ),
+            "review_expired": sum(1 for cat in categories.values() for r in cat if r.get("review_expired")),
         },
         "resources": {
             "fresh": fresh,
@@ -421,6 +427,7 @@ def generate_json_report(
 
 
 # ── Main ──
+
 
 def main():
     ap = argparse.ArgumentParser(description="OV resource freshness scanner")

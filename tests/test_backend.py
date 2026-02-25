@@ -1,7 +1,10 @@
 """Tests for KnowledgeBackend abstract interface, InMemoryBackend, and JudgeResult."""
+
 import json
+
 import pytest
-from curator.backend import KnowledgeBackend, SearchResult, SearchResponse
+
+from curator.backend import KnowledgeBackend, SearchResponse, SearchResult
 from curator.backend_memory import InMemoryBackend
 from curator.review import JudgeResult, _parse_judge_output
 
@@ -192,21 +195,25 @@ class TestInMemoryBackend:
 class TestConflictResolution:
     def test_no_conflict(self):
         from curator.pipeline_v2 import _resolve_conflict
+
         r = _resolve_conflict({"has_conflict": False})
         assert r["strategy"] == "no_conflict"
 
     def test_high_trust_external(self):
         from curator.pipeline_v2 import _resolve_conflict
+
         r = _resolve_conflict({"has_conflict": True, "trust": 8, "freshness": "current"})
         assert r["preferred"] == "external"
 
     def test_low_trust_local(self):
         from curator.pipeline_v2 import _resolve_conflict
+
         r = _resolve_conflict({"has_conflict": True, "trust": 2, "freshness": "current"})
         assert r["preferred"] == "local"
 
     def test_medium_trust_human(self):
         from curator.pipeline_v2 import _resolve_conflict
+
         r = _resolve_conflict({"has_conflict": True, "trust": 5, "freshness": "recent"})
         assert r["preferred"] == "human_review"
 
@@ -245,12 +252,18 @@ class TestJudgeResult:
             JudgeResult(freshness="invalid")
 
     def test_to_pipeline_dict(self):
-        jr = JudgeResult(**{
-            "pass": True, "reason": "good", "trust": 7,
-            "freshness": "current", "markdown": "# Doc",
-            "has_conflict": True, "conflict_summary": "differs",
-            "conflict_points": ["point1"],
-        })
+        jr = JudgeResult(
+            **{
+                "pass": True,
+                "reason": "good",
+                "trust": 7,
+                "freshness": "current",
+                "markdown": "# Doc",
+                "has_conflict": True,
+                "conflict_summary": "differs",
+                "conflict_points": ["point1"],
+            }
+        )
         d = jr.to_pipeline_dict()
         assert d["pass"] is True
         assert d["trust"] == 7
@@ -259,12 +272,19 @@ class TestJudgeResult:
         assert "passed" not in d
 
     def test_model_validate_json(self):
-        raw = json.dumps({
-            "pass": True, "reason": "ok", "trust": 6,
-            "freshness": "recent", "summary": "s", "markdown": "m",
-            "has_conflict": False, "conflict_summary": "",
-            "conflict_points": [],
-        })
+        raw = json.dumps(
+            {
+                "pass": True,
+                "reason": "ok",
+                "trust": 6,
+                "freshness": "recent",
+                "summary": "s",
+                "markdown": "m",
+                "has_conflict": False,
+                "conflict_summary": "",
+                "conflict_points": [],
+            }
+        )
         jr = JudgeResult.model_validate_json(raw)
         assert jr.passed is True
         assert jr.trust == 6

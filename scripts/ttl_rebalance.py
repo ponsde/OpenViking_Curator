@@ -64,7 +64,7 @@ def scan(curated_dir: str, filter_tier: str = None) -> list[dict]:
     Returns list of dicts with current/suggested tier and TTL for each file.
     """
     from curator.feedback_store import load as load_feedback
-    from curator.usage_ttl import usage_tier, adjust_ttl
+    from curator.usage_ttl import adjust_ttl, usage_tier
 
     feedback = load_feedback()
     curated = Path(curated_dir)
@@ -155,9 +155,7 @@ def scan(curated_dir: str, filter_tier: str = None) -> list[dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="TTL Rebalance: 扫描已入库文档，评估 TTL 调整建议"
-    )
+    parser = argparse.ArgumentParser(description="TTL Rebalance: 扫描已入库文档，评估 TTL 调整建议")
     parser.add_argument("--top", type=int, default=10, help="显示前 N 条 (default 10)")
     parser.add_argument("--tier", choices=["hot", "warm", "cold"], help="只看指定 tier")
     parser.add_argument("--json", action="store_true", dest="json_out", help="输出 JSON 报告")
@@ -177,7 +175,7 @@ def main():
         tier_counts[r["suggested_tier"]] = tier_counts.get(r["suggested_tier"], 0) + 1
 
     print(f"\n{'='*60}")
-    print(f"  TTL Rebalance Report")
+    print("  TTL Rebalance Report")
     print(f"{'='*60}")
     print(f"  Scanned: {total} docs")
     print(f"  Need rebalance: {changed}")
@@ -185,7 +183,7 @@ def main():
     print(f"{'='*60}")
 
     # Detail
-    shown = results[:args.top]
+    shown = results[: args.top]
     for r in shown:
         delta = r["delta_days"]
         sign = "+" if delta > 0 else ""

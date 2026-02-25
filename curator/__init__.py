@@ -14,54 +14,88 @@ Boundaries:
 """
 
 # Re-export public API
-from .backend import KnowledgeBackend, SearchResult, SearchResponse
-from .backend_ov import OpenVikingBackend
+from .backend import KnowledgeBackend, SearchResponse, SearchResult
 from .backend_memory import InMemoryBackend
+from .backend_ov import OpenVikingBackend
 from .config import (
-    env, validate_config, chat, log,
-    OPENVIKING_CONFIG_FILE, DATA_PATH, CURATED_DIR,
-    OAI_BASE, OAI_KEY, ROUTER_MODELS, JUDGE_MODEL, JUDGE_MODELS,
-    GROK_BASE, GROK_KEY, GROK_MODEL,
+    CURATED_DIR,
+    DATA_PATH,
     FAST_ROUTE,
-)
-from .search import external_search, cross_validate
-from .review import (
-    judge_and_pack, judge_and_ingest, ingest_markdown_v2, detect_conflict,
-    JudgeResult,
-)
-from .router import route_scope
-from .freshness import uri_freshness_score
-from .dedup import scan_duplicates
-from .domain_filter import (
-    extract_domain, domain_matches,
-    filter_results_by_domain, filter_text_by_domain,
-    build_domain_prompt_hint,
+    GROK_BASE,
+    GROK_KEY,
+    GROK_MODEL,
+    JUDGE_MODEL,
+    JUDGE_MODELS,
+    OAI_BASE,
+    OAI_KEY,
+    OPENVIKING_CONFIG_FILE,
+    ROUTER_MODELS,
+    chat,
+    env,
+    log,
+    validate_config,
 )
 from .decision_report import format_report, format_report_short
-from .session_manager import OVClient, SessionManager
-from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
+from .dedup import scan_duplicates
+from .domain_filter import (
+    build_domain_prompt_hint,
+    domain_matches,
+    extract_domain,
+    filter_results_by_domain,
+    filter_text_by_domain,
+)
+from .freshness import uri_freshness_score
 from .pipeline_v2 import run
+from .retrieval_v2 import assess_coverage, load_context, ov_retrieve
+from .review import (
+    JudgeResult,
+    detect_conflict,
+    ingest_markdown_v2,
+    judge_and_ingest,
+    judge_and_pack,
+)
+from .router import route_scope
+from .search import cross_validate, external_search
+from .session_manager import OVClient, SessionManager
 
 __all__ = [
     # Abstract backend interface
-    "KnowledgeBackend", "SearchResult", "SearchResponse",
+    "KnowledgeBackend",
+    "SearchResult",
+    "SearchResponse",
     # OpenViking backend (default)
     "OpenVikingBackend",
     # In-memory backend (testing)
     "InMemoryBackend",
     # v2 pipeline
-    "run", "ov_retrieve", "load_context", "assess_coverage",
-    "OVClient", "SessionManager",
+    "run",
+    "ov_retrieve",
+    "load_context",
+    "assess_coverage",
+    "OVClient",
+    "SessionManager",
     # routing + search + review (governance)
     "route_scope",
-    "external_search", "cross_validate",
-    "judge_and_pack", "judge_and_ingest", "ingest_markdown_v2", "detect_conflict",
+    "external_search",
+    "cross_validate",
+    "judge_and_pack",
+    "judge_and_ingest",
+    "ingest_markdown_v2",
+    "detect_conflict",
     "JudgeResult",
     # supplementary (OV doesn't have these)
-    "uri_freshness_score", "scan_duplicates",
-    "extract_domain", "domain_matches",
-    "filter_results_by_domain", "filter_text_by_domain", "build_domain_prompt_hint",
-    "format_report", "format_report_short",
+    "uri_freshness_score",
+    "scan_duplicates",
+    "extract_domain",
+    "domain_matches",
+    "filter_results_by_domain",
+    "filter_text_by_domain",
+    "build_domain_prompt_hint",
+    "format_report",
+    "format_report_short",
     # config
-    "chat", "env", "log", "validate_config",
+    "chat",
+    "env",
+    "log",
+    "validate_config",
 ]

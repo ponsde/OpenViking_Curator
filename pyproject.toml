@@ -30,6 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "ruff>=0.4",
+    "pre-commit>=3.0",
 ]
 
 [project.urls]
@@ -42,6 +44,22 @@ include = ["curator*"]
 
 [tool.setuptools.package-data]
 curator = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["curator/legacy/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]  # errors, pyflakes, warnings, isort
+ignore = [
+    "E501",   # line too long — handled by formatter, not strict here
+    "F401",   # unused import — too noisy during dev
+    "E402",   # module level import not at top — scripts need sys.path hack
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["curator"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

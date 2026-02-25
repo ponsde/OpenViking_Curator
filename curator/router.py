@@ -5,7 +5,8 @@
 """
 
 import re
-from .config import log, FAST_ROUTE
+
+from .config import FAST_ROUTE, log
 
 
 def route_scope(query: str) -> dict:
@@ -17,13 +18,53 @@ def route_scope(query: str) -> dict:
 
     # ── 领域判断（简单规则） ──
     _DOMAIN_MAP = {
-        "technology": ["docker", "nginx", "linux", "k8s", "kubernetes", "systemd", "git",
-                       "python", "asyncio", "rust", "golang", "javascript", "typescript",
-                       "api", "mcp", "rag", "llm", "openai", "claude", "grok", "embedding",
-                       "vector", "openviking", "grok2api", "wordpress", "cloudflare",
-                       "向量", "容器", "部署", "配置", "排查", "服务器", "数据库"],
-        "devops": ["vps", "ssh", "firewall", "防火墙", "安全加固", "监控",
-                   "systemctl", "journalctl", "iptables", "ufw"],
+        "technology": [
+            "docker",
+            "nginx",
+            "linux",
+            "k8s",
+            "kubernetes",
+            "systemd",
+            "git",
+            "python",
+            "asyncio",
+            "rust",
+            "golang",
+            "javascript",
+            "typescript",
+            "api",
+            "mcp",
+            "rag",
+            "llm",
+            "openai",
+            "claude",
+            "grok",
+            "embedding",
+            "vector",
+            "openviking",
+            "grok2api",
+            "wordpress",
+            "cloudflare",
+            "向量",
+            "容器",
+            "部署",
+            "配置",
+            "排查",
+            "服务器",
+            "数据库",
+        ],
+        "devops": [
+            "vps",
+            "ssh",
+            "firewall",
+            "防火墙",
+            "安全加固",
+            "监控",
+            "systemctl",
+            "journalctl",
+            "iptables",
+            "ufw",
+        ],
     }
     domain = "general"
     for d, terms in _DOMAIN_MAP.items():

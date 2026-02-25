@@ -1,17 +1,19 @@
 """
 tests/test_domain_filter.py — Unit tests for domain whitelist/blacklist filtering.
 """
+
 import pytest
+
 from curator.domain_filter import (
-    extract_domain,
+    build_domain_prompt_hint,
     domain_matches,
+    extract_domain,
     filter_results_by_domain,
     filter_text_by_domain,
-    build_domain_prompt_hint,
 )
 
-
 # ─── extract_domain ───────────────────────────────────────────────────────────
+
 
 class TestExtractDomain:
     def test_simple_url(self):
@@ -38,6 +40,7 @@ class TestExtractDomain:
 
 
 # ─── domain_matches ───────────────────────────────────────────────────────────
+
 
 class TestDomainMatches:
     def test_exact_match(self):
@@ -70,6 +73,7 @@ class TestDomainMatches:
 
 # ─── filter_results_by_domain ─────────────────────────────────────────────────
 
+
 class TestFilterResultsByDomain:
     RESULTS = [
         {"href": "https://good.com/a", "title": "Good A", "body": "ok"},
@@ -95,9 +99,7 @@ class TestFilterResultsByDomain:
 
     def test_blocked_takes_precedence_over_allowed(self):
         # evil.com is both in allowed and blocked → should be blocked
-        out = filter_results_by_domain(
-            self.RESULTS, "href", ["evil.com", "good.com"], ["evil.com"]
-        )
+        out = filter_results_by_domain(self.RESULTS, "href", ["evil.com", "good.com"], ["evil.com"])
         urls = [r["href"] for r in out]
         assert "https://evil.com/b" not in urls
 
@@ -123,27 +125,21 @@ class TestFilterResultsByDomain:
 
 # ─── filter_text_by_domain ────────────────────────────────────────────────────
 
+
 class TestFilterTextByDomain:
     def test_no_filters_passthrough(self):
         text = "Some text with https://example.com/page mentioned."
         assert filter_text_by_domain(text, [], []) == text
 
     def test_blocked_domain_line_removed(self):
-        text = (
-            "Good content here.\n"
-            "Source: https://evil.com/article — bad stuff.\n"
-            "More good content.\n"
-        )
+        text = "Good content here.\n" "Source: https://evil.com/article — bad stuff.\n" "More good content.\n"
         out = filter_text_by_domain(text, [], ["evil.com"])
         assert "evil.com" not in out
         assert "Good content here." in out
         assert "More good content." in out
 
     def test_allowed_only_lines_kept(self):
-        text = (
-            "From https://trusted.com/doc — valid.\n"
-            "From https://random.com/page — unknown.\n"
-        )
+        text = "From https://trusted.com/doc — valid.\n" "From https://random.com/page — unknown.\n"
         out = filter_text_by_domain(text, ["trusted.com"], [])
         # Lines without URLs are always kept; only URL-containing lines outside allowed are dropped
         assert "trusted.com" in out
@@ -159,6 +155,7 @@ class TestFilterTextByDomain:
 
 
 # ─── build_domain_prompt_hint ─────────────────────────────────────────────────
+
 
 class TestBuildDomainPromptHint:
     def test_no_domains_returns_empty(self):

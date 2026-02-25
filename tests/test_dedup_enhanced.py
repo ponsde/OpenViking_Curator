@@ -1,42 +1,48 @@
 """Tests for curator/dedup.py — URL hash and Jaccard similarity layers."""
-import unittest
-from unittest.mock import MagicMock, patch
+
 import os
 import tempfile
+import unittest
+from unittest.mock import MagicMock, patch
 
 
 class TestUrlHashes(unittest.TestCase):
-
     def test_extracts_http_urls(self):
         from curator.dedup import _url_hashes
+
         text = "See https://example.com/doc and http://other.org/page for details."
         hashes = _url_hashes(text)
         self.assertEqual(len(hashes), 2)
 
     def test_same_url_same_hash(self):
         from curator.dedup import _url_hashes
+
         h1 = _url_hashes("https://example.com/doc")
         h2 = _url_hashes("  https://example.com/doc  check it out")
         self.assertEqual(h1, h2)
 
     def test_different_urls_different_hashes(self):
         from curator.dedup import _url_hashes
+
         h1 = _url_hashes("https://example.com/a")
         h2 = _url_hashes("https://example.com/b")
         self.assertEqual(len(h1 & h2), 0)
 
     def test_empty_text_returns_empty(self):
         from curator.dedup import _url_hashes
+
         self.assertEqual(len(_url_hashes("")), 0)
         self.assertEqual(len(_url_hashes(None)), 0)
 
     def test_no_urls_returns_empty(self):
         from curator.dedup import _url_hashes
+
         self.assertEqual(len(_url_hashes("just plain text here")), 0)
 
     def test_short_urls_ignored(self):
         """URLs shorter than 8 chars after scheme are ignored (regex threshold)."""
         from curator.dedup import _url_hashes
+
         # 'http://x' has only 1 char after '://', should not match
         text = "see http://x go to https://example.com/valid-url"
         hashes = _url_hashes(text)
@@ -45,35 +51,38 @@ class TestUrlHashes(unittest.TestCase):
 
 
 class TestUrlOverlap(unittest.TestCase):
-
     def test_overlap_returns_true(self):
         from curator.dedup import _url_hashes, _url_overlap
+
         h1 = _url_hashes("https://example.com/doc extra text")
         h2 = _url_hashes("totally different text but same source https://example.com/doc")
         self.assertTrue(_url_overlap(h1, h2))
 
     def test_no_overlap_returns_false(self):
         from curator.dedup import _url_hashes, _url_overlap
+
         h1 = _url_hashes("https://site-a.com/article")
         h2 = _url_hashes("https://site-b.org/post")
         self.assertFalse(_url_overlap(h1, h2))
 
     def test_empty_sets_return_false(self):
         from curator.dedup import _url_overlap
+
         self.assertFalse(_url_overlap(frozenset(), frozenset({"abc"})))
         self.assertFalse(_url_overlap(frozenset({"abc"}), frozenset()))
         self.assertFalse(_url_overlap(frozenset(), frozenset()))
 
 
 class TestJaccardSimilarity(unittest.TestCase):
-
     def test_identical_texts_score_one(self):
         from curator.dedup import _jaccard_similarity
+
         text = "the quick brown fox jumps over the lazy dog"
         self.assertAlmostEqual(_jaccard_similarity(text, text), 1.0)
 
     def test_completely_different_texts_score_low(self):
         from curator.dedup import _jaccard_similarity
+
         a = "docker kubernetes container deployment"
         b = "renaissance painting baroque art museum"
         sim = _jaccard_similarity(a, b)
@@ -81,6 +90,7 @@ class TestJaccardSimilarity(unittest.TestCase):
 
     def test_partial_overlap_between_zero_and_one(self):
         from curator.dedup import _jaccard_similarity
+
         a = "python programming language tutorial beginner"
         b = "python programming advanced tutorial expert"
         sim = _jaccard_similarity(a, b)
@@ -89,12 +99,14 @@ class TestJaccardSimilarity(unittest.TestCase):
 
     def test_empty_strings_return_zero(self):
         from curator.dedup import _jaccard_similarity
+
         self.assertEqual(_jaccard_similarity("", "some text"), 0.0)
         self.assertEqual(_jaccard_similarity("some text", ""), 0.0)
 
     def test_order_invariant(self):
         """Jaccard should be symmetric."""
         from curator.dedup import _jaccard_similarity
+
         a = "machine learning neural network deep"
         b = "deep neural network learning algorithms"
         self.assertAlmostEqual(_jaccard_similarity(a, b), _jaccard_similarity(b, a))
@@ -102,6 +114,7 @@ class TestJaccardSimilarity(unittest.TestCase):
     def test_better_than_sequencematcher_reordering(self):
         """Jaccard detects similarity when paragraphs are reordered."""
         from curator.dedup import _jaccard_similarity
+
         # Same words, different order — SequenceMatcher would score poorly
         a = "alpha beta gamma delta epsilon"
         b = "epsilon delta gamma beta alpha"
@@ -110,7 +123,6 @@ class TestJaccardSimilarity(unittest.TestCase):
 
 
 class TestScanDuplicates(unittest.TestCase):
-
     def _make_backend(self, contents: dict):
         """Create a mock backend with given {uri: content} map."""
         mock = MagicMock()
@@ -124,6 +136,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_url_hash_layer_detects_shared_source(self):
         """Two docs with shared source URL should be caught by Layer 1."""
         from curator.dedup import scan_duplicates
+
         contents = {
             "viking://a": "Intro text. https://example.com/original-source more text " * 20,
             "viking://b": "Different intro. https://example.com/original-source extra " * 20,
@@ -139,6 +152,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_jaccard_layer_detects_high_text_similarity(self):
         """Two docs with same text (no URLs) should be caught by Layer 2."""
         from curator.dedup import scan_duplicates
+
         common = "machine learning neural network training dataset evaluation accuracy " * 30
         contents = {
             "viking://a": common,
@@ -154,6 +168,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_different_docs_not_flagged(self):
         """Truly different docs should produce no duplicates."""
         from curator.dedup import scan_duplicates
+
         contents = {
             "viking://a": "docker kubernetes deployment container orchestration " * 30,
             "viking://b": "baroque renaissance art painting museum history " * 30,
@@ -167,6 +182,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_method_field_present_in_report(self):
         """Duplicate report must include 'method' field."""
         from curator.dedup import scan_duplicates
+
         common = "some repeated content words " * 50
         contents = {"viking://a": common, "viking://b": common}
         backend = self._make_backend(contents)
@@ -179,6 +195,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_no_auto_delete(self):
         """scan_duplicates must never call delete or rm."""
         from curator.dedup import scan_duplicates
+
         mock = MagicMock()
         mock.read.return_value = "content " * 50
         with tempfile.TemporaryDirectory() as tmp:
@@ -190,6 +207,7 @@ class TestScanDuplicates(unittest.TestCase):
     def test_too_few_uris_returns_empty(self):
         """Single URI → no pairs to compare."""
         from curator.dedup import scan_duplicates
+
         result = scan_duplicates(MagicMock(), ["viking://a"])
         self.assertEqual(result["checked"], 0)
         self.assertEqual(result["duplicates"], [])

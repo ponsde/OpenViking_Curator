@@ -18,8 +18,8 @@ Domain matching rules:
 import re
 from urllib.parse import urlparse
 
-
 # ── Core helpers ──────────────────────────────────────────────────────────────
+
 
 def extract_domain(url: str) -> str:
     """Return the normalised (lowercased, www-stripped) domain from *url*.
@@ -83,6 +83,7 @@ def domain_matches(url: str, domain_list: list) -> bool:
 
 
 # ── Structured result filtering (DDG / Tavily) ────────────────────────────────
+
 
 def filter_results_by_domain(
     results: list,
@@ -176,6 +177,7 @@ def filter_text_by_domain(text: str, allowed: list, blocked: list) -> str:
 
 
 # ── Prompt hint builder ───────────────────────────────────────────────────────
+
 
 def build_domain_prompt_hint(allowed: list, blocked: list) -> str:
     """Build a short natural-language hint to inject into search prompts.

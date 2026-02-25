@@ -7,11 +7,11 @@ All knowledge-store operations go through KnowledgeBackend; no direct OVClient u
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
 import time
-import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -102,14 +102,22 @@ def _extract_json(text: str) -> str | None:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return text[start:i + 1]
+                return text[start : i + 1]
 
     return None
 
+
 from .config import (
-    log, chat,
-    OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR, CURATOR_VERSION,
-    AUTO_SUMMARIZE, SUMMARIZE_MODELS,
+    AUTO_SUMMARIZE,
+    CURATED_DIR,
+    CURATOR_VERSION,
+    JUDGE_MODEL,
+    JUDGE_MODELS,
+    OAI_BASE,
+    OAI_KEY,
+    SUMMARIZE_MODELS,
+    chat,
+    log,
 )
 
 
@@ -144,9 +152,9 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
             return JudgeResult(**{"pass": False, "reason": fallback_reason or "json_parse_fail"})
 
 
-def judge_and_ingest(backend: KnowledgeBackend, query: str,
-                     local_ctx: str, external_text: str,
-                     cv_warnings: list = ()) -> dict:
+def judge_and_ingest(
+    backend: KnowledgeBackend, query: str, local_ctx: str, external_text: str, cv_warnings: list = ()
+) -> dict:
     """B2: 合并审核 + 冲突检测为一次 LLM 调用。
 
     Args:
@@ -173,9 +181,7 @@ def judge_and_ingest(backend: KnowledgeBackend, query: str,
     warnings_block = ""
     if cv_warnings:
         joined = "\n".join(cv_warnings)
-        warnings_block = (
-            f"\n\n⚠️ cross_validate 风险标注（审核时必须考虑）:\n{joined}"
-        )
+        warnings_block = f"\n\n⚠️ cross_validate 风险标注（审核时必须考虑）:\n{joined}"
 
     sys_prompt = (
         "你是知识库治理助手。你需要同时完成两件事：\n\n"
@@ -201,20 +207,22 @@ def judge_and_ingest(backend: KnowledgeBackend, query: str,
         "}\n只输出 JSON。"
     )
 
-    user_content = (
-        f"用户问题: {query}\n\n"
-        f"本地知识:\n{local_snippet}\n\n"
-        f"外搜结果:\n{external_snippet}"
-    )
+    user_content = f"用户问题: {query}\n\n" f"本地知识:\n{local_snippet}\n\n" f"外搜结果:\n{external_snippet}"
 
     last_err = None
     out = None
     for jm in JUDGE_MODELS:
         try:
-            out = chat(OAI_BASE, OAI_KEY, jm, [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_content},
-            ], timeout=90)
+            out = chat(
+                OAI_BASE,
+                OAI_KEY,
+                jm,
+                [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                timeout=90,
+            )
             break
         except Exception as e:
             last_err = e
@@ -239,17 +247,30 @@ def judge_and_pack(query: str, external_text: str):
     out = None
     for jm in JUDGE_MODELS:
         try:
-            out = chat(OAI_BASE, OAI_KEY, jm, [
-                {"role": "system", "content": sys},
-                {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
-            ], timeout=90)
+            out = chat(
+                OAI_BASE,
+                OAI_KEY,
+                jm,
+                [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
+                ],
+                timeout=90,
+            )
             break
         except Exception as e:
             last_err = e
             continue
 
     if out is None:
-        return {"pass": False, "reason": f"judge_model_fail:{last_err}", "tags": [], "trust": 0, "summary": "", "markdown": ""}
+        return {
+            "pass": False,
+            "reason": f"judge_model_fail:{last_err}",
+            "tags": [],
+            "trust": 0,
+            "summary": "",
+            "markdown": "",
+        }
 
     json_str = _extract_json(out)
     if not json_str:
@@ -270,10 +291,16 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         "输出严格JSON：has_conflict(bool), summary(string), points(array of string)。"
         "如果只是细节差异但不影响结论，has_conflict=false。只输出JSON。"
     )
-    out = chat(OAI_BASE, OAI_KEY, JUDGE_MODEL, [
-        {"role": "system", "content": sys},
-        {"role": "user", "content": f"问题:{query}\n\n本地:\n{local_ctx[:2500]}\n\n外部:\n{external_ctx[:2500]}"},
-    ], timeout=60)
+    out = chat(
+        OAI_BASE,
+        OAI_KEY,
+        JUDGE_MODEL,
+        [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": f"问题:{query}\n\n本地:\n{local_ctx[:2500]}\n\n外部:\n{external_ctx[:2500]}"},
+        ],
+        timeout=60,
+    )
     json_str = _extract_json(out)
     if not json_str:
         return {"has_conflict": False, "summary": "", "points": []}
@@ -315,10 +342,16 @@ def _auto_summarize(content: str, title: str) -> dict:
     last_err: Exception | None = None
     for model in SUMMARIZE_MODELS:
         try:
-            raw = chat(OAI_BASE, OAI_KEY, model, [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_content},
-            ], timeout=30)
+            raw = chat(
+                OAI_BASE,
+                OAI_KEY,
+                model,
+                [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                timeout=30,
+            )
             # 从 raw 里提取 JSON
             m = re.search(r"\{.*\}", raw, re.DOTALL)
             if not m:
@@ -337,11 +370,15 @@ def _auto_summarize(content: str, title: str) -> dict:
     return {}
 
 
-def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
-                       markdown: str, freshness: str = "unknown",
-                       source_urls: list[str] | None = None,
-                       quality_feedback: dict | None = None,
-                       uri_hints: list[str] | None = None):
+def ingest_markdown_v2(
+    backend: KnowledgeBackend,
+    title: str,
+    markdown: str,
+    freshness: str = "unknown",
+    source_urls: list[str] | None = None,
+    quality_feedback: dict | None = None,
+    uri_hints: list[str] | None = None,
+):
     """入库 markdown 到知识后端。
 
     Builds a curator_meta header, writes local backup, then ingests
@@ -361,6 +398,7 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
     base_ttl = ttl_map.get(freshness, 60)
 
     from .usage_ttl import compute_usage_ttl_for_ingest
+
     ttl_days, usage_tier_label = compute_usage_ttl_for_ingest(base_ttl, uri_hints or [])
 
     # L0/L1 自动摘要（opt-in，失败不影响入库）

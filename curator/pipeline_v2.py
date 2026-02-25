@@ -6,23 +6,22 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
-import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from .metrics import Metrics
-from .memory_capture import capture_case
-
-from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH, MAX_L2_DEPTH
-from .router import route_scope
-from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
-from .session_manager import OVClient, SessionManager
-from .search import external_search, cross_validate
-from .review import judge_and_ingest, detect_conflict
+from .config import DATA_PATH, MAX_L2_DEPTH, OPENVIKING_CONFIG_FILE, log, validate_config
 from .decision_report import format_report, format_report_short
+from .memory_capture import capture_case
+from .metrics import Metrics
+from .retrieval_v2 import assess_coverage, load_context, ov_retrieve
+from .review import detect_conflict, judge_and_ingest
+from .router import route_scope
+from .search import cross_validate, external_search
+from .session_manager import OVClient, SessionManager
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
@@ -35,6 +34,7 @@ def _init_backend():
         An :class:`OpenVikingBackend` instance.
     """
     from .backend_ov import OpenVikingBackend
+
     return OpenVikingBackend()
 
 
@@ -54,8 +54,7 @@ def _init_session_manager() -> tuple:
     return ov, sm
 
 
-def run(query: str, client=None, auto_ingest: bool = True,
-        backend: KnowledgeBackend = None) -> dict:
+def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
     """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
 
     Args:
@@ -126,12 +125,16 @@ def run(query: str, client=None, auto_ingest: bool = True,
     log.info("STEP 2/4 OV 检索...")
     retrieval_result = ov_retrieve(sm, query, limit=10)
     all_items = retrieval_result["all_items"]
-    m.step("retrieve", True, {
-        "memories": len(retrieval_result["memories"]),
-        "resources": len(retrieval_result["resources"]),
-        "skills": len(retrieval_result["skills"]),
-        "total": len(all_items),
-    })
+    m.step(
+        "retrieve",
+        True,
+        {
+            "memories": len(retrieval_result["memories"]),
+            "resources": len(retrieval_result["resources"]),
+            "skills": len(retrieval_result["skills"]),
+            "total": len(all_items),
+        },
+    )
 
     result["ov_results"] = retrieval_result
 
@@ -141,8 +144,9 @@ def run(query: str, client=None, auto_ingest: bool = True,
     coverage, need_external, cov_reason = assess_coverage(retrieval_result, query=query)
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
-    log.info("STEP 3 完成: coverage=%.2f, reason=%s, stage=%s, used=%d",
-             coverage, cov_reason, load_stage, len(used_uris))
+    log.info(
+        "STEP 3 完成: coverage=%.2f, reason=%s, stage=%s, used=%d", coverage, cov_reason, load_stage, len(used_uris)
+    )
 
     trace["load_stage"] = load_stage
     trace["external_reason"] = cov_reason
@@ -153,6 +157,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
     if used_uris:
         try:
             from curator import feedback_store
+
             for uri in used_uris:
                 feedback_store.apply(uri, "adopt")
             log.debug("feedback adopt: %d uris", len(used_uris))
@@ -195,15 +200,22 @@ def run(query: str, client=None, auto_ingest: bool = True,
             # cv_warnings 注入 sys_prompt（在 judge_and_ingest 内部），
             # 完全不占 external_text[:3000] 预算，result["external_text"] 保持干净
             judge_result = judge_and_ingest(
-                backend, query, context_text, external_txt,
+                backend,
+                query,
+                context_text,
+                external_txt,
                 cv_warnings=cv_warnings,
             )
             trace["llm_calls"] += 1
-            m.step("judge_and_conflict", True, {
-                "pass": judge_result.get("pass"),
-                "trust": judge_result.get("trust"),
-                "has_conflict": judge_result.get("has_conflict"),
-            })
+            m.step(
+                "judge_and_conflict",
+                True,
+                {
+                    "pass": judge_result.get("pass"),
+                    "trust": judge_result.get("trust"),
+                    "has_conflict": judge_result.get("has_conflict"),
+                },
+            )
 
             conflict = {
                 "has_conflict": judge_result.get("has_conflict", False),
@@ -220,16 +232,28 @@ def run(query: str, client=None, auto_ingest: bool = True,
                     conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
                     if conflict_preferred in ("human_review", "local"):
                         # 有冲突且不倾向外部 → 不自动入库，但持久化到 pending_review.jsonl
-                        m.step("ingest", False, {
-                            "reason": f"conflict_blocked:{conflict_preferred}",
-                            "conflict_summary": conflict.get("summary", ""),
-                        })
-                        log.info("冲突阻止入库: preferred=%s, summary=%s",
-                                 conflict_preferred, conflict.get("summary", ""))
-                        _write_pending(query, judge_result, conflict, reason=f"conflict:{conflict_preferred}", source_urls=_extract_urls(external_txt))
+                        m.step(
+                            "ingest",
+                            False,
+                            {
+                                "reason": f"conflict_blocked:{conflict_preferred}",
+                                "conflict_summary": conflict.get("summary", ""),
+                            },
+                        )
+                        log.info(
+                            "冲突阻止入库: preferred=%s, summary=%s", conflict_preferred, conflict.get("summary", "")
+                        )
+                        _write_pending(
+                            query,
+                            judge_result,
+                            conflict,
+                            reason=f"conflict:{conflict_preferred}",
+                            source_urls=_extract_urls(external_txt),
+                        )
                     elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
+
                             ing = ingest_markdown_v2(
                                 backend,
                                 query[:60],
@@ -256,7 +280,9 @@ def run(query: str, client=None, auto_ingest: bool = True,
                         # Review mode: 内容通过 judge 但不自动入库，持久化到 pending_review.jsonl
                         m.step("ingest", False, {"reason": "review_mode_pending"})
                         log.info("审核模式: 内容待人工确认，未自动入库")
-                        _write_pending(query, judge_result, conflict, reason="review_mode", source_urls=_extract_urls(external_txt))
+                        _write_pending(
+                            query, judge_result, conflict, reason="review_mode", source_urls=_extract_urls(external_txt)
+                        )
     else:
         # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
@@ -278,8 +304,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
 
     case_path = None
     if os.getenv("CURATOR_CAPTURE_CASE", "1") in ("1", "true"):
-        case_path = capture_case(query, scope, report, context_text,
-                                 out_dir=os.getenv("CURATOR_CASE_DIR", "cases"))
+        case_path = capture_case(query, scope, report, context_text, out_dir=os.getenv("CURATOR_CASE_DIR", "cases"))
 
     result["meta"] = {
         "coverage": coverage,
@@ -303,9 +328,13 @@ def run(query: str, client=None, auto_ingest: bool = True,
     result["case_path"] = case_path
     result["decision_report"] = format_report(result)
 
-    log.info("完成: %.1fs, coverage=%.2f, external=%s, llm_calls=%d",
-             report["duration_sec"], coverage,
-             report["flags"].get("external_triggered"), trace["llm_calls"])
+    log.info(
+        "完成: %.1fs, coverage=%.2f, external=%s, llm_calls=%d",
+        report["duration_sec"],
+        coverage,
+        report["flags"].get("external_triggered"),
+        trace["llm_calls"],
+    )
 
     # 写 query 日志
     _log_query(query, coverage, need_external, cov_reason, used_uris, trace)
@@ -327,8 +356,7 @@ def _extract_urls(text: str) -> list[str]:
     return out
 
 
-def _log_query(query: str, coverage: float, need_external: bool,
-               reason: str, used_uris: list, trace: dict) -> None:
+def _log_query(query: str, coverage: float, need_external: bool, reason: str, used_uris: list, trace: dict) -> None:
     """写 query 日志到 data/query_log.jsonl（append 模式，失败不影响主流程）。"""
     try:
         log_dir = DATA_PATH
@@ -350,8 +378,9 @@ def _log_query(query: str, coverage: float, need_external: bool,
         log.warning("query log 写入失败（不影响主流程）: %s", e)
 
 
-def _write_pending(query: str, judge_result: dict, conflict: dict,
-                   reason: str, source_urls: list[str] | None = None) -> None:
+def _write_pending(
+    query: str, judge_result: dict, conflict: dict, reason: str, source_urls: list[str] | None = None
+) -> None:
     """待审核内容持久化到 DATA_PATH/pending_review.jsonl。
 
     当内容通过 judge 但因冲突或审核模式未自动入库时调用。
@@ -385,8 +414,7 @@ def _write_pending(query: str, judge_result: dict, conflict: dict,
         log.warning("pending review 写入失败: %s", e)
 
 
-def _verify_ingest(backend: KnowledgeBackend, query: str,
-                   new_uri: str, m: Metrics):
+def _verify_ingest(backend: KnowledgeBackend, query: str, new_uri: str, m: Metrics):
     """C1: 入库后轻量验证 — 检查新 URI 是否出现在检索结果中。
 
     Args:
@@ -442,4 +470,8 @@ def _resolve_conflict(judge_result: dict) -> dict:
     elif trust <= 3:
         return {"strategy": "auto", "preferred": "local", "reason": f"low trust ({trust}/10), prefer local knowledge"}
     else:
-        return {"strategy": "auto", "preferred": "human_review", "reason": f"medium trust ({trust}/10), needs human judgment"}
+        return {
+            "strategy": "auto",
+            "preferred": "human_review",
+            "reason": f"medium trust ({trust}/10), needs human judgment",
+        }

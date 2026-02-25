@@ -11,7 +11,7 @@ import uuid
 from difflib import SequenceMatcher
 from typing import Optional
 
-from .backend import KnowledgeBackend, SearchResult, SearchResponse
+from .backend import KnowledgeBackend, SearchResponse, SearchResult
 
 
 class InMemoryBackend(KnowledgeBackend):
@@ -66,21 +66,22 @@ class InMemoryBackend(KnowledgeBackend):
                 score = SequenceMatcher(None, ql, cl[:500]).ratio()
             if score < 0.1:
                 continue
-            results.append(SearchResult(
-                uri=uri,
-                abstract=content[:100],
-                overview=content[:500] if len(content) > 100 else None,
-                score=round(score, 3),
-                context_type="resource",
-                match_reason="substring" if ql in cl else "similarity",
-                metadata=rec.get("metadata", {}),
-            ))
+            results.append(
+                SearchResult(
+                    uri=uri,
+                    abstract=content[:100],
+                    overview=content[:500] if len(content) > 100 else None,
+                    score=round(score, 3),
+                    context_type="resource",
+                    match_reason="substring" if ql in cl else "similarity",
+                    metadata=rec.get("metadata", {}),
+                )
+            )
         results.sort(key=lambda r: r.score, reverse=True)
         results = results[:limit]
         return SearchResponse(results=results, total=len(results))
 
-    def search(self, query: str, limit: int = 10,
-               session_id: str = None) -> SearchResponse:
+    def search(self, query: str, limit: int = 10, session_id: str = None) -> SearchResponse:
         """Delegates to :meth:`find` (no LLM analysis in memory backend).
 
         Args:
@@ -129,8 +130,7 @@ class InMemoryBackend(KnowledgeBackend):
         rec = self._store.get(uri)
         return rec["content"] if rec else ""
 
-    def ingest(self, content: str, title: str = "",
-               metadata: dict = None) -> str:
+    def ingest(self, content: str, title: str = "", metadata: dict = None) -> str:
         """Store content in memory and return a ``mem://`` URI.
 
         Args:

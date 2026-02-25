@@ -3,9 +3,13 @@
 import json
 
 from .config import (
-    log, chat,
-    OAI_BASE, OAI_KEY, ANSWER_MODELS,
+    ANSWER_MODELS,
+    OAI_BASE,
+    OAI_KEY,
+    chat,
+    log,
 )
+
 
 def answer(query: str, local_ctx: str, external_ctx: str, priority_ctx: str = "",
            conflict_card: str = "", warnings: list = None):

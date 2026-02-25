@@ -3,7 +3,7 @@
 import json
 import re
 
-from .config import log, chat, OAI_BASE, OAI_KEY, JUDGE_MODELS
+from .config import JUDGE_MODELS, OAI_BASE, OAI_KEY, chat, log
 
 
 def external_search(query: str, scope: dict):
@@ -13,8 +13,10 @@ def external_search(query: str, scope: dict):
     concurrently and the fastest non-empty result is returned.
     Otherwise the sequential fallback chain is used.
     """
-    from .search_providers import search as provider_search, search_concurrent
     from .config import SEARCH_CONCURRENT
+    from .search_providers import search as provider_search
+    from .search_providers import search_concurrent
+
     if SEARCH_CONCURRENT:
         return search_concurrent(query, scope)
     return provider_search(query, scope)
@@ -26,6 +28,7 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
     返回: {"validated": str, "warnings": list}
     """
     import datetime
+
     today = datetime.date.today().isoformat()
 
     prompt = (
@@ -36,18 +39,24 @@ def cross_validate(query: str, external_text: str, scope: dict) -> dict:
         "- API 端点、注册/认证流程（经常变）\n"
         "- 超过 6 个月前的技术声明\n"
         "- 多个来源之间矛盾的说法\n\n"
-        "输出严格 JSON: {\"claims\": [{\"claim\": \"...\", \"risk\": \"high/medium/low\"}], \"summary\": \"...\"}\n"
-        "如果没有风险点，输出 {\"claims\": [], \"summary\": \"无明显风险\"}"
+        '输出严格 JSON: {"claims": [{"claim": "...", "risk": "high/medium/low"}], "summary": "..."}\n'
+        '如果没有风险点，输出 {"claims": [], "summary": "无明显风险"}'
     )
 
     try:
         out = None
         for model in JUDGE_MODELS:
             try:
-                out = chat(OAI_BASE, OAI_KEY, model, [
-                    {"role": "system", "content": "你是信息验证器。识别需要验证的易变技术声明。只输出JSON。"},
-                    {"role": "user", "content": prompt},
-                ], timeout=45)
+                out = chat(
+                    OAI_BASE,
+                    OAI_KEY,
+                    model,
+                    [
+                        {"role": "system", "content": "你是信息验证器。识别需要验证的易变技术声明。只输出JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    timeout=45,
+                )
                 break
             except Exception as e:
                 log.warning("cross_validate model %s failed: %s", model, e)

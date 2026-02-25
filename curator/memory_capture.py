@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-import json, os, re, time
+import json
+import os
+import re
+import time
 from pathlib import Path
 
 
 def slug(s: str):
-    return re.sub(r'[^a-zA-Z0-9_\-]+', '_', s).strip('_')[:80]
+    return re.sub(r"[^a-zA-Z0-9_\-]+", "_", s).strip("_")[:80]
 
 
-def capture_case(query: str, scope: dict, report: dict, answer: str, out_dir='cases'):
+def capture_case(query: str, scope: dict, report: dict, answer: str, out_dir="cases"):
     p = Path(out_dir)
     p.mkdir(parents=True, exist_ok=True)
-    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
     fn = p / f"{int(time.time())}_{slug(query)}.md"
     content = f"""# Case: {query}
 
@@ -31,5 +34,5 @@ def capture_case(query: str, scope: dict, report: dict, answer: str, out_dir='ca
 ## Final Answer (excerpt)
 {answer[:1200]}
 """
-    fn.write_text(content, encoding='utf-8')
+    fn.write_text(content, encoding="utf-8")
     return str(fn)

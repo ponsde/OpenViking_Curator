@@ -8,7 +8,7 @@ import os
 import tempfile
 import time
 
-from .backend import KnowledgeBackend, SearchResult, SearchResponse
+from .backend import KnowledgeBackend, SearchResponse, SearchResult
 from .config import log
 
 
@@ -21,6 +21,7 @@ class OpenVikingBackend(KnowledgeBackend):
 
     def __init__(self, base_url: str = None):
         from .session_manager import OVClient
+
         self._ov = OVClient(base_url=base_url)
 
     @property
@@ -59,7 +60,9 @@ class OpenVikingBackend(KnowledgeBackend):
         """Write content to a temp .md file, then add_resource to OV."""
         safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (title or "untitled"))[:60]
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", prefix=f"{safe_title}_",
+            mode="w",
+            suffix=".md",
+            prefix=f"{safe_title}_",
             dir=os.environ.get("CURATOR_CURATED_DIR", "."),
             delete=False,
         ) as f:
@@ -106,6 +109,7 @@ class OpenVikingBackend(KnowledgeBackend):
 
     def create_session(self) -> str:
         from .session_manager import _ov_run
+
         if self._ov.mode == "http":
             result = self._ov._impl.create_session()
         else:
@@ -118,6 +122,7 @@ class OpenVikingBackend(KnowledgeBackend):
         else:
             try:
                 from .session_manager import _ov_run
+
                 _ov_run(self._ov._client.session_add_message(session_id, role, text))
             except Exception:
                 pass  # Embedded mode: caller manages session objects directly
@@ -138,16 +143,18 @@ class OpenVikingBackend(KnowledgeBackend):
         results = []
         for bucket in ("resources", "memories", "skills"):
             for item in raw.get(bucket, []):
-                results.append(SearchResult(
-                    uri=item.get("uri", ""),
-                    abstract=item.get("abstract", ""),
-                    overview=item.get("overview"),
-                    score=item.get("score", 0),
-                    context_type=item.get("context_type", bucket.rstrip("s")),
-                    match_reason=item.get("match_reason", ""),
-                    category=item.get("category", ""),
-                    relations=item.get("relations", []),
-                ))
+                results.append(
+                    SearchResult(
+                        uri=item.get("uri", ""),
+                        abstract=item.get("abstract", ""),
+                        overview=item.get("overview"),
+                        score=item.get("score", 0),
+                        context_type=item.get("context_type", bucket.rstrip("s")),
+                        match_reason=item.get("match_reason", ""),
+                        category=item.get("category", ""),
+                        relations=item.get("relations", []),
+                    )
+                )
         results.sort(key=lambda r: r.score, reverse=True)
         return SearchResponse(
             results=results,

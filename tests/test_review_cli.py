@@ -1,4 +1,5 @@
 """Tests for curator.review_cli."""
+
 from __future__ import annotations
 
 import json
@@ -15,9 +16,8 @@ os.environ.setdefault("OAI_KEY", "test-key")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from curator.backend_memory import InMemoryBackend
 from curator import review_cli
-
+from curator.backend_memory import InMemoryBackend
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -67,8 +67,8 @@ def _make_args(**kwargs):
 
 # ── _load_entries / _save_entries ──────────────────────────────────────────────
 
-class TestLoadSave(unittest.TestCase):
 
+class TestLoadSave(unittest.TestCase):
     def test_load_missing_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "missing.jsonl")
@@ -98,8 +98,8 @@ class TestLoadSave(unittest.TestCase):
 
 # ── _extract_title ─────────────────────────────────────────────────────────────
 
-class TestExtractTitle(unittest.TestCase):
 
+class TestExtractTitle(unittest.TestCase):
     def test_h1_extraction(self):
         md = "# My Title\n\nsome content"
         self.assertEqual(review_cli._extract_title(md), "My Title")
@@ -118,8 +118,8 @@ class TestExtractTitle(unittest.TestCase):
 
 # ── cmd_list ──────────────────────────────────────────────────────────────────
 
-class TestCmdList(unittest.TestCase):
 
+class TestCmdList(unittest.TestCase):
     def test_list_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")
@@ -167,8 +167,8 @@ class TestCmdList(unittest.TestCase):
 
 # ── cmd_show ──────────────────────────────────────────────────────────────────
 
-class TestCmdShow(unittest.TestCase):
 
+class TestCmdShow(unittest.TestCase):
     def test_show_valid_index(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")
@@ -196,8 +196,8 @@ class TestCmdShow(unittest.TestCase):
 
 # ── cmd_approve ───────────────────────────────────────────────────────────────
 
-class TestCmdApprove(unittest.TestCase):
 
+class TestCmdApprove(unittest.TestCase):
     def _approve(self, path: str, index: int):
         args = _make_args(file=path, index=index, in_memory=True)
         # We patch _make_backend to return InMemoryBackend directly
@@ -279,6 +279,7 @@ class TestCmdApprove(unittest.TestCase):
             backend = InMemoryBackend()
 
             original_ingest = backend.ingest
+
             def capturing_ingest(content, title="", metadata=None):
                 captured["title"] = title
                 return original_ingest(content, title=title, metadata=metadata)
@@ -294,8 +295,7 @@ class TestCmdApprove(unittest.TestCase):
         entry_with_urls = dict(SAMPLE_ENTRY, source_urls=["https://example.com/doc1", "https://example.com/doc2"])
         captured = {}
 
-        def fake_ingest(backend, title, markdown, freshness="unknown",
-                        source_urls=None, quality_feedback=None):
+        def fake_ingest(backend, title, markdown, freshness="unknown", source_urls=None, quality_feedback=None):
             captured["source_urls"] = source_urls
             captured["quality_feedback"] = quality_feedback
             return {"root_uri": "viking://test/1", "path": "/tmp/test.md", "status": "ok"}
@@ -319,8 +319,8 @@ class TestCmdApprove(unittest.TestCase):
 
 # ── cmd_reject ────────────────────────────────────────────────────────────────
 
-class TestCmdReject(unittest.TestCase):
 
+class TestCmdReject(unittest.TestCase):
     def test_reject_basic(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")
@@ -377,8 +377,8 @@ class TestCmdReject(unittest.TestCase):
 
 # ── cmd_gc ────────────────────────────────────────────────────────────────────
 
-class TestCmdGC(unittest.TestCase):
 
+class TestCmdGC(unittest.TestCase):
     def test_gc_removes_processed(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")
@@ -416,10 +416,13 @@ class TestCmdGC(unittest.TestCase):
     def test_gc_all_processed_results_in_empty_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")
-            _write_jsonl(path, [
-                dict(SAMPLE_ENTRY, status="approved"),
-                dict(SAMPLE_ENTRY_2, status="rejected"),
-            ])
+            _write_jsonl(
+                path,
+                [
+                    dict(SAMPLE_ENTRY, status="approved"),
+                    dict(SAMPLE_ENTRY_2, status="rejected"),
+                ],
+            )
             args = _make_args(file=path)
             review_cli.cmd_gc(args)
             remaining = _read_jsonl(path)
@@ -428,8 +431,8 @@ class TestCmdGC(unittest.TestCase):
 
 # ── main() / argparse integration ─────────────────────────────────────────────
 
-class TestMainArgparse(unittest.TestCase):
 
+class TestMainArgparse(unittest.TestCase):
     def test_main_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "pr.jsonl")

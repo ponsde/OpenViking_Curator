@@ -1,10 +1,11 @@
 """Tests for retrieval_v2.rerank_with_feedback()."""
-import pytest
+
 from unittest.mock import patch
 
+import pytest
+
 # feedback_store has been moved into curator package
-feedback_store = pytest.importorskip("curator.feedback_store",
-    reason="curator.feedback_store not found")
+feedback_store = pytest.importorskip("curator.feedback_store", reason="curator.feedback_store not found")
 
 
 def _make_items(*uris_scores):
@@ -136,26 +137,29 @@ class TestRerankWithFeedback:
 
     def test_delta_bounded_by_feedback_weight(self):
         """delta 绝对值不超过 FEEDBACK_WEIGHT（默认 0.10）。"""
-        from curator.retrieval_v2 import rerank_with_feedback
         from curator.config import FEEDBACK_WEIGHT
+        from curator.retrieval_v2 import rerank_with_feedback
 
         # 极端正向：大量 adopt
         fb = {"a": {"up": 0, "down": 0, "adopt": 9999}}
         with _patch_fb(fb):
             result = rerank_with_feedback(_make_items(("a", 0.5)))
-        assert result[0]["_feedback_delta"] <= FEEDBACK_WEIGHT + 1e-6, \
-            f"正向 delta 超出 FEEDBACK_WEIGHT: {result[0]['_feedback_delta']}"
+        assert (
+            result[0]["_feedback_delta"] <= FEEDBACK_WEIGHT + 1e-6
+        ), f"正向 delta 超出 FEEDBACK_WEIGHT: {result[0]['_feedback_delta']}"
 
         # 极端负向：大量 down
         fb2 = {"b": {"up": 0, "down": 9999, "adopt": 0}}
         with _patch_fb(fb2):
             result = rerank_with_feedback(_make_items(("b", 0.5)))
-        assert result[0]["_feedback_delta"] >= -FEEDBACK_WEIGHT - 1e-6, \
-            f"负向 delta 超出 FEEDBACK_WEIGHT: {result[0]['_feedback_delta']}"
+        assert (
+            result[0]["_feedback_delta"] >= -FEEDBACK_WEIGHT - 1e-6
+        ), f"负向 delta 超出 FEEDBACK_WEIGHT: {result[0]['_feedback_delta']}"
 
     def test_score_none_with_feedback(self):
         """score=None 且有 feedback 记录时，不应崩溃，delta 应被正确应用。"""
         from curator.retrieval_v2 import rerank_with_feedback
+
         fb = {"null-score": {"up": 1, "down": 0, "adopt": 0}}
         with _patch_fb(fb):
             items = [{"uri": "null-score", "score": None}]

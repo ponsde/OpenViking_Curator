@@ -1,18 +1,18 @@
 """Pipeline: main 8-step run() function."""
 
-import os
 import json
+import os
 
 import openviking as ov
-from metrics import Metrics
 from memory_capture import capture_case
+from metrics import Metrics
 
-from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH
+from .answer import _build_source_footer, answer
+from .config import DATA_PATH, OPENVIKING_CONFIG_FILE, log, validate_config
+from .retrieval import build_priority_context, local_search
+from .review import detect_conflict, ingest_markdown, judge_and_pack
 from .router import route_scope
-from .retrieval import local_search, build_priority_context
-from .search import external_boost_needed, external_search, cross_validate
-from .review import judge_and_pack, ingest_markdown, detect_conflict
-from .answer import answer, _build_source_footer
+from .search import cross_validate, external_boost_needed, external_search
 
 
 def run(query: str, client=None) -> dict:
@@ -174,8 +174,10 @@ def run(query: str, client=None) -> dict:
         # ── 回写 session：把 assistant 回答也告诉 OV，完整学习对话模式 ──
         try:
             import asyncio as _asyncio
+
             import openviking as _ov
-            from openviking.message.part import TextPart as _TextPart, ContextPart as _ContextPart
+            from openviking.message.part import ContextPart as _ContextPart
+            from openviking.message.part import TextPart as _TextPart
             _sid_file = os.path.join(DATA_PATH, '.curator_session_id')
             if os.path.exists(_sid_file):
                 _sid = open(_sid_file).read().strip()

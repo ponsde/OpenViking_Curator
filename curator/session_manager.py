@@ -12,8 +12,8 @@ import json
 import os
 import threading
 import time
-import urllib.request
 import urllib.parse
+import urllib.request
 
 from .config import log
 
@@ -26,6 +26,7 @@ _DEFAULT_DATA_PATH = os.environ.get(
 # ══════════════════════════════════════════════════
 #  HTTP 模式（Docker / 远程）
 # ══════════════════════════════════════════════════
+
 
 class _HTTPClient:
     """通过 OV HTTP serve 的 REST API 交互。"""
@@ -106,9 +107,7 @@ class _HTTPClient:
         return r if isinstance(r, str) else r.get("content", str(r))
 
     def add_resource(self, path: str, reason: str = "", wait: bool = False) -> dict:
-        return self._request("POST", "/api/v1/resources", {
-            "path": path, "reason": reason, "wait": wait
-        }, timeout=120)
+        return self._request("POST", "/api/v1/resources", {"path": path, "reason": reason, "wait": wait}, timeout=120)
 
     def ls(self, uri: str, **kwargs) -> list:
         r = self._request("GET", "/api/v1/fs/ls", params={"uri": uri, **kwargs})
@@ -121,17 +120,13 @@ class _HTTPClient:
         return self._request("POST", "/api/v1/system/wait", {"timeout": timeout}, timeout=timeout + 10)
 
     def link(self, from_uri: str, to_uris: list, reason: str = ""):
-        self._request("POST", "/api/v1/relations/link", {
-            "from_uri": from_uri, "to_uris": to_uris, "reason": reason
-        })
+        self._request("POST", "/api/v1/relations/link", {"from_uri": from_uri, "to_uris": to_uris, "reason": reason})
 
     def create_session(self) -> dict:
         return self._request("POST", "/api/v1/sessions", {})
 
     def session_add_message(self, session_id: str, role: str, text: str):
-        self._request("POST", f"/api/v1/sessions/{session_id}/messages", {
-            "role": role, "content": text
-        })
+        self._request("POST", f"/api/v1/sessions/{session_id}/messages", {"role": role, "content": text})
 
     def session_used(self, session_id: str, uris: list):
         # OV HTTP serve 没有 session.used() 端点
@@ -181,6 +176,7 @@ def _get_async_client():
         if _async_client is not None:
             return _async_client
         from openviking import AsyncOpenViking
+
         data_path = os.environ.get("OV_DATA_PATH", _DEFAULT_DATA_PATH)
         _async_client = AsyncOpenViking(path=data_path)
         _ov_run(_async_client.initialize())
@@ -225,6 +221,7 @@ class _EmbeddedClient:
                 "category": getattr(ctx, "category", ""),
                 "relations": getattr(ctx, "relations", []),
             }
+
         memories = [_ctx(m) for m in getattr(result, "memories", [])]
         resources = [_ctx(r) for r in getattr(result, "resources", [])]
         skills = [_ctx(s) for s in getattr(result, "skills", [])]
@@ -282,6 +279,7 @@ class _EmbeddedClient:
 #  统一入口
 # ══════════════════════════════════════════════════
 
+
 class OVClient:
     """OV 统一客户端 — 自动选择 HTTP 或嵌入模式。"""
 
@@ -299,21 +297,50 @@ class OVClient:
     def mode(self):
         return self._mode
 
-    def health(self): return self._impl.health()
-    def find(self, query, limit=10, target_uri=""): return self._impl.find(query, limit=limit, target_uri=target_uri)
-    def search(self, query, session_id=None, limit=10): return self._impl.search(query, session_id=session_id, limit=limit)
-    def abstract(self, uri): return self._impl.abstract(uri)
-    def overview(self, uri): return self._impl.overview(uri)
-    def read(self, uri): return self._impl.read(uri)
-    def add_resource(self, path, reason="", wait=False): return self._impl.add_resource(path, reason=reason, wait=wait)
-    def ls(self, uri, **kwargs): return self._impl.ls(uri, **kwargs)
-    def grep(self, uri, pattern): return self._impl.grep(uri, pattern)
-    def wait_processed(self, timeout=30): return self._impl.wait_processed(timeout=timeout)
-    def link(self, from_uri, to_uris, reason=""): return self._impl.link(from_uri, to_uris, reason)
-    def create_session(self): return self._impl.create_session()
-    def session_add_message(self, session_id, role, text): return self._impl.session_add_message(session_id, role, text)
-    def session_used(self, session_id, uris): return self._impl.session_used(session_id, uris)
-    def session_commit(self, session_id): return self._impl.session_commit(session_id)
+    def health(self):
+        return self._impl.health()
+
+    def find(self, query, limit=10, target_uri=""):
+        return self._impl.find(query, limit=limit, target_uri=target_uri)
+
+    def search(self, query, session_id=None, limit=10):
+        return self._impl.search(query, session_id=session_id, limit=limit)
+
+    def abstract(self, uri):
+        return self._impl.abstract(uri)
+
+    def overview(self, uri):
+        return self._impl.overview(uri)
+
+    def read(self, uri):
+        return self._impl.read(uri)
+
+    def add_resource(self, path, reason="", wait=False):
+        return self._impl.add_resource(path, reason=reason, wait=wait)
+
+    def ls(self, uri, **kwargs):
+        return self._impl.ls(uri, **kwargs)
+
+    def grep(self, uri, pattern):
+        return self._impl.grep(uri, pattern)
+
+    def wait_processed(self, timeout=30):
+        return self._impl.wait_processed(timeout=timeout)
+
+    def link(self, from_uri, to_uris, reason=""):
+        return self._impl.link(from_uri, to_uris, reason)
+
+    def create_session(self):
+        return self._impl.create_session()
+
+    def session_add_message(self, session_id, role, text):
+        return self._impl.session_add_message(session_id, role, text)
+
+    def session_used(self, session_id, uris):
+        return self._impl.session_used(session_id, uris)
+
+    def session_commit(self, session_id):
+        return self._impl.session_commit(session_id)
 
     @property
     def _client(self):
@@ -382,6 +409,7 @@ class SessionManager:
                 self.ov._impl.session_add_message(self._sid, "user", query)
             else:
                 from openviking.message import TextPart
+
                 s = self._get_session()
                 s.add_message("user", [TextPart(text=query)])
             self._msg_count += 1
@@ -398,6 +426,7 @@ class SessionManager:
                 self.ov._impl.session_add_message(self._sid, "assistant", content)
             else:
                 from openviking.message import TextPart
+
                 s = self._get_session()
                 s.add_message("assistant", [TextPart(text=content)])
 
@@ -438,19 +467,19 @@ class SessionManager:
             # 这是 OV upstream active_count bug 的临时 workaround。
             # OV 上游重构后可能 break，所以用 hasattr 守卫每一层。
             client = self.ov._client
-            inner = getattr(client, '_client', None)
+            inner = getattr(client, "_client", None)
             if inner is None:
                 log.warning("_fix_active_counts: OV 内部结构变更，_client 不存在，跳过 active_count 修正")
                 return 0
-            service = getattr(inner, '_service', None)
+            service = getattr(inner, "_service", None)
             if service is None:
                 log.warning("_fix_active_counts: OV 内部结构变更，_service 不存在，跳过 active_count 修正")
                 return 0
-            db = getattr(service, '_vikingdb_manager', None)
+            db = getattr(service, "_vikingdb_manager", None)
             if db is None:
                 log.warning("_fix_active_counts: OV 内部结构变更，_vikingdb_manager 不存在，跳过 active_count 修正")
                 return 0
-            if not hasattr(db, '_get_collection'):
+            if not hasattr(db, "_get_collection"):
                 log.warning("_fix_active_counts: OV 内部结构变更，_get_collection 不存在，跳过 active_count 修正")
                 return 0
             coll = db._get_collection("context")
@@ -510,11 +539,13 @@ class SessionManager:
                 # so we fix it ourselves after commit.
                 fixed = self._fix_active_counts(committed_uris)
 
-                log.info("session commit: memories=%s, active_count=%s (fixed=%d), archived=%s",
-                         result.get("memories_extracted", 0),
-                         result.get("active_count_updated", 0),
-                         fixed,
-                         result.get("archived"))
+                log.info(
+                    "session commit: memories=%s, active_count=%s (fixed=%d), archived=%s",
+                    result.get("memories_extracted", 0),
+                    result.get("active_count_updated", 0),
+                    fixed,
+                    result.get("archived"),
+                )
                 self._msg_count = 0
                 self._last_commit = time.time()
                 self._session = None

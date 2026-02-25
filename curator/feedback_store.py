@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-import json, os, argparse
+import argparse
+import json
+import os
 from pathlib import Path
 
 try:
     import fcntl
+
     _HAS_FCNTL = True
 except ImportError:
     _HAS_FCNTL = False  # Windows fallback
 
-STORE = Path(os.getenv('CURATOR_FEEDBACK_FILE', './feedback.json'))
+STORE = Path(os.getenv("CURATOR_FEEDBACK_FILE", "./feedback.json"))
 
 
 def _resolve_store() -> Path:
@@ -18,7 +21,7 @@ def _resolve_store() -> Path:
     monkeypatch.setenv and runtime overrides take effect).  Falls back to the
     module-level STORE, which may itself be monkey-patched in unit tests.
     """
-    env_path = os.getenv('CURATOR_FEEDBACK_FILE')
+    env_path = os.getenv("CURATOR_FEEDBACK_FILE")
     return Path(env_path) if env_path else STORE
 
 
@@ -27,7 +30,7 @@ def _locked_rw(fn):
     store = _resolve_store()
     store.parent.mkdir(parents=True, exist_ok=True)
     store.touch(exist_ok=True)
-    with open(store, 'r+', encoding='utf-8') as f:
+    with open(store, "r+", encoding="utf-8") as f:
         if _HAS_FCNTL:
             fcntl.flock(f, fcntl.LOCK_EX)
         try:
@@ -46,7 +49,7 @@ def _locked_rw(fn):
 def load():
     store = _resolve_store()
     if store.exists():
-        with open(store, 'r', encoding='utf-8') as f:
+        with open(store, "r", encoding="utf-8") as f:
             if _HAS_FCNTL:
                 fcntl.flock(f, fcntl.LOCK_SH)
             try:
@@ -61,7 +64,7 @@ def load():
 def save(data):
     store = _resolve_store()
     store.parent.mkdir(parents=True, exist_ok=True)
-    with open(store, 'w', encoding='utf-8') as f:
+    with open(store, "w", encoding="utf-8") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
@@ -71,19 +74,20 @@ def save(data):
 
 def apply(uri: str, action: str):
     def _update(data):
-        item = data.get(uri, {'up': 0, 'down': 0, 'adopt': 0})
+        item = data.get(uri, {"up": 0, "down": 0, "adopt": 0})
         if action not in item:
-            raise ValueError('action must be one of: up, down, adopt')
+            raise ValueError("action must be one of: up, down, adopt")
         item[action] += 1
         data[uri] = item
         return item
+
     return _locked_rw(_update)
 
 
-if __name__ == '__main__':
-    p = argparse.ArgumentParser(description='Curator feedback store')
-    p.add_argument('uri', help='resource uri')
-    p.add_argument('action', choices=['up','down','adopt'])
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Curator feedback store")
+    p.add_argument("uri", help="resource uri")
+    p.add_argument("action", choices=["up", "down", "adopt"])
     args = p.parse_args()
     s = apply(args.uri, args.action)
-    print('ok', args.uri, s)
+    print("ok", args.uri, s)

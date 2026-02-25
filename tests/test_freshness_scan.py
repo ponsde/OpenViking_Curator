@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for scripts/freshness_scan.py core logic."""
+
 import datetime
 import json
 import os
@@ -7,30 +8,29 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set required env vars before importing
-os.environ.setdefault('OAI_BASE', 'http://localhost:8000/v1')
-os.environ.setdefault('OAI_KEY', 'test-key')
-os.environ.setdefault('GROK_SEARCH_URL', 'http://localhost:8788')
+os.environ.setdefault("OAI_BASE", "http://localhost:8000/v1")
+os.environ.setdefault("OAI_KEY", "test-key")
+os.environ.setdefault("GROK_SEARCH_URL", "http://localhost:8788")
 
 from scripts.freshness_scan import (
+    AGING_THRESHOLD,
+    FRESH_THRESHOLD,
+    categorize,
+    extract_topic,
+    extract_urls_from_content,
+    generate_json_report,
     parse_curator_meta,
     score_resource,
-    categorize,
-    extract_urls_from_content,
-    extract_topic,
-    generate_json_report,
-    FRESH_THRESHOLD,
-    AGING_THRESHOLD,
 )
 
 
 class TestParseCuratorMeta(unittest.TestCase):
-
     def test_standard_meta(self):
         content = "<!-- curator_meta: ingested=2026-01-15 freshness=current ttl_days=180 -->\n<!-- review_after: 2026-07-14 -->\n\n# Title"
         meta = parse_curator_meta(content)
@@ -62,7 +62,6 @@ class TestParseCuratorMeta(unittest.TestCase):
 
 
 class TestScoreResource(unittest.TestCase):
-
     def test_recent_resource_is_fresh(self):
         ts = int(time.time()) - 86400 * 5  # 5 days old
         res = {"uri": f"viking://resources/{ts}_test", "abstract": "test"}
@@ -109,16 +108,15 @@ class TestScoreResource(unittest.TestCase):
     def test_meta_used_for_scoring(self):
         """When meta has date info, it should influence scoring."""
         res = {"uri": "viking://resources/no_ts_doc", "abstract": ""}
-        # Set created_at to very recent
-        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        content = f"<!-- curator_meta: ingested={datetime.date.today().isoformat()} freshness=current ttl_days=180 -->\n"
+        content = (
+            f"<!-- curator_meta: ingested={datetime.date.today().isoformat()} freshness=current ttl_days=180 -->\n"
+        )
         scored = score_resource(res, content)
         # The ingested date in meta should be picked up
         self.assertIn("ingested", scored["meta"])
 
 
 class TestCategorize(unittest.TestCase):
-
     def test_empty(self):
         cats = categorize([])
         self.assertEqual(cats, {"fresh": [], "aging": [], "stale": []})
@@ -137,7 +135,6 @@ class TestCategorize(unittest.TestCase):
 
 
 class TestExtractUrls(unittest.TestCase):
-
     def test_basic_urls(self):
         content = "Visit https://example.com and http://foo.bar/path?q=1 for more."
         urls = extract_urls_from_content(content)
@@ -168,7 +165,6 @@ class TestExtractUrls(unittest.TestCase):
 
 
 class TestExtractTopic(unittest.TestCase):
-
     def test_from_abstract(self):
         topic = extract_topic("viking://resources/123_test", "Docker deployment guide for production")
         self.assertEqual(topic, "Docker deployment guide for production")
@@ -188,7 +184,6 @@ class TestExtractTopic(unittest.TestCase):
 
 
 class TestGenerateJsonReport(unittest.TestCase):
-
     def test_basic_report_structure(self):
         cats = {
             "fresh": [{"uri": "a", "score": 0.9, "category": "fresh"}],
@@ -232,13 +227,13 @@ class TestGenerateJsonReport(unittest.TestCase):
 
 
 class TestCheckUrl(unittest.TestCase):
-
     def test_check_url_function_signature(self):
         """check_url should accept url and optional timeout."""
         from scripts.freshness_scan import check_url
+
         # Don't actually hit the network, just verify the function exists
         # and returns the right structure
-        with patch('scripts.freshness_scan.urllib.request.urlopen') as mock_open:
+        with patch("scripts.freshness_scan.urllib.request.urlopen") as mock_open:
             mock_resp = MagicMock()
             mock_resp.status = 200
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
@@ -251,7 +246,8 @@ class TestCheckUrl(unittest.TestCase):
 
     def test_check_url_handles_error(self):
         from scripts.freshness_scan import check_url
-        with patch('scripts.freshness_scan.urllib.request.urlopen', side_effect=Exception("timeout")):
+
+        with patch("scripts.freshness_scan.urllib.request.urlopen", side_effect=Exception("timeout")):
             result = check_url("https://nonexistent.example.com")
             self.assertFalse(result["ok"])
             self.assertEqual(result["status"], 0)
@@ -263,13 +259,13 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
 
     def test_meta_fields_present(self):
         """Ensure ingested, freshness, ttl_days, review_after all written."""
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         backend = InMemoryBackend()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch('curator.review.CURATED_DIR', tmpdir):
+            with patch("curator.review.CURATED_DIR", tmpdir):
                 ingest_markdown_v2(backend, "test_doc", "# Content", freshness="current")
 
             # Find the written file
@@ -285,14 +281,14 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
 
     def test_ttl_varies_by_freshness(self):
         """TTL should differ based on freshness level."""
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         for freshness, expected_ttl in [("current", 180), ("recent", 90), ("unknown", 60), ("outdated", 0)]:
             backend = InMemoryBackend()
 
             with tempfile.TemporaryDirectory() as tmpdir:
-                with patch('curator.review.CURATED_DIR', tmpdir):
+                with patch("curator.review.CURATED_DIR", tmpdir):
                     ingest_markdown_v2(backend, f"test_{freshness}", "# Content", freshness=freshness)
                 files = list(os.listdir(tmpdir))
                 content = open(os.path.join(tmpdir, files[0])).read()
@@ -300,14 +296,14 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
 
     def test_metadata_contains_version_source_urls_and_quality_feedback(self):
         """ingest metadata should include version/source_urls/quality_feedback."""
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         backend = InMemoryBackend()
 
         md = "# Doc\nSee https://example.com/a and https://example.com/b"
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch('curator.review.CURATED_DIR', tmpdir):
+            with patch("curator.review.CURATED_DIR", tmpdir):
                 out = ingest_markdown_v2(
                     backend,
                     "meta_doc",
@@ -328,13 +324,13 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
         self.assertEqual(metadata.get("quality_feedback", {}).get("judge_trust"), 8)
 
     def test_source_urls_none_falls_back_to_markdown_extraction(self):
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         backend = InMemoryBackend()
         md = "ref: https://example.com/x and https://example.com/y"
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch('curator.review.CURATED_DIR', tmpdir):
+            with patch("curator.review.CURATED_DIR", tmpdir):
                 out = ingest_markdown_v2(backend, "meta_doc", md, source_urls=None)
 
         rec = backend._store.get(out["root_uri"])
@@ -342,13 +338,13 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
         self.assertEqual(metadata.get("source_urls"), ["https://example.com/x", "https://example.com/y"])
 
     def test_source_urls_empty_list_respected(self):
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         backend = InMemoryBackend()
         md = "ref: https://example.com/x"
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch('curator.review.CURATED_DIR', tmpdir):
+            with patch("curator.review.CURATED_DIR", tmpdir):
                 out = ingest_markdown_v2(backend, "meta_doc", md, source_urls=[])
 
         rec = backend._store.get(out["root_uri"])
@@ -356,12 +352,12 @@ class TestIngestMarkdownV2Meta(unittest.TestCase):
         self.assertEqual(metadata.get("source_urls"), [])
 
     def test_quality_feedback_non_dict_becomes_empty_dict(self):
-        from curator.review import ingest_markdown_v2
         from curator.backend_memory import InMemoryBackend
+        from curator.review import ingest_markdown_v2
 
         backend = InMemoryBackend()
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch('curator.review.CURATED_DIR', tmpdir):
+            with patch("curator.review.CURATED_DIR", tmpdir):
                 out = ingest_markdown_v2(backend, "meta_doc", "# x", quality_feedback="bad-type")
 
         rec = backend._store.get(out["root_uri"])

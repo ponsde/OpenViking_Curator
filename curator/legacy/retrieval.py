@@ -7,13 +7,20 @@ import re
 from pathlib import Path
 
 from .config import (
-    log, _GENERIC_TERMS, FAST_ROUTE,
-    THRESHOLD_CURATED_OVERLAP, THRESHOLD_CURATED_MIN_HITS,
+    _GENERIC_TERMS,
+    FAST_ROUTE,
+    THRESHOLD_CURATED_MIN_HITS,
+    THRESHOLD_CURATED_OVERLAP,
+    log,
 )
 from .feedback import (
-    uri_feedback_score, uri_trust_score, uri_freshness_score,
-    build_feedback_priority_uris, load_feedback,
+    build_feedback_priority_uris,
+    load_feedback,
+    uri_feedback_score,
+    uri_freshness_score,
+    uri_trust_score,
 )
+
 
 def deterministic_relevance(query: str, scope: dict, txt: str, uris: list, domain_hit: bool, kw_cov: float):
     txt_l = (txt or "").lower()
@@ -73,18 +80,18 @@ _CURATOR_SESSION_ID_FILE = os.path.join(
 def _get_or_create_session_id(aclient) -> str:
     """获取或创建 Curator 的持久 session，让 OV 越用越懂用户。"""
     import asyncio
-    
+
     # 尝试读取已有的 session id
     if os.path.exists(_CURATOR_SESSION_ID_FILE):
         sid = open(_CURATOR_SESSION_ID_FILE).read().strip()
         if sid:
             return sid
-    
+
     # 创建新 session
     async def _create():
         info = await aclient.create_session()
         return info.get('session_id') or info.get('id', '')
-    
+
     sid = asyncio.get_event_loop().run_until_complete(_create())
     if sid:
         os.makedirs(os.path.dirname(_CURATOR_SESSION_ID_FILE), exist_ok=True)
@@ -117,7 +124,7 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
                 sid = None
                 if os.path.exists(_CURATOR_SESSION_ID_FILE):
                     sid = open(_CURATOR_SESSION_ID_FILE).read().strip()
-                
+
                 if not sid:
                     sess_info = await aclient.create_session()
                     sid = sess_info.get('session_id') or sess_info.get('id', '')
@@ -125,18 +132,18 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
                         os.makedirs(os.path.dirname(_CURATOR_SESSION_ID_FILE) or '.', exist_ok=True)
                         open(_CURATOR_SESSION_ID_FILE, 'w').write(sid)
                         log.info("创建 Curator 持久 session: %s", sid)
-                
+
                 sess = aclient.session(sid)
                 sess.add_message('user', [TextPart(query)])
-                
+
                 result = await aclient.search(query, session=sess, limit=limit)
-                
+
                 # 取全部三路结果（memories + resources + skills），不只 resources
                 all_items = []
                 for attr in ['resources', 'memories', 'skills']:
                     items_list = getattr(result, attr, []) or []
                     all_items.extend(items_list)
-                
+
                 # 记录实际使用的 URI，让 OV 学习优化排序
                 used_uris = [getattr(x, 'uri', '') for x in all_items[:5] if getattr(x, 'uri', '')]
                 if used_uris:
@@ -144,13 +151,13 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
                         sess.used(contexts=used_uris)
                     except Exception:
                         pass
-                
+
                 # commit 让 OV 归档记忆，越用越精准
                 try:
                     sess.commit()
                 except Exception:
                     pass
-                
+
                 return all_items
             finally:
                 # 不要 close singleton！只关闭会让其他调用者也挂掉
@@ -160,7 +167,7 @@ def _intent_search(client, query: str, limit: int = 5) -> list:
         items = asyncio.run(_session_search())
         log.info("OV session search: %d 个结果", len(items))
         return items
-        
+
     except Exception as e:
         log.debug("OV session search 失败，回退普通检索: %s", e)
         return []
@@ -437,24 +444,24 @@ def build_priority_context(client, uris, query: str = ""):
                     overview = ""
             except Exception:
                 pass
-            
+
             # 如果 overview 为空或太短，降级到 read
             if len(overview) < 50:
                 overview = str(client.read(u))[:1500]
-            
+
             # 核心词过滤
             if check_terms:
                 c_lower = overview.lower()
                 hits = sum(1 for t in check_terms if t.lower() in c_lower)
                 if hits == 0:
                     continue
-            
+
             # 确认相关后，读 L2 全文获取完整信息
             try:
                 full_content = str(client.read(u))[:1200]
             except Exception:
                 full_content = overview[:1200]
-            
+
             blocks.append(f"[PRIORITY_SOURCE] {u}\n{full_content}")
             if len(blocks) >= 2:
                 break

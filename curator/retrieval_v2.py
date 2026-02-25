@@ -13,10 +13,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .config import (
-    log,
-    THRESHOLD_L0_SUFFICIENT, THRESHOLD_L1_SUFFICIENT,
-    THRESHOLD_COV_SUFFICIENT, THRESHOLD_COV_MARGINAL, THRESHOLD_COV_LOW,
     FEEDBACK_WEIGHT,
+    THRESHOLD_COV_LOW,
+    THRESHOLD_COV_MARGINAL,
+    THRESHOLD_COV_SUFFICIENT,
+    THRESHOLD_L0_SUFFICIENT,
+    THRESHOLD_L1_SUFFICIENT,
+    log,
 )
 
 if TYPE_CHECKING:
@@ -46,12 +49,13 @@ def rerank_with_feedback(items: list) -> list:
 
     try:
         from curator import feedback_store
+
         fb = feedback_store.load()
     except Exception:
-        return items   # feedback_store 不可用时静默跳过，不影响检索
+        return items  # feedback_store 不可用时静默跳过，不影响检索
 
     if not fb:
-        return items   # 没有任何 feedback 记录，直接返回
+        return items  # 没有任何 feedback 记录，直接返回
 
     adjusted = []
     for item in items:
@@ -67,8 +71,8 @@ def rerank_with_feedback(items: list) -> list:
         total = up + down + adopt
 
         # clamp 信号到 [0, 1] 再乘权重，确保 delta ∈ (-WEIGHT, +WEIGHT)
-        boost_signal   = min(1.0, (up + adopt * 2) / (total + 1))
-        penalty_signal = min(1.0, down              / (total + 1))
+        boost_signal = min(1.0, (up + adopt * 2) / (total + 1))
+        penalty_signal = min(1.0, down / (total + 1))
         delta = round((boost_signal - penalty_signal) * FEEDBACK_WEIGHT, 4)
 
         new_item = dict(item)
@@ -77,8 +81,7 @@ def rerank_with_feedback(items: list) -> list:
         new_item["_feedback_delta"] = delta
         adjusted.append(new_item)
         if delta:
-            log.debug("feedback rerank: uri=%s delta=%+.4f (up=%d down=%d adopt=%d)",
-                      uri, delta, up, down, adopt)
+            log.debug("feedback rerank: uri=%s delta=%+.4f (up=%d down=%d adopt=%d)", uri, delta, up, down, adopt)
 
     # 重新按 score 降序排列
     adjusted.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -104,8 +107,7 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
     skills = result.get("skills", []) or []
     all_items = memories + resources + skills
 
-    log.info("OV 检索: memories=%d, resources=%d, skills=%d",
-             len(memories), len(resources), len(skills))
+    log.info("OV 检索: memories=%d, resources=%d, skills=%d", len(memories), len(resources), len(skills))
 
     if result.get("query_plan"):
         qp = result["query_plan"]
@@ -128,7 +130,7 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
         "resources": resources,
         "skills": skills,
         "query_plan": result.get("query_plan"),
-        "all_items": all_items,          # feedback-adjusted，用于 load_context 排序
+        "all_items": all_items,  # feedback-adjusted，用于 load_context 排序
         "all_items_raw": all_items_raw,  # OV 原始分，用于 assess_coverage 覆盖率判断
     }
 
@@ -232,7 +234,9 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
             pass
 
     context_text = "\n\n".join(blocks)
-    log.info("context 加载: stage=L2 fallback, sources=%d, L2=%d, chars=%d", len(used_uris), l2_count, len(context_text))
+    log.info(
+        "context 加载: stage=L2 fallback, sources=%d, L2=%d, chars=%d", len(used_uris), l2_count, len(context_text)
+    )
     return context_text, used_uris, "L2"
 
 
@@ -269,7 +273,7 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     # n=1 → factor≈0.78, n=3 → factor≈0.84, n≥9 → factor=1.0（恢复原始阈值）
     scale_factor = min(1.0, 0.75 + 0.03 * count)
     effective_sufficient = THRESHOLD_COV_SUFFICIENT * scale_factor
-    effective_marginal   = THRESHOLD_COV_MARGINAL   * scale_factor
+    effective_marginal = THRESHOLD_COV_MARGINAL * scale_factor
 
     # 基于有效阈值判断
     if top_score > effective_sufficient and count >= 2:
@@ -279,7 +283,7 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     elif top_score > effective_marginal and count >= 1:
         coverage = avg_score
         reason = "local_marginal"
-        need_external = True   # marginal 也外搜补充
+        need_external = True  # marginal 也外搜补充
     elif top_score > THRESHOLD_COV_LOW and count >= 1:
         coverage = avg_score * 0.8
         reason = "low_coverage"
