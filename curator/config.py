@@ -62,6 +62,9 @@ THRESHOLD_COV_LOW = float(env("CURATOR_THRESHOLD_COV_LOW", "0.35"))
 # Max score delta applied by feedback signals (keeps OV score dominant).
 FEEDBACK_WEIGHT = float(env("CURATOR_FEEDBACK_WEIGHT", "0.10"))
 
+# L2 full-read depth: max number of items to load at L2 per pipeline run
+MAX_L2_DEPTH = int(env("CURATOR_MAX_L2_DEPTH", "2"))
+
 # Chat retry (lightweight, dependency-free)
 CHAT_RETRY_MAX = max(1, int(env("CURATOR_CHAT_RETRY_MAX", "3")))
 CHAT_RETRY_BACKOFF_SEC = max(0.0, float(env("CURATOR_CHAT_RETRY_BACKOFF_SEC", "0.6")))

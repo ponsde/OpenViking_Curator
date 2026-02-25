@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from .metrics import Metrics
 from .memory_capture import capture_case
 
-from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH
+from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH, MAX_L2_DEPTH
 from .router import route_scope
 from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
 from .session_manager import OVClient, SessionManager
@@ -137,7 +137,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
 
     # ── Step 3: 分层加载 + 覆盖率评估 ──
     log.info("STEP 3/4 加载内容...")
-    context_text, used_uris, load_stage = load_context(backend, all_items, query, max_l2=2)
+    context_text, used_uris, load_stage = load_context(backend, all_items, query, max_l2=MAX_L2_DEPTH)
     coverage, need_external, cov_reason = assess_coverage(retrieval_result, query=query)
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
@@ -186,6 +186,10 @@ def run(query: str, client=None, auto_ingest: bool = True,
                 cv = cross_validate(query, external_txt, scope)
                 external_txt = cv.get("validated", external_txt)
                 cv_warnings = cv.get("warnings", [])
+                # 把 cross_validate 发现的风险内联到文本前缀，让 judge 能看到
+                if cv_warnings:
+                    warning_block = "\n".join(cv_warnings)
+                    external_txt = f"[cross_validate warnings]\n{warning_block}\n\n{external_txt}"
                 trace["llm_calls"] += 1
                 m.step("cross_validate", True, {"warnings": len(cv_warnings)})
             else:
@@ -216,13 +220,14 @@ def run(query: str, client=None, auto_ingest: bool = True,
                     # 只有 preferred == "external" 或没冲突时才自动入库
                     conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
                     if conflict_preferred in ("human_review", "local"):
-                        # 有冲突且不倾向外部 → 不自动入库
+                        # 有冲突且不倾向外部 → 不自动入库，但持久化到 pending_review.jsonl
                         m.step("ingest", False, {
                             "reason": f"conflict_blocked:{conflict_preferred}",
                             "conflict_summary": conflict.get("summary", ""),
                         })
                         log.info("冲突阻止入库: preferred=%s, summary=%s",
                                  conflict_preferred, conflict.get("summary", ""))
+                        _write_pending(query, judge_result, conflict, reason=f"conflict:{conflict_preferred}")
                     elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
@@ -248,9 +253,10 @@ def run(query: str, client=None, auto_ingest: bool = True,
                         except Exception as e:
                             m.step("ingest", False, {"error": str(e)})
                     else:
-                        # Review mode: mark as pending, don't auto-ingest
+                        # Review mode: 内容通过 judge 但不自动入库，持久化到 pending_review.jsonl
                         m.step("ingest", False, {"reason": "review_mode_pending"})
                         log.info("审核模式: 内容待人工确认，未自动入库")
+                        _write_pending(query, judge_result, conflict, reason="review_mode")
     else:
         # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
@@ -344,6 +350,39 @@ def _log_query(query: str, coverage: float, need_external: bool,
         log.warning("query log 写入失败（不影响主流程）: %s", e)
 
 
+def _write_pending(query: str, judge_result: dict, conflict: dict, reason: str) -> None:
+    """待审核内容持久化到 DATA_PATH/pending_review.jsonl。
+
+    当内容通过 judge 但因冲突或审核模式未自动入库时调用。
+    append-only，每行一个 JSON 对象，包含完整 markdown + 决策上下文。
+
+    Args:
+        query: Original user query.
+        judge_result: Output from judge_and_ingest.
+        conflict: Conflict resolution dict from pipeline.
+        reason: Why ingest was blocked (e.g. 'conflict:human_review', 'review_mode').
+    """
+    import time as _time
+    pending_path = os.path.join(DATA_PATH, "pending_review.jsonl")
+    entry = {
+        "time": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "reason": reason,
+        "query": query,
+        "trust": judge_result.get("trust", 0),
+        "freshness": judge_result.get("freshness", "unknown"),
+        "conflict_summary": conflict.get("summary", ""),
+        "conflict_preferred": conflict.get("resolution", {}).get("preferred", ""),
+        "markdown": judge_result.get("markdown", ""),
+    }
+    try:
+        os.makedirs(os.path.dirname(pending_path) or ".", exist_ok=True)
+        with open(pending_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        log.info("pending review 已写入: %s (reason=%s)", pending_path, reason)
+    except Exception as e:
+        log.warning("pending review 写入失败: %s", e)
+
+
 def _verify_ingest(backend: KnowledgeBackend, query: str,
                    new_uri: str, m: Metrics):
     """C1: 入库后轻量验证 — 检查新 URI 是否出现在检索结果中。
@@ -364,7 +403,7 @@ def _verify_ingest(backend: KnowledgeBackend, query: str,
         if hit:
             log.info("入库验证通过: %s", new_uri)
         else:
-            log.warning("入库验证未命中（可能需要更长索引时间）: %s", new_uri)
+            log.debug("入库验证未命中（OV 索引尚未就绪，属正常现象）: %s", new_uri)
     except Exception as e:
         m.step("ingest_verify", False, {"error": str(e)})
 

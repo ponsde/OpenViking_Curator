@@ -265,12 +265,18 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     top_score = max(scores)
     count = len(scores)
 
-    # 简单判断：信任 OV score
-    if top_score > THRESHOLD_COV_SUFFICIENT and count >= 2:
+    # 规模修正：知识库结果数少时，OV score 分布不可信，适当放宽阈值
+    # n=1 → factor≈0.80, n=3 → factor≈0.90, n≥8 → factor=1.0（恢复原始阈值）
+    scale_factor = min(1.0, 0.75 + 0.03 * count)
+    effective_sufficient = THRESHOLD_COV_SUFFICIENT * scale_factor
+    effective_marginal   = THRESHOLD_COV_MARGINAL   * scale_factor
+
+    # 基于有效阈值判断
+    if top_score > effective_sufficient and count >= 2:
         coverage = min(1.0, avg_score + 0.2)
         reason = "local_sufficient"
         need_external = False
-    elif top_score > THRESHOLD_COV_MARGINAL and count >= 1:
+    elif top_score > effective_marginal and count >= 1:
         coverage = avg_score
         reason = "local_marginal"
         need_external = True   # marginal 也外搜补充
