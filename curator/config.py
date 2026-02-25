@@ -49,6 +49,17 @@ GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
 SEARCH_PROVIDERS = env("CURATOR_SEARCH_PROVIDERS", "grok")  # e.g. "grok,duckduckgo,tavily"
 TAVILY_KEY = env("CURATOR_TAVILY_KEY", "")
 
+# Concurrent search mode: fire all providers in parallel, take fastest non-empty result
+SEARCH_CONCURRENT = env("CURATOR_SEARCH_CONCURRENT", "0") == "1"
+SEARCH_TIMEOUT = float(env("CURATOR_SEARCH_TIMEOUT", "60"))
+# Per-provider timeout should be below global timeout so concurrent coordinator can
+# still cancel/return before straggler calls fully block the run.
+SEARCH_PROVIDER_TIMEOUT = float(
+    env("CURATOR_SEARCH_PROVIDER_TIMEOUT", str(max(1.0, SEARCH_TIMEOUT - 5.0)))
+)
+if SEARCH_PROVIDER_TIMEOUT >= SEARCH_TIMEOUT:
+    SEARCH_PROVIDER_TIMEOUT = max(1.0, SEARCH_TIMEOUT * 0.8)
+
 # ── Tunable thresholds ──
 THRESHOLD_CURATED_OVERLAP = float(env("CURATOR_THRESHOLD_CURATED_OVERLAP", "0.25"))
 THRESHOLD_CURATED_MIN_HITS = int(env("CURATOR_THRESHOLD_CURATED_MIN_HITS", "3"))

@@ -7,8 +7,16 @@ from .config import log, chat, OAI_BASE, OAI_KEY, JUDGE_MODELS
 
 
 def external_search(query: str, scope: dict):
-    """External search via pluggable provider (default: Grok)."""
-    from .search_providers import search as provider_search
+    """External search via pluggable provider (default: Grok).
+
+    When CURATOR_SEARCH_CONCURRENT=1, all configured providers are fired
+    concurrently and the fastest non-empty result is returned.
+    Otherwise the sequential fallback chain is used.
+    """
+    from .search_providers import search as provider_search, search_concurrent
+    from .config import SEARCH_CONCURRENT
+    if SEARCH_CONCURRENT:
+        return search_concurrent(query, scope)
     return provider_search(query, scope)
 
 

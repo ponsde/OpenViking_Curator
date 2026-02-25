@@ -13,12 +13,19 @@ Provider chain (fallback):
   Providers are tried in order; first non-empty result wins.
   Default: grok
 
+Concurrent mode (CURATOR_SEARCH_CONCURRENT=1):
+  All providers are fired simultaneously; the fastest non-empty result wins.
+  Set CURATOR_SEARCH_TIMEOUT to cap total wait time (default 60s).
+  Set CURATOR_SEARCH_PROVIDER_TIMEOUT to cap each provider call and keep it
+  below global timeout.
+
 Adding a new provider:
   1. Create a function: def _search_myprovider(query, scope) -> str
   2. Register it: _PROVIDERS["myprovider"] = _search_myprovider
   3. Add it to CURATOR_SEARCH_PROVIDERS env var
 """
 
+import asyncio
 import datetime
 import logging
 import os
@@ -88,6 +95,8 @@ def _chat(base, key, model, messages, timeout=90):
 # ── Provider: Grok ──
 def _search_grok(query: str, scope: dict) -> str:
     """Search via Grok (OAI-compatible endpoint)."""
+    from .config import SEARCH_PROVIDER_TIMEOUT
+
     base = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
     key = env("CURATOR_GROK_KEY")
     model = env("CURATOR_GROK_MODEL", "grok-4-fast")
@@ -95,7 +104,7 @@ def _search_grok(query: str, scope: dict) -> str:
     return _chat(base, key, model, [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
-    ], timeout=90)
+    ], timeout=SEARCH_PROVIDER_TIMEOUT)
 
 
 # Keep legacy name for backward compatibility
@@ -107,6 +116,8 @@ def grok_search(query: str, scope: dict, **kwargs) -> str:
 # ── Provider: OAI-compatible ──
 def _search_oai(query: str, scope: dict) -> str:
     """Search via any OAI-compatible chat endpoint with internet access."""
+    from .config import SEARCH_PROVIDER_TIMEOUT
+
     base = env("CURATOR_OAI_BASE")
     key = env("CURATOR_OAI_KEY")
     model = env("CURATOR_SEARCH_OAI_MODEL", "gpt-4o")
@@ -114,7 +125,7 @@ def _search_oai(query: str, scope: dict) -> str:
     return _chat(base, key, model, [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
-    ], timeout=90)
+    ], timeout=SEARCH_PROVIDER_TIMEOUT)
 
 
 def oai_search(query: str, scope: dict, **kwargs) -> str:
@@ -256,3 +267,122 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
             log.warning("search provider %r failed: %s, trying next", pname, e)
 
     return ""  # All providers failed — pipeline will skip external search
+
+
+# ── Concurrent search (async) ──
+
+async def _async_search_provider(name: str, query: str, scope: dict) -> tuple[str, str]:
+    """Single-provider async wrapper. Returns (provider_name, result)."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _call_provider, name, query, scope)
+    return name, result
+
+
+async def _gather_search(query: str, scope: dict, providers: list, timeout: float) -> str:
+    """Fire all providers concurrently; return the first non-empty result.
+
+    Uses asyncio.as_completed so we take the fastest winner and cancel the rest.
+    On timeout, returns the best result seen so far (or "").
+    """
+    if not providers:
+        return ""
+
+    tasks = [
+        asyncio.ensure_future(_async_search_provider(p, query, scope))
+        for p in providers
+    ]
+
+    best = ""
+    deadline = asyncio.get_event_loop().time() + timeout
+
+    try:
+        for coro in asyncio.as_completed(tasks, timeout=timeout):
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                pname, result = await asyncio.wait_for(coro, timeout=remaining)
+                if result and result.strip():
+                    log.debug("concurrent search: winner=%s", pname)
+                    # Cancel remaining tasks
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    return result.strip()
+                # Keep empty results as last resort
+                if not best and result:
+                    best = result
+            except asyncio.TimeoutError:
+                break
+            except asyncio.CancelledError:
+                pass
+            except ImportError as e:
+                log.warning("concurrent search provider unavailable: %s", e)
+            except Exception as e:
+                log.warning("concurrent search provider failed: %s", e)
+    except asyncio.TimeoutError:
+        log.warning("concurrent search: global timeout reached (%.1fs)", timeout)
+    finally:
+        # Ensure all pending tasks are cancelled on exit
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        # Await cancellations to avoid ResourceWarning
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    return best
+
+
+def search_concurrent(
+    query: str,
+    scope: dict,
+    providers: list = None,
+    timeout: float = None,
+) -> str:
+    """Synchronous entry point for concurrent multi-provider search.
+
+    Fires all providers simultaneously and returns the fastest non-empty result.
+    Falls back to "" if all providers fail or timeout expires.
+
+    If an event loop is already running (e.g. called from an async pipeline),
+    the coroutine is scheduled via run_coroutine_threadsafe in a new thread loop.
+    Otherwise asyncio.run() is used.
+    """
+    from .config import SEARCH_TIMEOUT
+
+    if providers is None:
+        providers = _get_provider_chain()
+    if timeout is None:
+        timeout = SEARCH_TIMEOUT
+
+    coro = _gather_search(query, scope, providers, timeout)
+
+    try:
+        # Check if there's already a running event loop
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # We're inside an async context — run in a separate thread with its own loop
+        import concurrent.futures
+        import threading
+
+        result_holder = {}
+
+        def _run_in_thread():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                result_holder["result"] = new_loop.run_until_complete(
+                    _gather_search(query, scope, providers, timeout)
+                )
+            finally:
+                new_loop.close()
+
+        t = threading.Thread(target=_run_in_thread, daemon=True)
+        t.start()
+        t.join(timeout + 1)  # +1s grace for cleanup
+        return result_holder.get("result", "")
+    else:
+        return asyncio.run(coro)

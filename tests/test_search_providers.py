@@ -2,6 +2,7 @@
 tests/test_search_providers.py — Unit tests for multi-provider search with fallback chain.
 """
 
+import asyncio
 import importlib
 import sys
 from unittest.mock import MagicMock, patch
@@ -299,3 +300,62 @@ class TestGetProvider:
         import curator.search_providers as m
         for name in ("grok", "oai", "duckduckgo", "tavily"):
             assert name in m._PROVIDERS, f"{name} not in _PROVIDERS"
+
+
+# ─── Concurrent search ────────────────────────────────────────────────────────
+
+class TestSearchConcurrent:
+    def test_returns_first_non_empty_result(self, monkeypatch):
+        import curator.search_providers as m
+
+        async def fake_fast_non_empty(name, query, scope):
+            await asyncio.sleep(0.01)
+            return name, "winner"
+
+        async def fake_slow_empty(name, query, scope):
+            await asyncio.sleep(0.05)
+            return name, ""
+
+        async def fake_dispatch(name, query, scope):
+            if name == "grok":
+                return await fake_slow_empty(name, query, scope)
+            return await fake_fast_non_empty(name, query, scope)
+
+        monkeypatch.setattr(m, "_async_search_provider", fake_dispatch)
+        result = m.search_concurrent("q", SCOPE, providers=["grok", "duckduckgo"], timeout=0.2)
+        assert result == "winner"
+
+    def test_all_timeout_returns_empty_string(self, monkeypatch):
+        import curator.search_providers as m
+
+        async def fake_very_slow(name, query, scope):
+            await asyncio.sleep(0.2)
+            return name, "late"
+
+        monkeypatch.setattr(m, "_async_search_provider", fake_very_slow)
+        result = m.search_concurrent("q", SCOPE, providers=["grok", "duckduckgo"], timeout=0.05)
+        assert result == ""
+
+    def test_single_provider_success(self, monkeypatch):
+        import curator.search_providers as m
+
+        async def fake_single(name, query, scope):
+            return name, "single-ok"
+
+        monkeypatch.setattr(m, "_async_search_provider", fake_single)
+        result = m.search_concurrent("q", SCOPE, providers=["grok"], timeout=0.2)
+        assert result == "single-ok"
+
+    def test_provider_exception_degrades_and_other_provider_wins(self, monkeypatch):
+        import curator.search_providers as m
+
+        async def fake_dispatch(name, query, scope):
+            if name == "grok":
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.01)
+            return name, "fallback-ok"
+
+        monkeypatch.setattr(m, "_async_search_provider", fake_dispatch)
+        result = m.search_concurrent("q", SCOPE, providers=["grok", "duckduckgo"], timeout=0.2)
+        assert result == "fallback-ok"
+
