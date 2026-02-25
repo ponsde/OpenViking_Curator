@@ -27,6 +27,9 @@ from .session_manager import OVClient, SessionManager
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
 
+# Serializes concurrent async ingest operations to prevent overlapping writes.
+_ingest_lock = threading.Lock()
+
 
 def _init_backend():
     """Initialize the knowledge backend. Uses OV by default.
@@ -65,11 +68,15 @@ def _do_judge_ingest(
     auto_ingest,
     m,
     trace,
+    *,
+    async_mode: bool = False,
 ):
     """Execute cross_validate → judge → ingest. Shared by sync and async paths.
 
     When called from the async path, *m* and *trace* are ``None`` (metrics
     are not recorded for background work — the pipeline already returned).
+    Set *async_mode* to ``True`` so that ingest failures are persisted to
+    ``async_ingest_failures.jsonl`` for observability.
 
     Returns dict with ``cv_warnings``, ``conflict``, ``ingested`` keys.
     """
@@ -165,6 +172,8 @@ def _do_judge_ingest(
                     log.info("已入库: %s", ing.get("root_uri", ""))
                 except Exception as e:
                     log.warning("ingest failed: %s", e)
+                    if async_mode:
+                        _log_async_failure(query, e)
                     if m is not None:
                         m.step("ingest", False, {"error": str(e)})
             else:
@@ -324,26 +333,31 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
                 async_ingest_pending = True
 
                 def _bg_judge_ingest():
-                    try:
-                        _do_judge_ingest(
-                            backend,
-                            query,
-                            context_text,
-                            external_txt,
-                            scope,
-                            used_uris,
-                            auto_ingest,
-                            None,
-                            None,
-                        )
-                    except Exception as e:
-                        log.warning("async judge+ingest failed: %s", e)
+                    with _ingest_lock:
+                        try:
+                            _do_judge_ingest(
+                                backend,
+                                query,
+                                context_text,
+                                external_txt,
+                                scope,
+                                used_uris,
+                                auto_ingest,
+                                None,
+                                None,
+                                async_mode=True,
+                            )
+                        except Exception as e:
+                            log.warning("async judge+ingest failed: %s", e)
+                            _log_async_failure(query, e)
 
                 threading.Thread(target=_bg_judge_ingest, daemon=True).start()
                 log.info("async ingest: judge+ingest deferred to background thread")
                 m.step("judge_and_conflict", False, {"reason": "async_deferred"})
             else:
-                # Synchronous path (default)
+                # Synchronous path (default) — no lock needed because the
+                # caller blocks until completion; concurrent sync runs each
+                # have their own backend/query context and don't share state.
                 judge_out = _do_judge_ingest(
                     backend,
                     query,
@@ -431,6 +445,27 @@ def _extract_urls(text: str) -> list[str]:
             seen.add(u)
             out.append(u)
     return out
+
+
+def _log_async_failure(query: str, error: Exception) -> None:
+    """Persist async ingest failures to DATA_PATH/async_ingest_failures.jsonl.
+
+    This gives operators visibility into background judge+ingest failures
+    that would otherwise be silently swallowed.
+    """
+    try:
+        os.makedirs(DATA_PATH, exist_ok=True)
+        log_path = os.path.join(DATA_PATH, "async_ingest_failures.jsonl")
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "error": str(error),
+            "error_type": type(error).__name__,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.warning("failed to write async failure log: %s", e)
 
 
 def _log_query(query: str, coverage: float, need_external: bool, reason: str, used_uris: list, trace: dict) -> None:
