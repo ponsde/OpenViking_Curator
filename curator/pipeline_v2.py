@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -52,6 +53,133 @@ def _init_session_manager() -> tuple:
     sid_file = os.path.join(DATA_PATH, ".curator_session_id")
     sm = SessionManager(ov, sid_file)
     return ov, sm
+
+
+def _do_judge_ingest(
+    backend,
+    query,
+    context_text,
+    external_txt,
+    scope,
+    used_uris,
+    auto_ingest,
+    m,
+    trace,
+):
+    """Execute cross_validate → judge → ingest. Shared by sync and async paths.
+
+    When called from the async path, *m* and *trace* are ``None`` (metrics
+    are not recorded for background work — the pipeline already returned).
+
+    Returns dict with ``cv_warnings``, ``conflict``, ``ingested`` keys.
+    """
+    cv_warnings = []
+    conflict = {"has_conflict": False, "summary": "", "points": []}
+    ingested = False
+
+    # B3: cross_validate 只在 need_fresh 时跑
+    if scope.get("need_fresh"):
+        cv = cross_validate(query, external_txt, scope)
+        external_txt = cv.get("validated", external_txt)
+        cv_warnings = cv.get("warnings", [])
+        if trace is not None:
+            trace["llm_calls"] += 1
+        if m is not None:
+            m.step("cross_validate", True, {"warnings": len(cv_warnings)})
+    else:
+        if m is not None:
+            m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
+
+    # B2: judge + conflict 合并为一次 LLM 调用
+    judge_result = judge_and_ingest(
+        backend,
+        query,
+        context_text,
+        external_txt,
+        cv_warnings=cv_warnings,
+    )
+    if trace is not None:
+        trace["llm_calls"] += 1
+    if m is not None:
+        m.step(
+            "judge_and_conflict",
+            True,
+            {
+                "pass": judge_result.get("pass"),
+                "trust": judge_result.get("trust"),
+                "has_conflict": judge_result.get("has_conflict"),
+            },
+        )
+
+    conflict = {
+        "has_conflict": judge_result.get("has_conflict", False),
+        "summary": judge_result.get("conflict_summary", ""),
+        "points": judge_result.get("conflict_points", []),
+        "resolution": _resolve_conflict(judge_result),
+    }
+
+    if judge_result.get("pass") and judge_result.get("markdown"):
+        freshness = judge_result.get("freshness", "unknown")
+        if freshness != "outdated":
+            conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
+            if conflict_preferred in ("human_review", "local"):
+                if m is not None:
+                    m.step(
+                        "ingest",
+                        False,
+                        {
+                            "reason": f"conflict_blocked:{conflict_preferred}",
+                            "conflict_summary": conflict.get("summary", ""),
+                        },
+                    )
+                log.info("冲突阻止入库: preferred=%s, summary=%s", conflict_preferred, conflict.get("summary", ""))
+                _write_pending(
+                    query,
+                    judge_result,
+                    conflict,
+                    reason=f"conflict:{conflict_preferred}",
+                    source_urls=_extract_urls(external_txt),
+                )
+            elif auto_ingest:
+                try:
+                    from .review import ingest_markdown_v2
+
+                    ing = ingest_markdown_v2(
+                        backend,
+                        query[:60],
+                        judge_result["markdown"],
+                        freshness=freshness,
+                        source_urls=_extract_urls(external_txt),
+                        quality_feedback={
+                            "judge_trust": judge_result.get("trust", 0),
+                            "judge_reason": judge_result.get("reason", ""),
+                            "has_conflict": judge_result.get("has_conflict", False),
+                            "conflict_summary": judge_result.get("conflict_summary", ""),
+                        },
+                        uri_hints=list(used_uris),
+                    )
+                    ingested = True
+                    if m is not None:
+                        m.step("ingest", True, {"uri": ing.get("root_uri", "")})
+                        _verify_ingest(backend, query, ing.get("root_uri", ""), m)
+                    log.info("已入库: %s", ing.get("root_uri", ""))
+                except Exception as e:
+                    log.warning("ingest failed: %s", e)
+                    if m is not None:
+                        m.step("ingest", False, {"error": str(e)})
+            else:
+                if m is not None:
+                    m.step("ingest", False, {"reason": "review_mode_pending"})
+                log.info("审核模式: 内容待人工确认，未自动入库")
+                _write_pending(
+                    query,
+                    judge_result,
+                    conflict,
+                    reason="review_mode",
+                    source_urls=_extract_urls(external_txt),
+                )
+
+    return {"cv_warnings": cv_warnings, "conflict": conflict, "ingested": ingested, "external_text": external_txt}
 
 
 def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
@@ -172,6 +300,7 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     ingested = False
     cv_warnings = []
     conflict = {"has_conflict": False, "summary": "", "points": []}
+    async_ingest_pending = False
 
     if need_external:
         m.flag("external_triggered", True)
@@ -186,103 +315,50 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
             m.step("external_search", False, {"error": str(e)})
 
         if external_txt:
-            # B3: cross_validate 只在 need_fresh 时跑
-            if scope.get("need_fresh"):
-                cv = cross_validate(query, external_txt, scope)
-                external_txt = cv.get("validated", external_txt)
-                cv_warnings = cv.get("warnings", [])
-                trace["llm_calls"] += 1
-                m.step("cross_validate", True, {"warnings": len(cv_warnings)})
-            else:
-                m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
+            # Async ingest: when enabled + auto_ingest, defer judge+ingest
+            # to a background thread so the user gets results faster.
+            # Read env var dynamically so tests can override via patch.dict
+            use_async = (os.environ.get("CURATOR_ASYNC_INGEST", "0") == "1") and auto_ingest
 
-            # B2: judge + conflict 合并为一次 LLM 调用
-            # cv_warnings 注入 sys_prompt（在 judge_and_ingest 内部），
-            # 完全不占 external_text[:3000] 预算，result["external_text"] 保持干净
-            judge_result = judge_and_ingest(
-                backend,
-                query,
-                context_text,
-                external_txt,
-                cv_warnings=cv_warnings,
-            )
-            trace["llm_calls"] += 1
-            m.step(
-                "judge_and_conflict",
-                True,
-                {
-                    "pass": judge_result.get("pass"),
-                    "trust": judge_result.get("trust"),
-                    "has_conflict": judge_result.get("has_conflict"),
-                },
-            )
+            if use_async:
+                async_ingest_pending = True
 
-            conflict = {
-                "has_conflict": judge_result.get("has_conflict", False),
-                "summary": judge_result.get("conflict_summary", ""),
-                "points": judge_result.get("conflict_points", []),
-                "resolution": _resolve_conflict(judge_result),
-            }
-
-            if judge_result.get("pass") and judge_result.get("markdown"):
-                freshness = judge_result.get("freshness", "unknown")
-                if freshness != "outdated":
-                    # M5: 冲突检测结果影响入库决策
-                    # 只有 preferred == "external" 或没冲突时才自动入库
-                    conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
-                    if conflict_preferred in ("human_review", "local"):
-                        # 有冲突且不倾向外部 → 不自动入库，但持久化到 pending_review.jsonl
-                        m.step(
-                            "ingest",
-                            False,
-                            {
-                                "reason": f"conflict_blocked:{conflict_preferred}",
-                                "conflict_summary": conflict.get("summary", ""),
-                            },
-                        )
-                        log.info(
-                            "冲突阻止入库: preferred=%s, summary=%s", conflict_preferred, conflict.get("summary", "")
-                        )
-                        _write_pending(
+                def _bg_judge_ingest():
+                    try:
+                        _do_judge_ingest(
+                            backend,
                             query,
-                            judge_result,
-                            conflict,
-                            reason=f"conflict:{conflict_preferred}",
-                            source_urls=_extract_urls(external_txt),
+                            context_text,
+                            external_txt,
+                            scope,
+                            used_uris,
+                            auto_ingest,
+                            None,
+                            None,
                         )
-                    elif auto_ingest:
-                        try:
-                            from .review import ingest_markdown_v2
+                    except Exception as e:
+                        log.warning("async judge+ingest failed: %s", e)
 
-                            ing = ingest_markdown_v2(
-                                backend,
-                                query[:60],
-                                judge_result["markdown"],
-                                freshness=freshness,
-                                source_urls=_extract_urls(external_txt),
-                                quality_feedback={
-                                    "judge_trust": judge_result.get("trust", 0),
-                                    "judge_reason": judge_result.get("reason", ""),
-                                    "has_conflict": judge_result.get("has_conflict", False),
-                                    "conflict_summary": judge_result.get("conflict_summary", ""),
-                                },
-                                uri_hints=list(used_uris),
-                            )
-                            ingested = True
-                            m.step("ingest", True, {"uri": ing.get("root_uri", "")})
-                            log.info("已入库: %s", ing.get("root_uri", ""))
-
-                            # C1: 入库后轻量验证
-                            _verify_ingest(backend, query, ing.get("root_uri", ""), m)
-                        except Exception as e:
-                            m.step("ingest", False, {"error": str(e)})
-                    else:
-                        # Review mode: 内容通过 judge 但不自动入库，持久化到 pending_review.jsonl
-                        m.step("ingest", False, {"reason": "review_mode_pending"})
-                        log.info("审核模式: 内容待人工确认，未自动入库")
-                        _write_pending(
-                            query, judge_result, conflict, reason="review_mode", source_urls=_extract_urls(external_txt)
-                        )
+                threading.Thread(target=_bg_judge_ingest, daemon=True).start()
+                log.info("async ingest: judge+ingest deferred to background thread")
+                m.step("judge_and_conflict", False, {"reason": "async_deferred"})
+            else:
+                # Synchronous path (default)
+                judge_out = _do_judge_ingest(
+                    backend,
+                    query,
+                    context_text,
+                    external_txt,
+                    scope,
+                    used_uris,
+                    auto_ingest,
+                    m,
+                    trace,
+                )
+                cv_warnings = judge_out.get("cv_warnings", cv_warnings)
+                conflict = judge_out.get("conflict", conflict)
+                ingested = judge_out.get("ingested", False)
+                external_txt = judge_out.get("external_text", external_txt)
     else:
         # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
@@ -313,6 +389,7 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
         "external_reason": cov_reason,
         "has_conflict": conflict.get("has_conflict", False),
         "ingested": ingested,
+        "async_ingest_pending": async_ingest_pending,
         "used_uris": used_uris,
         "warnings": cv_warnings,
         "memories_count": len(retrieval_result["memories"]),
