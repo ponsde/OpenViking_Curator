@@ -45,6 +45,10 @@ GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
 GROK_KEY = env("CURATOR_GROK_KEY")
 GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
 
+# Search providers: comma-separated, tried in order (fallback chain)
+SEARCH_PROVIDERS = env("CURATOR_SEARCH_PROVIDERS", "grok")  # e.g. "grok,duckduckgo,tavily"
+TAVILY_KEY = env("CURATOR_TAVILY_KEY", "")
+
 # ── Tunable thresholds ──
 THRESHOLD_CURATED_OVERLAP = float(env("CURATOR_THRESHOLD_CURATED_OVERLAP", "0.25"))
 THRESHOLD_CURATED_MIN_HITS = int(env("CURATOR_THRESHOLD_CURATED_MIN_HITS", "3"))
@@ -65,6 +69,18 @@ FEEDBACK_WEIGHT = float(env("CURATOR_FEEDBACK_WEIGHT", "0.10"))
 # L2 full-read depth: max number of items to load at L2 per pipeline run
 MAX_L2_DEPTH = int(env("CURATOR_MAX_L2_DEPTH", "2"))
 
+# L0/L1 auto-summarization on ingest (opt-in, requires OAI_BASE)
+# When enabled, ingest_markdown_v2 calls LLM once to generate:
+#   L0 abstract (~80 tokens): stored in meta + header comment
+#   L1 overview (key-point list): prepended to markdown as '## 摘要' section
+AUTO_SUMMARIZE = env("CURATOR_AUTO_SUMMARIZE", "0") == "1"
+SUMMARIZE_MODELS = [
+    m.strip() for m in env(
+        "CURATOR_SUMMARIZE_MODELS",
+        env("CURATOR_ROUTER_MODELS", "gpt-4o-mini")
+    ).split(",") if m.strip()
+]
+
 # Chat retry (lightweight, dependency-free)
 CHAT_RETRY_MAX = max(1, int(env("CURATOR_CHAT_RETRY_MAX", "3")))
 CHAT_RETRY_BACKOFF_SEC = max(0.0, float(env("CURATOR_CHAT_RETRY_BACKOFF_SEC", "0.6")))
@@ -78,8 +94,9 @@ def validate_config() -> None:
         missing.append("CURATOR_OAI_BASE")
     if not OAI_KEY:
         missing.append("CURATOR_OAI_KEY")
-    search_provider = env("CURATOR_SEARCH_PROVIDER", "grok")
-    if search_provider == "grok" and not GROK_KEY:
+    # Check first provider in chain requires a key
+    first_provider = SEARCH_PROVIDERS.split(",")[0].strip()
+    if first_provider in ("grok",) and not GROK_KEY:
         missing.append("CURATOR_GROK_KEY")
     if missing:
         raise RuntimeError(
