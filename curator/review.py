@@ -109,6 +109,7 @@ def _extract_json(text: str) -> str | None:
 from .config import (
     log, chat,
     OAI_BASE, OAI_KEY, JUDGE_MODEL, JUDGE_MODELS, CURATED_DIR, CURATOR_VERSION,
+    AUTO_SUMMARIZE, SUMMARIZE_MODELS,
 )
 
 
@@ -285,6 +286,59 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         return {"has_conflict": False, "summary": "", "points": []}
 
 
+def _auto_summarize(content: str, title: str) -> dict:
+    """生成 L0 abstract + L1 overview（一次 LLM call，可选功能）。
+
+    Best-effort：失败时返回空 dict，不影响入库主流程。
+    需要 AUTO_SUMMARIZE=1 且 OAI_BASE 配置正确。
+
+    Args:
+        content: 完整 markdown 正文（不含 curator_meta header）。
+        title: 文档标题，用于 prompt 上下文。
+
+    Returns:
+        ``{"abstract": str, "overview": str}`` 或 ``{}``（失败时）。
+    """
+    if not OAI_BASE:
+        return {}
+
+    snippet = content[:4000]
+    sys_prompt = (
+        "你是文档摘要助手。根据给定的文档内容，输出严格 JSON（只输出 JSON）：\n"
+        "{\n"
+        '  "abstract": "80字以内的一句话摘要（L0，用于快速过滤）",\n'
+        '  "overview": "关键要点列表，Markdown bullet 格式，不超过300字（L1，用于快速阅读）"\n'
+        "}"
+    )
+    user_content = f"文档标题：{title}\n\n{snippet}"
+
+    last_err: Exception | None = None
+    for model in SUMMARIZE_MODELS:
+        try:
+            raw = chat(OAI_BASE, OAI_KEY, model, [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_content},
+            ], timeout=30)
+            # 从 raw 里提取 JSON
+            import re as _re
+            m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+            if not m:
+                continue
+            import json as _json
+            data = _json.loads(m.group())
+            abstract = str(data.get("abstract", "")).strip()
+            overview = str(data.get("overview", "")).strip()
+            if abstract:
+                return {"abstract": abstract, "overview": overview}
+        except Exception as e:
+            last_err = e
+            log.debug("_auto_summarize model=%s error=%s", model, e)
+
+    if last_err:
+        log.debug("_auto_summarize skipped (all models failed): %s", last_err)
+    return {}
+
+
 def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
                        markdown: str, freshness: str = "unknown",
                        source_urls: list[str] | None = None,
@@ -307,12 +361,22 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
     ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
     ttl_days = ttl_map.get(freshness, 60)
 
+    # L0/L1 自动摘要（opt-in，失败不影响入库）
+    summary = _auto_summarize(markdown, title) if AUTO_SUMMARIZE else {}
+    abstract = summary.get("abstract", "")
+    overview = summary.get("overview", "")
+
     header = (
         f"<!-- curator_meta: ingested={today} freshness={freshness} ttl_days={ttl_days} -->\n"
-        f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n\n"
+        f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n"
     )
+    if abstract:
+        header += f"<!-- abstract: {abstract} -->\n"
+    header += "\n"
 
-    full_content = header + markdown
+    # L1 overview 作为 '## 摘要' section 前置，供 OV L1 层快速阅读
+    overview_section = f"## 摘要\n\n{overview}\n\n---\n\n" if overview else ""
+    full_content = header + overview_section + markdown
 
     # 写本地文件备份
     p = Path(CURATED_DIR)
@@ -343,6 +407,7 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
             "version": CURATOR_VERSION,
             "source_urls": dedup_urls,
             "quality_feedback": quality_feedback if isinstance(quality_feedback, dict) else {},
+            "abstract": abstract,  # L0 摘要（空字符串表示未生成）
         }
 
         uri = backend.ingest(full_content, title=title, metadata=meta)
