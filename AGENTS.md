@@ -44,8 +44,8 @@ tests/               — 172 个测试，全部在 venv 下跑：python3 -m pyte
 ## 当前状态（截至 2026-02-25）
 
 - **版本**：v0.1.0 已发布（GitHub Release）
-- **测试**：172 个，全过
-- **待确认**：二号 r2 review 进行中（cv_warnings tradeoff）
+- **测试**：172 个，全过（`source /home/ponsde/OpenViking_test/.venv/bin/activate && python3 -m pytest tests/ -q`）
+- **待修复**：cv_warnings 截断问题（见下方"关键决策"更新）
 - **Backlog**：见 `/home/ponsde/.openclaw/workspace/TODO.md`（小p 维护）
 
 ### 上游 PR
@@ -62,7 +62,7 @@ tests/               — 172 个测试，全部在 venv 下跑：python3 -m pyte
 | adopt 信号只记 used_uris | load_context 真正用到的才算采纳，全部检索结果记 adopt 是错的 |
 | assess_coverage 用 raw score | feedback-adjusted score 不应影响"是否外搜"的决策 |
 | dedup sim=1.0 是 sentinel | url_hash 方法时 sim=1.0 表示"共享来源 URL"，不是"内容100%相同" |
-| cv_warnings 追加末尾 | 正文优先占 judge 3000-char 预算；result["external_text"] 保持干净 |
+| cv_warnings 追加末尾 | ⚠️ **r2 结论：设计有缺陷，待修**。正文优先占 judge 3000-char 预算的初衷合理，但"judge 看不到 warnings 也不会更差"推断错误——cross_validate 存在就是为了标记危险内容，judge 看不到反而 pass 不该 pass 的东西（假安全感）。**推荐修法**：warnings 注入 `sys_prompt`，不占 `external_text[:3000]` 预算，`result["external_text"]` 保持干净 |
 | pending_review.jsonl | judge 通过但被阻止入库的内容不能直接丢，写文件等人工审核 |
 | max_checks=0（自适应） | min(50, len(uris)*3)，比固定值 5 合理 |
 | 根目录模块移入 curator/ | pip install 场景下绝对 import 会找不到根目录文件，所有模块用相对 import |
@@ -97,6 +97,8 @@ tests/               — 172 个测试，全部在 venv 下跑：python3 -m pyte
 - **active_count bug**：上游 OV v0.1.18 的 `_update_active_counts()` 签名错误，Curator 有 workaround，等 PR #280
 - **`_truncate_to` exact-fit edge case**：`cur + step > max_width - 1` 对恰好填满的字符串会误截断，已记 TODO，目前 `_row()` 的 guard 让它不触发
 - **scale_factor 公式**：`min(1.0, 0.75 + 0.03 * n)`，n≥9 才到 1.0（不是 n≥8）
+- **cv_warnings 截断**：`judge_and_ingest` 对 `external_text` 做 `[:3000]`，若 `external_txt` 接近 3000 chars，末尾追加的 warnings 完全不可见。当前是**已知缺陷**，推荐修法是把 warnings 注入 `sys_prompt` 而非追加到正文（见"关键决策"）
+- **judge prompt 预算**：`local_snippet[:2000]` + `external_snippet[:3000]`，二者分开截断，总 prompt ≈ 5000 chars 正文 + sys_prompt
 
 ---
 
