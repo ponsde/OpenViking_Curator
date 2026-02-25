@@ -4,8 +4,8 @@
 生成结构化的纯文本决策摘要，方便调试、日志输出和 CLI 展示。
 
 设计原则：
-- 无外部依赖，纯 Python
-- 纯文本输出，终端友好（ASCII box）
+- 无外部依赖，纯 Python（unicodedata 为标准库）
+- 纯文本输出，终端友好（ASCII box），正确处理 CJK 字符宽度
 - 所有字段有默认值，result 结构不完整时不报错
 - 信息密度 > 装饰
 
@@ -19,13 +19,14 @@
     │ External    : No                                     │
     │ LLM calls   : 0                                      │
     │ Conflict    : None                                   │
-    │ Ingested    : No                                     │
     └──────────────────────────────────────────────────────┘
 """
 
 from __future__ import annotations
 
-_WIDTH = 56  # 内容区宽度（不含边框）
+import unicodedata
+
+_WIDTH = 56  # 内容区显示列宽（不含边框 │ 字符）
 
 _REASON_ZH = {
     "local_sufficient":  "本地知识库已足够，不触发外搜",
@@ -45,12 +46,47 @@ _STAGE_ZH = {
 }
 
 
+def _display_width(s: str) -> int:
+    """计算字符串的终端显示宽度（CJK 宽字符占 2 列，其余占 1 列）。"""
+    w = 0
+    for ch in s:
+        eaw = unicodedata.east_asian_width(ch)
+        w += 2 if eaw in ("W", "F") else 1
+    return w
+
+
+def _pad_to(s: str, width: int) -> str:
+    """右填充空格，使显示宽度达到 width。CJK 安全版。"""
+    dw = _display_width(s)
+    if dw < width:
+        s += " " * (width - dw)
+    return s
+
+
+def _truncate_to(s: str, max_width: int) -> str:
+    """截断字符串，使显示宽度不超过 max_width（CJK 安全）。
+
+    若需要截断，末尾加 '…'（占 1 列）。
+    """
+    cur = 0
+    for i, ch in enumerate(s):
+        eaw = unicodedata.east_asian_width(ch)
+        step = 2 if eaw in ("W", "F") else 1
+        if cur + step > max_width - 1:  # 留 1 列给 '…'
+            return s[:i] + "…"
+        cur += step
+    return s
+
+
 def _row(label: str, value: str) -> str:
-    """生成一行 │ label : value │，自动截断过长内容。"""
-    line = f" {label:<12}: {value}"
-    if len(line) > _WIDTH:
-        line = line[:_WIDTH - 1] + "…"
-    return f"│{line:<{_WIDTH}}│"
+    """生成一行 │ label : value │，正确处理 CJK 字符宽度。"""
+    inner = f" {label:<12}: {value}"
+    # 计算显示宽度，超出则截断（CJK 安全）
+    if _display_width(inner) > _WIDTH:
+        inner = _truncate_to(inner, _WIDTH)
+    # 右填充到 _WIDTH 显示列
+    inner = _pad_to(inner, _WIDTH)
+    return f"│{inner}│"
 
 
 def format_report(result: dict) -> str:
@@ -63,6 +99,7 @@ def format_report(result: dict) -> str:
         Multi-line string suitable for printing to stdout or logging.
 
     所有字段均有 fallback，result 为空 dict 时也能正常运行。
+    CJK 字符（中日韩）按 2 列宽处理，box 宽度对齐正确。
     """
     meta = result.get("meta") or {}
     trace = meta.get("decision_trace") or {}
@@ -89,9 +126,10 @@ def format_report(result: dict) -> str:
     llm_calls = trace.get("llm_calls", 0)
 
     has_conflict = conflict.get("has_conflict", False)
-    conflict_label = conflict.get("summary", "") if has_conflict else "None"
-    if has_conflict and not conflict_label:
-        conflict_label = "Yes (no summary)"
+    if has_conflict:
+        conflict_label = conflict.get("summary", "") or "Yes (no summary)"
+    else:
+        conflict_label = "None"
 
     ingested = meta.get("ingested", False)
     ingested_label = "Yes" if ingested else "No"
@@ -148,7 +186,7 @@ def format_report_short(result: dict) -> str:
 
     coverage   = meta.get("coverage", 0.0)
     cov_reason = meta.get("coverage_reason") or meta.get("external_reason") or "unknown"
-    stage      = (meta.get("decision_trace") or {}).get("load_stage", "none")
+    stage      = trace.get("load_stage", "none")
     used       = len(meta.get("used_uris") or [])
     external   = "Yes" if meta.get("external_triggered") else "No"
     llm_calls  = trace.get("llm_calls", 0)

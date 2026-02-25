@@ -54,12 +54,12 @@ class TestFormatReport(unittest.TestCase):
         result = _make_result(query="docker healthcheck 配置")
         report = format_report(result)
         self.assertIn("docker", report)
-        self.assertIn("0.65", report)          # coverage
+        self.assertIn("0.65", report)               # coverage
         self.assertIn("local_sufficient", report)
         self.assertIn("L0", report)
-        self.assertIn("2", report)             # used URIs count
-        self.assertIn("No", report)            # external = No
-        self.assertIn("0", report)             # llm_calls = 0
+        self.assertIn("Used URIs   : 2", report)    # 精确匹配字段，避免 "2" 假阳性
+        self.assertIn("External    : No", report)
+        self.assertIn("LLM calls   : 0", report)
 
     def test_long_query_truncated(self):
         from curator.decision_report import format_report
@@ -148,3 +148,27 @@ class TestFormatReportShort(unittest.TestCase):
         from curator.decision_report import format_report_short
         report = format_report_short({})
         self.assertTrue(report.startswith("[Curator]"))
+
+    def test_conflict_true_no_summary_fallback(self):
+        """conflict has_conflict=True but summary='' → 'Yes (no summary)'."""
+        from curator.decision_report import format_report
+        result = _make_result()
+        result["conflict"] = {"has_conflict": True, "summary": "", "points": []}
+        report = format_report(result)
+        self.assertIn("Yes (no summary)", report)
+
+    def test_cjk_rows_do_not_crash(self):
+        """CJK content in query/conflict should not raise exceptions."""
+        from curator.decision_report import format_report
+        result = _make_result(query="如何在 Docker 中配置健康检查？" * 3)
+        result["conflict"] = {"has_conflict": True, "summary": "本地知识库内容与外部搜索结果存在时效冲突", "points": []}
+        report = format_report(result)  # should not raise
+        self.assertIsInstance(report, str)
+        self.assertIn("│", report)
+
+    def test_display_width_cjk(self):
+        """_display_width should count CJK chars as 2 columns."""
+        from curator.decision_report import _display_width
+        self.assertEqual(_display_width("ABC"), 3)
+        self.assertEqual(_display_width("中文"), 4)
+        self.assertEqual(_display_width("A中B"), 4)

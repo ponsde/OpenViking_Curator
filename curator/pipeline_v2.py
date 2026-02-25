@@ -111,6 +111,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
     except Exception as e:
         log.error("OV 初始化失败: %s", e)
         result["meta"]["error"] = f"知识库服务不可用: {e}"
+        result["decision_report"] = format_report(result)
         return result
 
     m.step("init", True)
