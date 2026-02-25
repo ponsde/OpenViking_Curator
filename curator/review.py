@@ -320,12 +320,10 @@ def _auto_summarize(content: str, title: str) -> dict:
                 {"role": "user", "content": user_content},
             ], timeout=30)
             # 从 raw 里提取 JSON
-            import re as _re
-            m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
             if not m:
                 continue
-            import json as _json
-            data = _json.loads(m.group())
+            data = json.loads(m.group())
             abstract = str(data.get("abstract", "")).strip()
             overview = str(data.get("overview", "")).strip()
             if abstract:
@@ -366,12 +364,17 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
     abstract = summary.get("abstract", "")
     overview = summary.get("overview", "")
 
+    # 对 abstract 做 HTML comment sanitize：
+    # - 去掉换行（multi-line comment 不影响 spec，但 grep/parser 可能误读）
+    # - 替换 --> 避免提前关闭 <!-- ... --> 注释
+    safe_abstract = abstract.replace("\n", " ").replace("-->", "→") if abstract else ""
+
     header = (
         f"<!-- curator_meta: ingested={today} freshness={freshness} ttl_days={ttl_days} -->\n"
         f"<!-- review_after: {(datetime.date.today() + datetime.timedelta(days=ttl_days)).isoformat()} -->\n"
     )
-    if abstract:
-        header += f"<!-- abstract: {abstract} -->\n"
+    if safe_abstract:
+        header += f"<!-- abstract: {safe_abstract} -->\n"
     header += "\n"
 
     # L1 overview 作为 '## 摘要' section 前置，供 OV L1 层快速阅读
@@ -407,7 +410,7 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
             "version": CURATOR_VERSION,
             "source_urls": dedup_urls,
             "quality_feedback": quality_feedback if isinstance(quality_feedback, dict) else {},
-            "abstract": abstract,  # L0 摘要（空字符串表示未生成）
+            "abstract": safe_abstract,  # L0 摘要（空字符串表示未生成；已 sanitize HTML comment 特殊字符）
         }
 
         uri = backend.ingest(full_content, title=title, metadata=meta)

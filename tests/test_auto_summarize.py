@@ -87,11 +87,11 @@ class TestAutoSummarize(unittest.TestCase):
         from curator.backend_memory import InMemoryBackend
         backend = InMemoryBackend()
         captured = {}
+        original_ingest = backend.ingest
         def capturing_ingest(content, title="", metadata=None):
             captured["content"] = content
             captured["metadata"] = metadata
-            return backend.ingest.__wrapped__(backend, content, title=title, metadata=metadata) \
-                if hasattr(backend.ingest, "__wrapped__") else content
+            return original_ingest(content, title=title, metadata=metadata)
         backend.ingest = capturing_ingest
 
         with patch.object(review, "AUTO_SUMMARIZE", False):
@@ -112,6 +112,37 @@ class TestAutoSummarize(unittest.TestCase):
 
         # Should succeed even with empty summary
         self.assertIn("root_uri", result)
+
+    def test_abstract_html_comment_sanitized(self):
+        """Abstract containing '-->' is sanitized before embedding in HTML comment."""
+        from curator import review
+        from curator.backend_memory import InMemoryBackend
+        backend = InMemoryBackend()
+
+        captured = {}
+        original_ingest = backend.ingest
+        def capturing_ingest(content, title="", metadata=None):
+            captured["content"] = content
+            captured["metadata"] = metadata
+            return original_ingest(content, title=title, metadata=metadata)
+        backend.ingest = capturing_ingest
+
+        # abstract 含 '-->' —— 如果不 sanitize，会提前关闭 HTML comment
+        dangerous_abstract = "A --> B 关系，见图表"
+        with patch.object(review, "AUTO_SUMMARIZE", True):
+            with patch.object(review, "_auto_summarize", return_value={
+                "abstract": dangerous_abstract, "overview": ""
+            }):
+                review.ingest_markdown_v2(backend, "Test Doc", SAMPLE_MD)
+
+        content = captured.get("content", "")
+        # HTML comment 里不能有 -->（会提前关闭注释）
+        self.assertNotIn("A --> B", content)
+        # 替换后用 → 存入
+        self.assertIn("<!-- abstract:", content)
+        self.assertIn("→", content)
+        # metadata 里同样不含原始 -->
+        self.assertNotIn("-->", captured["metadata"].get("abstract", ""))
 
 
 if __name__ == "__main__":
