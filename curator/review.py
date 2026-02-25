@@ -340,7 +340,8 @@ def _auto_summarize(content: str, title: str) -> dict:
 def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
                        markdown: str, freshness: str = "unknown",
                        source_urls: list[str] | None = None,
-                       quality_feedback: dict | None = None):
+                       quality_feedback: dict | None = None,
+                       uri_hints: list[str] | None = None):
     """入库 markdown 到知识后端。
 
     Builds a curator_meta header, writes local backup, then ingests
@@ -357,7 +358,10 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
     """
     today = datetime.date.today().isoformat()
     ttl_map = {"current": 180, "recent": 90, "unknown": 60, "outdated": 0}
-    ttl_days = ttl_map.get(freshness, 60)
+    base_ttl = ttl_map.get(freshness, 60)
+
+    from .usage_ttl import compute_usage_ttl_for_ingest
+    ttl_days, usage_tier_label = compute_usage_ttl_for_ingest(base_ttl, uri_hints or [])
 
     # L0/L1 自动摘要（opt-in，失败不影响入库）
     summary = _auto_summarize(markdown, title) if AUTO_SUMMARIZE else {}
@@ -406,6 +410,7 @@ def ingest_markdown_v2(backend: KnowledgeBackend, title: str,
         meta = {
             "freshness": freshness,
             "ttl_days": ttl_days,
+            "usage_tier": usage_tier_label,
             "ingested": today,
             "version": CURATOR_VERSION,
             "source_urls": dedup_urls,

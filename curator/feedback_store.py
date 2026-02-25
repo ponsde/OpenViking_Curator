@@ -11,11 +11,23 @@ except ImportError:
 STORE = Path(os.getenv('CURATOR_FEEDBACK_FILE', './feedback.json'))
 
 
+def _resolve_store() -> Path:
+    """Return the active feedback store path.
+
+    Prefers the CURATOR_FEEDBACK_FILE env var (re-read each call so that
+    monkeypatch.setenv and runtime overrides take effect).  Falls back to the
+    module-level STORE, which may itself be monkey-patched in unit tests.
+    """
+    env_path = os.getenv('CURATOR_FEEDBACK_FILE')
+    return Path(env_path) if env_path else STORE
+
+
 def _locked_rw(fn):
     """Read-modify-write with exclusive file lock (Unix) or no-lock fallback (Windows)."""
-    STORE.parent.mkdir(parents=True, exist_ok=True)
-    STORE.touch(exist_ok=True)
-    with open(STORE, 'r+', encoding='utf-8') as f:
+    store = _resolve_store()
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.touch(exist_ok=True)
+    with open(store, 'r+', encoding='utf-8') as f:
         if _HAS_FCNTL:
             fcntl.flock(f, fcntl.LOCK_EX)
         try:
@@ -32,8 +44,9 @@ def _locked_rw(fn):
 
 
 def load():
-    if STORE.exists():
-        with open(STORE, 'r', encoding='utf-8') as f:
+    store = _resolve_store()
+    if store.exists():
+        with open(store, 'r', encoding='utf-8') as f:
             if _HAS_FCNTL:
                 fcntl.flock(f, fcntl.LOCK_SH)
             try:
@@ -46,8 +59,9 @@ def load():
 
 
 def save(data):
-    STORE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STORE, 'w', encoding='utf-8') as f:
+    store = _resolve_store()
+    store.parent.mkdir(parents=True, exist_ok=True)
+    with open(store, 'w', encoding='utf-8') as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))

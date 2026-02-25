@@ -242,6 +242,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
                                     "has_conflict": judge_result.get("has_conflict", False),
                                     "conflict_summary": judge_result.get("conflict_summary", ""),
                                 },
+                                uri_hints=list(used_uris),
                             )
                             ingested = True
                             m.step("ingest", True, {"uri": ing.get("root_uri", "")})
