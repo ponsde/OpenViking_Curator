@@ -2,10 +2,9 @@
 import pytest
 from unittest.mock import patch
 
-# feedback_store 是 Curator 根目录的本地模块，不是 pip 包
-# 测试必须在正确的 working directory 下运行，否则 skip
-feedback_store = pytest.importorskip("feedback_store",
-    reason="feedback_store module not found; run tests from OpenViking_Curator root")
+# feedback_store has been moved into curator package
+feedback_store = pytest.importorskip("curator.feedback_store",
+    reason="curator.feedback_store not found")
 
 
 def _make_items(*uris_scores):
@@ -15,7 +14,7 @@ def _make_items(*uris_scores):
 
 def _patch_fb(data: dict):
     """Return a context manager that patches feedback_store.load()."""
-    return patch("feedback_store.load", return_value=data)
+    return patch("curator.feedback_store.load", return_value=data)
 
 
 class TestRerankWithFeedback:

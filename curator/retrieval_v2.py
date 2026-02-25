@@ -45,7 +45,7 @@ def rerank_with_feedback(items: list) -> list:
         return items
 
     try:
-        import feedback_store
+        from curator import feedback_store
         fb = feedback_store.load()
     except Exception:
         return items   # feedback_store 不可用时静默跳过，不影响检索

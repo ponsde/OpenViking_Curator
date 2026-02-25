@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from metrics import Metrics
-from memory_capture import capture_case
+from .metrics import Metrics
+from .memory_capture import capture_case
 
 from .config import log, validate_config, OPENVIKING_CONFIG_FILE, DATA_PATH
 from .router import route_scope
@@ -152,7 +152,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
     # 供下次检索时 rerank_with_feedback() 微调排名。
     if used_uris:
         try:
-            import feedback_store
+            from curator import feedback_store
             for uri in used_uris:
                 feedback_store.apply(uri, "adopt")
             log.debug("feedback adopt: %d uris", len(used_uris))

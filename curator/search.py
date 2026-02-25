@@ -8,7 +8,7 @@ from .config import log, chat, OAI_BASE, OAI_KEY, JUDGE_MODELS
 
 def external_search(query: str, scope: dict):
     """External search via pluggable provider (default: Grok)."""
-    from search_providers import search as provider_search
+    from .search_providers import search as provider_search
     return provider_search(query, scope)
 
 

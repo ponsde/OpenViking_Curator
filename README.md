@@ -292,6 +292,35 @@ tests/                 # Unit tests
 python -m pytest tests/ -v
 ```
 
+## Troubleshooting
+
+**`OPENVIKING_CONFIG_FILE not found` or OV init fails**
+- Make sure your `ov.conf` path is set correctly in `.env`
+- Run `python3 -c "from openviking import AsyncOpenViking"` to verify the OV install
+
+**Coverage is always `0.0` / OV returns no results**
+- Your OV instance may be empty. Run `ov status` to check resource count.
+- If `CURATOR_THRESHOLD_COV_SUFFICIENT` is too high for your KB size, lower it to `0.45`.
+
+**External search always triggered even for well-known topics**
+- Check that your search provider env vars are correct (`CURATOR_GROK_BASE`, `CURATOR_GROK_KEY`)
+- Coverage thresholds may need tuning — see `.env.example` for guidance
+
+**LLM judge returns low trust / always fails**
+- Verify your `CURATOR_OAI_BASE` and `CURATOR_OAI_KEY` are correct
+- Try a stronger model in `CURATOR_JUDGE_MODELS`
+- If the judge is hallucinating, add `CURATOR_LLM_ROUTE=0` to disable LLM routing
+
+**`ModuleNotFoundError` for `metrics` / `memory_capture` / `feedback_store`**
+- These modules moved into the `curator/` package in v0.1.0
+- Update any direct imports: `import feedback_store` → `from curator import feedback_store`
+
+**`feedback_store` CLI usage**
+```bash
+# v0.1.0+ (moved into curator package)
+python3 -m curator.feedback_store <uri> up|down|adopt
+```
+
 ## Roadmap
 
 - [x] KnowledgeBackend abstraction

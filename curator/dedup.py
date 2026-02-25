@@ -138,7 +138,7 @@ def _pair_key(uri_a: str, uri_b: str) -> str:
 
 # ── 公开接口 ──────────────────────────────────────────────────────────────────
 
-def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
+def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
     """扫描 resources 中的疑似重复（只报告，不删除）。
 
     **去重流程（两层）：**
@@ -155,6 +155,8 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
                  ``read(uri)`` method).
         uris: List of resource URIs to compare.
         max_checks: Maximum number of pair-wise comparisons.
+                    0（默认）= 自适应：min(50, len(uris) * 3)，
+                    知识库越大，相对扫描比例越合理。
 
     Returns:
         Dict with ``checked`` (int) and ``duplicates`` (list of dicts with
@@ -168,6 +170,10 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
     valid_uris = [u for u in uris if u.startswith("viking://") or u.startswith("mem://")]
     if len(valid_uris) < 2:
         return result
+
+    # 自适应扫描上限：0 = 自适应模式
+    if max_checks <= 0:
+        max_checks = min(50, len(valid_uris) * 3)
 
     # 读取内容
     uri_contents: dict[str, str] = {}
