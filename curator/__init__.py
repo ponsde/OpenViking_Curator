@@ -32,6 +32,11 @@ from .review import (
 from .router import route_scope
 from .freshness import uri_freshness_score
 from .dedup import scan_duplicates
+from .domain_filter import (
+    extract_domain, domain_matches,
+    filter_results_by_domain, filter_text_by_domain,
+    build_domain_prompt_hint,
+)
 from .decision_report import format_report, format_report_short
 from .session_manager import OVClient, SessionManager
 from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
@@ -54,6 +59,8 @@ __all__ = [
     "JudgeResult",
     # supplementary (OV doesn't have these)
     "uri_freshness_score", "scan_duplicates",
+    "extract_domain", "domain_matches",
+    "filter_results_by_domain", "filter_text_by_domain", "build_domain_prompt_hint",
     "format_report", "format_report_short",
     # config
     "chat", "env", "log", "validate_config",

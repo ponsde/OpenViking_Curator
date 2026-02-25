@@ -40,7 +40,11 @@ def env(name: str, default: str = "") -> str:
 
 def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
     """Build system + user prompt for search. Shared across LLM-backed providers."""
+    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
+    from .domain_filter import build_domain_prompt_hint
+
     today = datetime.date.today().isoformat()
+    domain_hint = build_domain_prompt_hint(ALLOWED_DOMAINS, BLOCKED_DOMAINS)
     system = (
         "你是实时搜索助手。重视可验证来源和信息时效性。"
         f"当前日期: {today}。"
@@ -48,6 +52,7 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
         "如果搜到的信息可能已过时（如超过1年的项目、已变更的API流程），"
         "必须明确标注并提示用户验证。"
         "对于GitHub项目，务必区分：项目存在 ≠ 项目能用。"
+        + (f" {domain_hint}" if domain_hint else "")
     )
     user = (
         f"问题: {query}\n"
@@ -141,7 +146,14 @@ def _search_duckduckgo(query: str, scope: dict) -> str:
     except ImportError as e:
         raise ImportError("duckduckgo-search not installed: pip install duckduckgo-search") from e
 
+    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
+    from .domain_filter import filter_results_by_domain
+
     results = DDGS().text(query, max_results=5)
+    if not results:
+        return ""
+
+    results = filter_results_by_domain(results, "href", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
     if not results:
         return ""
 
@@ -170,7 +182,14 @@ def _search_tavily(query: str, scope: dict) -> str:
     client = TavilyClient(api_key=key)
     response = client.search(query, max_results=5)
 
+    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
+    from .domain_filter import filter_results_by_domain
+
     results = response.get("results", []) if isinstance(response, dict) else []
+    if not results:
+        return ""
+
+    results = filter_results_by_domain(results, "url", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
     if not results:
         return ""
 

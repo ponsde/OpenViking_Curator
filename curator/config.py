@@ -49,6 +49,13 @@ GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
 SEARCH_PROVIDERS = env("CURATOR_SEARCH_PROVIDERS", "grok")  # e.g. "grok,duckduckgo,tavily"
 TAVILY_KEY = env("CURATOR_TAVILY_KEY", "")
 
+# Domain filtering for external search results.
+# ALLOWED_DOMAINS: if set, only results from these domains are kept.
+# BLOCKED_DOMAINS: results from these domains are always removed.
+# Both accept comma-separated lists; blocked takes precedence over allowed.
+ALLOWED_DOMAINS = [d.strip().lower() for d in env("CURATOR_ALLOWED_DOMAINS", "").split(",") if d.strip()]
+BLOCKED_DOMAINS = [d.strip().lower() for d in env("CURATOR_BLOCKED_DOMAINS", "").split(",") if d.strip()]
+
 # Concurrent search mode: fire all providers in parallel, take fastest non-empty result
 SEARCH_CONCURRENT = env("CURATOR_SEARCH_CONCURRENT", "0") == "1"
 SEARCH_TIMEOUT = float(env("CURATOR_SEARCH_TIMEOUT", "60"))
