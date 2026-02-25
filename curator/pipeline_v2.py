@@ -22,6 +22,7 @@ from .retrieval_v2 import ov_retrieve, load_context, assess_coverage
 from .session_manager import OVClient, SessionManager
 from .search import external_search, cross_validate
 from .review import judge_and_ingest, detect_conflict
+from .decision_report import format_report, format_report_short
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
@@ -88,6 +89,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
         "meta": {},
         "metrics": {},
         "case_path": None,
+        "decision_report": "",
     }
 
     # ── decision_trace: 记录关键决策路径 ──
@@ -292,6 +294,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
         "scores": report["scores"],
     }
     result["case_path"] = case_path
+    result["decision_report"] = format_report(result)
 
     log.info("完成: %.1fs, coverage=%.2f, external=%s, llm_calls=%d",
              report["duration_sec"], coverage,
