@@ -266,7 +266,7 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     count = len(scores)
 
     # 规模修正：知识库结果数少时，OV score 分布不可信，适当放宽阈值
-    # n=1 → factor≈0.80, n=3 → factor≈0.90, n≥8 → factor=1.0（恢复原始阈值）
+    # n=1 → factor≈0.78, n=3 → factor≈0.84, n≥9 → factor=1.0（恢复原始阈值）
     scale_factor = min(1.0, 0.75 + 0.03 * count)
     effective_sufficient = THRESHOLD_COV_SUFFICIENT * scale_factor
     effective_marginal   = THRESHOLD_COV_MARGINAL   * scale_factor

@@ -186,18 +186,21 @@ def run(query: str, client=None, auto_ingest: bool = True,
                 cv = cross_validate(query, external_txt, scope)
                 external_txt = cv.get("validated", external_txt)
                 cv_warnings = cv.get("warnings", [])
-                # 把 cross_validate 发现的风险内联到文本前缀，让 judge 能看到
-                if cv_warnings:
-                    warning_block = "\n".join(cv_warnings)
-                    external_txt = f"[cross_validate warnings]\n{warning_block}\n\n{external_txt}"
                 trace["llm_calls"] += 1
                 m.step("cross_validate", True, {"warnings": len(cv_warnings)})
             else:
                 m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
 
             # B2: judge + conflict 合并为一次 LLM 调用
+            # cv_warnings 追加在末尾：正文优先占 judge 的 3000-char 预算，
+            # warnings 在截断线之后也无大碍（judge 看不到也不会更差），
+            # result["external_text"] 保持干净（不含 warnings 前缀）
+            judge_txt = external_txt
+            if cv_warnings:
+                warning_block = "\n".join(cv_warnings)
+                judge_txt = f"{external_txt}\n\n[cross_validate warnings]\n{warning_block}"
             judge_result = judge_and_ingest(
-                backend, query, context_text, external_txt,
+                backend, query, context_text, judge_txt,
             )
             trace["llm_calls"] += 1
             m.step("judge_and_conflict", True, {
@@ -362,10 +365,9 @@ def _write_pending(query: str, judge_result: dict, conflict: dict, reason: str) 
         conflict: Conflict resolution dict from pipeline.
         reason: Why ingest was blocked (e.g. 'conflict:human_review', 'review_mode').
     """
-    import time as _time
     pending_path = os.path.join(DATA_PATH, "pending_review.jsonl")
     entry = {
-        "time": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "reason": reason,
         "query": query,
         "trust": judge_result.get("trust", 0),
