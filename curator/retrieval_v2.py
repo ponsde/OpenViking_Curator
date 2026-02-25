@@ -27,16 +27,19 @@ def rerank_with_feedback(items: list) -> list:
     """用 feedback_store 的命中记录微调检索排名。
 
     调整公式（保守，OV 原始 score 仍主导）：
-        boost  = (up + adopt*2) / (total + 1) * FEEDBACK_WEIGHT
-        penalty = down           / (total + 1) * FEEDBACK_WEIGHT
-        adjusted = original_score + boost - penalty
+        raw_boost   = min(1.0, (up + adopt*2) / (total + 1))
+        raw_penalty = min(1.0, down           / (total + 1))
+        delta       = (raw_boost - raw_penalty) * FEEDBACK_WEIGHT
+
+    delta 范围：(-FEEDBACK_WEIGHT, +FEEDBACK_WEIGHT)，即默认 (-0.10, +0.10)。
+    clamp 到 1.0 后再乘权重，保证 OV 原始分始终主导排名。
 
     up    = 显式「有用」标记
     down  = 显式「没用」标记
     adopt = OV 结果被 pipeline 实际采用（自动记录）
 
     adopt 权重 ×2，因为它是 pipeline 根据实际效果自动记录的客观信号，
-    比手动标记更可靠。
+    比手动标记更可靠——但乘以 FEEDBACK_WEIGHT 后仍受上限约束。
     """
     if not items:
         return items
@@ -63,9 +66,10 @@ def rerank_with_feedback(items: list) -> list:
         adopt = rec.get("adopt", 0)
         total = up + down + adopt
 
-        boost   = (up + adopt * 2) / (total + 1) * FEEDBACK_WEIGHT
-        penalty = down              / (total + 1) * FEEDBACK_WEIGHT
-        delta   = round(boost - penalty, 4)
+        # clamp 信号到 [0, 1] 再乘权重，确保 delta ∈ (-WEIGHT, +WEIGHT)
+        boost_signal   = min(1.0, (up + adopt * 2) / (total + 1))
+        penalty_signal = min(1.0, down              / (total + 1))
+        delta = round((boost_signal - penalty_signal) * FEEDBACK_WEIGHT, 4)
 
         new_item = dict(item)
         original = float(item.get("score", 0) or 0)
@@ -112,7 +116,10 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
             qtext = getattr(q, "query", "") if not isinstance(q, dict) else q.get("query", "")
             log.debug("  [%s] %s", ct, qtext)
 
-    # feedback 微调排名（保守权重，OV 原始 score 仍主导）
+    # 保留原始分快照，供 assess_coverage 使用（评估覆盖率应基于 OV 原始信号）
+    all_items_raw = list(all_items)
+
+    # feedback 微调排名（保守权重，OV 原始 score 仍主导排序和 load_context 优先级）
     all_items = rerank_with_feedback(all_items)
 
     return {
@@ -120,7 +127,8 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
         "resources": resources,
         "skills": skills,
         "query_plan": result.get("query_plan"),
-        "all_items": all_items,
+        "all_items": all_items,          # feedback-adjusted，用于 load_context 排序
+        "all_items_raw": all_items_raw,  # OV 原始分，用于 assess_coverage 覆盖率判断
     }
 
 
@@ -228,10 +236,11 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
 
 
 def assess_coverage(result: dict, query: str = "") -> tuple:
-    """基于 OV score 评估覆盖率（简化版）。
+    """基于 OV 原始 score 评估覆盖率（简化版）。
 
-    信任 OV 的 score，不做关键词匹配、feedback/trust/freshness 加权。
-    OV 自身有 active_count 等机制来调整 score。
+    使用 result["all_items_raw"]（OV 原始分，未经 feedback 调整），
+    确保覆盖率判断和是否触发外搜只依赖 OV 自身信号，不受 feedback 影响。
+    若 all_items_raw 不存在（旧调用兼容），退回到 all_items。
 
     规则：
     - top_score > 0.55 且 count >= 2 → local_sufficient
@@ -240,7 +249,8 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
 
     返回: (coverage: float, need_external: bool, reason: str)
     """
-    all_items = result.get("all_items", [])
+    # 优先用原始分，保证外搜决策不受 feedback 影响
+    all_items = result.get("all_items_raw") or result.get("all_items", [])
 
     if not all_items:
         return 0.0, True, "no_results"
