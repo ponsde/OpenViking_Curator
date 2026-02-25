@@ -6,15 +6,28 @@ OV 的 memory_deduplicator 只管 memory 去重，不管 resources。
 注意：只报告疑似重复，不自动删除/合并。
 
 All knowledge-store operations go through KnowledgeBackend (or duck-typed compatible).
+
+## 两层去重策略
+
+Layer 1 — URL hash（O(1) per pair）：
+    从文本中 regex 抽取所有 http(s) URL，取 md5 哈希集合。
+    两篇文章 URL 哈希有交集 → 直接判定重复，不再做文本相似度。
+    这能精确命中「同一来源被入库两次」的场景。
+
+Layer 2 — Jaccard 词集合（无外部依赖）：
+    对词集合计算 |intersection| / |union|（Jaccard index）。
+    相比旧版 SequenceMatcher（字符级），Jaccard 对词序不敏感、
+    更能反映语义重叠，且时间复杂度从 O(n²) 降到 O(vocab)。
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import json
+import re
 import time
 from pathlib import Path
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from .config import log
@@ -31,6 +44,63 @@ DEDUP_LOG_FILE = os.getenv(
 )
 SIMILARITY_THRESHOLD = 0.55
 
+_URL_RE = re.compile(r"https?://[^\s)\]>\"']{8,}")
+
+
+# ── Layer 1: URL hash ────────────────────────────────────────────────────────
+
+def _url_hashes(text: str) -> frozenset:
+    """从文本中提取所有 http(s) URL，返回其 md5 哈希集合。
+
+    使用哈希而非原始 URL，避免查询时泄漏完整 URL，同时保持 O(1) 交集判断。
+    """
+    urls = _URL_RE.findall(text or "")
+    return frozenset(
+        hashlib.md5(u.strip().lower().encode("utf-8")).hexdigest()
+        for u in urls
+    )
+
+
+def _url_overlap(hashes_a: frozenset, hashes_b: frozenset) -> bool:
+    """两个文档的 URL 哈希集合有交集 → 视为来源重叠的重复。
+
+    只在双方各至少有 1 个 URL 时才判断，避免把「没有 URL 的文档」都误判为非重复。
+    """
+    if not hashes_a or not hashes_b:
+        return False
+    return bool(hashes_a & hashes_b)
+
+
+# ── Layer 2: Jaccard 词相似度 ─────────────────────────────────────────────────
+
+def _tokenize(text: str) -> frozenset:
+    """简单分词：小写化 + 按非字母数字分割，过滤短词。"""
+    return frozenset(
+        w for w in re.split(r"[^a-z0-9\u4e00-\u9fff]+", text.lower())
+        if len(w) >= 2
+    )
+
+
+def _jaccard_similarity(a: str, b: str) -> float:
+    """词集合 Jaccard 相似度：|A∩B| / |A∪B|。
+
+    相比 SequenceMatcher：
+    - 对词序不敏感（重组段落仍能检出）
+    - 时间复杂度 O(vocab)，比字符级 O(n²) 快
+    - 无外部依赖
+    """
+    if not a or not b:
+        return 0.0
+    tokens_a = _tokenize(a[:2000])
+    tokens_b = _tokenize(b[:2000])
+    if not tokens_a or not tokens_b:
+        return 0.0
+    inter = len(tokens_a & tokens_b)
+    union = len(tokens_a | tokens_b)
+    return inter / union if union else 0.0
+
+
+# ── 去重日志 I/O ─────────────────────────────────────────────────────────────
 
 def _load_dedup_log() -> dict:
     try:
@@ -51,20 +121,23 @@ def _save_dedup_log(state: dict):
     log_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _text_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    a = a[:1000].lower().strip()
-    b = b[:1000].lower().strip()
-    return SequenceMatcher(None, a, b).ratio()
-
-
 def _pair_key(uri_a: str, uri_b: str) -> str:
     return "|".join(sorted([uri_a, uri_b]))
 
 
+# ── 公开接口 ──────────────────────────────────────────────────────────────────
+
 def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
     """扫描 resources 中的疑似重复（只报告，不删除）。
+
+    **去重流程（两层）：**
+
+    1. Layer 1 — URL hash：两篇文章共享任一来源 URL → 直接标记重复，
+       ``method="url_hash"``，不再做文本比较。
+
+    2. Layer 2 — Jaccard 词相似度：无 URL 交集时比较词集合，
+       超过 ``SIMILARITY_THRESHOLD`` (默认 0.55) 则报告重复，
+       ``method="jaccard"``。
 
     Args:
         backend: A :class:`KnowledgeBackend` instance (or any object with a
@@ -74,7 +147,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
 
     Returns:
         Dict with ``checked`` (int) and ``duplicates`` (list of dicts with
-        ``uri_a``, ``uri_b``, ``similarity``).
+        ``uri_a``, ``uri_b``, ``similarity``, ``method``).
     """
     state = _load_dedup_log()
     checked_set = set(state["checked_pairs"])
@@ -86,7 +159,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
         return result
 
     # 读取内容
-    uri_contents = {}
+    uri_contents: dict[str, str] = {}
     for u in valid_uris[:10]:
         try:
             content = str(backend.read(u))
@@ -97,6 +170,11 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
 
     if len(uri_contents) < 2:
         return result
+
+    # 预计算 URL hash 集合（Layer 1）
+    uri_url_hashes: dict[str, frozenset] = {
+        u: _url_hashes(text) for u, text in uri_contents.items()
+    }
 
     checks_done = 0
     uri_list = list(uri_contents.keys())
@@ -114,15 +192,29 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 5) -> dict:
             if pk in checked_set:
                 continue
 
-            sim = _text_similarity(uri_contents[uri_a], uri_contents[uri_b])
             checked_set.add(pk)
             state["checked_pairs"].append(pk)
             checks_done += 1
             result["checked"] += 1
 
+            # Layer 1: URL hash 精确匹配
+            if _url_overlap(uri_url_hashes[uri_a], uri_url_hashes[uri_b]):
+                sim = 1.0
+                method = "url_hash"
+            else:
+                # Layer 2: Jaccard 词相似度
+                sim = _jaccard_similarity(uri_contents[uri_a], uri_contents[uri_b])
+                method = "jaccard"
+
             if sim >= SIMILARITY_THRESHOLD:
-                log.info("dedup: 疑似重复 (%.2f): %s vs %s", sim, uri_a, uri_b)
-                dup = {"uri_a": uri_a, "uri_b": uri_b, "similarity": round(sim, 3)}
+                log.info("dedup: 疑似重复 (%.2f, %s): %s vs %s",
+                         sim, method, uri_a, uri_b)
+                dup = {
+                    "uri_a": uri_a,
+                    "uri_b": uri_b,
+                    "similarity": round(sim, 3),
+                    "method": method,
+                }
                 result["duplicates"].append(dup)
                 state["reports"].append({
                     "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
