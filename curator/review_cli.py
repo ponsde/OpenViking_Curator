@@ -207,7 +207,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
             source_urls=entry.get("source_urls") or [],
             quality_feedback={
                 "judge_trust": entry.get("trust", 0),
-                "judge_reason": entry.get("conflict_summary", ""),
+                "judge_reason": entry.get("reason", ""),
                 "has_conflict": bool(entry.get("conflict_summary")),
                 "conflict_summary": entry.get("conflict_summary", ""),
                 "approved_by": "review_cli",

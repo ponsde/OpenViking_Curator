@@ -289,6 +289,33 @@ class TestCmdApprove(unittest.TestCase):
                 review_cli.cmd_approve(args)
             self.assertIn("OpenViking Session", captured.get("title", ""))
 
+    def test_approve_passes_source_urls_and_quality_feedback(self):
+        """source_urls and quality_feedback must be forwarded to ingest_markdown_v2."""
+        entry_with_urls = dict(SAMPLE_ENTRY, source_urls=["https://example.com/doc1", "https://example.com/doc2"])
+        captured = {}
+
+        def fake_ingest(backend, title, markdown, freshness="unknown",
+                        source_urls=None, quality_feedback=None):
+            captured["source_urls"] = source_urls
+            captured["quality_feedback"] = quality_feedback
+            return {"root_uri": "viking://test/1", "path": "/tmp/test.md", "status": "ok"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "pr.jsonl")
+            _write_jsonl(path, [entry_with_urls])
+            args = _make_args(file=path, index=0, in_memory=True)
+            backend = InMemoryBackend()
+            with patch.object(review_cli, "_make_backend", return_value=backend):
+                with patch("curator.review.ingest_markdown_v2", side_effect=fake_ingest):
+                    review_cli.cmd_approve(args)
+
+        self.assertEqual(captured.get("source_urls"), ["https://example.com/doc1", "https://example.com/doc2"])
+        qf = captured.get("quality_feedback", {})
+        self.assertEqual(qf.get("approved_by"), "review_cli")
+        self.assertEqual(qf.get("judge_trust"), SAMPLE_ENTRY["trust"])
+        # judge_reason should use entry["reason"], not conflict_summary
+        self.assertEqual(qf.get("judge_reason"), entry_with_urls.get("reason", ""))
+
 
 # ── cmd_reject ────────────────────────────────────────────────────────────────
 
