@@ -72,7 +72,11 @@ def _truncate_to(s: str, max_width: int) -> str:
     for i, ch in enumerate(s):
         eaw = unicodedata.east_asian_width(ch)
         step = 2 if eaw in ("W", "F") else 1
-        if cur + step > max_width - 1:  # 留 1 列给 '…'
+        if cur + step > max_width - 1:  # 为 '…'（1 列）留空间
+            # TODO(tech-debt): 当 cur+step == max_width 时（恰好 exact fit），
+            # 本条件也触发截断，会不必要地把 ABCD→ABC…（max_width=4）。
+            # 当前 _row() 的 guard 是严格 >，exact-fit 不会进这个函数，无实际影响。
+            # 完整修法：在最后一个字符且 exact-fit 时 return s 而非截断。
             return s[:i] + "…"
         cur += step
     return s
