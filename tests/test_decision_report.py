@@ -172,3 +172,47 @@ class TestFormatReportShort(unittest.TestCase):
         self.assertEqual(_display_width("ABC"), 3)
         self.assertEqual(_display_width("中文"), 4)
         self.assertEqual(_display_width("A中B"), 4)
+
+
+class TestTruncateTo(unittest.TestCase):
+    """Tests for _truncate_to() — exact-fit edge cases included."""
+
+    def setUp(self):
+        from curator.decision_report import _truncate_to
+        self.t = _truncate_to
+
+    def test_short_string_unchanged(self):
+        self.assertEqual(self.t("AB", 4), "AB")
+
+    def test_exact_fit_no_truncation(self):
+        """ABCD with max_width=4 should return 'ABCD', not 'ABC…'."""
+        self.assertEqual(self.t("ABCD", 4), "ABCD")
+
+    def test_one_over_truncated(self):
+        """ABCDE with max_width=4 should return 'ABC…'."""
+        self.assertEqual(self.t("ABCDE", 4), "ABC…")
+
+    def test_cjk_exact_fit(self):
+        """A中 display-width=3, max_width=3 → no truncation."""
+        self.assertEqual(self.t("A中", 3), "A中")
+
+    def test_cjk_one_over(self):
+        """A中B display-width=4, max_width=3 → 'A…'."""
+        self.assertEqual(self.t("A中B", 3), "A…")
+
+    def test_cjk_overflow_char(self):
+        """AB中 where 中 doesn't fit: display is 4, max_width=3 → 'AB…'."""
+        self.assertEqual(self.t("AB中", 3), "AB…")
+
+    def test_empty_string(self):
+        self.assertEqual(self.t("", 4), "")
+
+    def test_single_char_fits(self):
+        self.assertEqual(self.t("A", 1), "A")
+
+    def test_single_cjk_fits(self):
+        self.assertEqual(self.t("中", 2), "中")
+
+    def test_single_cjk_no_room(self):
+        """CJK char (width 2) with max_width=1: can't fit, return '…'."""
+        self.assertEqual(self.t("中", 1), "…")

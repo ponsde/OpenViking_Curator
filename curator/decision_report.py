@@ -67,18 +67,19 @@ def _truncate_to(s: str, max_width: int) -> str:
     """截断字符串，使显示宽度不超过 max_width（CJK 安全）。
 
     若需要截断，末尾加 '…'（占 1 列）。
+    Exact-fit（字符串宽度恰好等于 max_width）时直接返回原字符串，不截断。
     """
     cur = 0
     for i, ch in enumerate(s):
         eaw = unicodedata.east_asian_width(ch)
         step = 2 if eaw in ("W", "F") else 1
-        if cur + step > max_width - 1:  # 为 '…'（1 列）留空间
-            # TODO(tech-debt): 当 cur+step == max_width 时（恰好 exact fit），
-            # 本条件也触发截断，会不必要地把 ABCD→ABC…（max_width=4）。
-            # 当前 _row() 的 guard 是严格 >，exact-fit 不会进这个函数，无实际影响。
-            # 完整修法：在最后一个字符且 exact-fit 时 return s 而非截断。
+        if cur + step > max_width:
+            # 当前字符放不下（即使没有 '…'），截断并加省略号
             return s[:i] + "…"
         cur += step
+        if cur == max_width and i < len(s) - 1:
+            # 恰好填满，但后面还有字符——用省略号替换当前字符
+            return s[:i] + "…"
     return s
 
 
