@@ -144,7 +144,8 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
 
 
 def judge_and_ingest(backend: KnowledgeBackend, query: str,
-                     local_ctx: str, external_text: str) -> dict:
+                     local_ctx: str, external_text: str,
+                     cv_warnings: list = ()) -> dict:
     """B2: 合并审核 + 冲突检测为一次 LLM 调用。
 
     Args:
@@ -153,6 +154,9 @@ def judge_and_ingest(backend: KnowledgeBackend, query: str,
         query: User query string.
         local_ctx: Local context text from OV.
         external_text: External search result text.
+        cv_warnings: Optional list of risk warnings from cross_validate().
+            Injected into sys_prompt so they never compete with the
+            external_text[:3000] budget.
 
     Returns:
         Dict with keys: ``pass``, ``reason``, ``trust``, ``freshness``,
@@ -164,6 +168,14 @@ def judge_and_ingest(backend: KnowledgeBackend, query: str,
     local_snippet = (local_ctx or "")[:2000]
     external_snippet = (external_text or "")[:3000]
 
+    # cv_warnings 注入 sys_prompt，不占 external_text 预算
+    warnings_block = ""
+    if cv_warnings:
+        joined = "\n".join(cv_warnings)
+        warnings_block = (
+            f"\n\n⚠️ cross_validate 风险标注（审核时必须考虑）:\n{joined}"
+        )
+
     sys_prompt = (
         "你是知识库治理助手。你需要同时完成两件事：\n\n"
         "1. **审核外搜结果**：判断是否值得入库\n"
@@ -172,7 +184,8 @@ def judge_and_ingest(backend: KnowledgeBackend, query: str,
         "   - 已取消/变更的功能当作当前事实 → pass=false\n\n"
         "2. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
         "   - 细节差异不算冲突，结论矛盾才算\n\n"
-        f"当前日期: {today}\n\n"
+        f"当前日期: {today}"
+        f"{warnings_block}\n\n"
         "输出严格 JSON:\n"
         "{\n"
         '  "pass": bool,\n'

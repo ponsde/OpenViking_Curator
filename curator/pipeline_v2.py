@@ -192,15 +192,11 @@ def run(query: str, client=None, auto_ingest: bool = True,
                 m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
 
             # B2: judge + conflict 合并为一次 LLM 调用
-            # cv_warnings 追加在末尾：正文优先占 judge 的 3000-char 预算，
-            # warnings 在截断线之后也无大碍（judge 看不到也不会更差），
-            # result["external_text"] 保持干净（不含 warnings 前缀）
-            judge_txt = external_txt
-            if cv_warnings:
-                warning_block = "\n".join(cv_warnings)
-                judge_txt = f"{external_txt}\n\n[cross_validate warnings]\n{warning_block}"
+            # cv_warnings 注入 sys_prompt（在 judge_and_ingest 内部），
+            # 完全不占 external_text[:3000] 预算，result["external_text"] 保持干净
             judge_result = judge_and_ingest(
-                backend, query, context_text, judge_txt,
+                backend, query, context_text, external_txt,
+                cv_warnings=cv_warnings,
             )
             trace["llm_calls"] += 1
             m.step("judge_and_conflict", True, {
