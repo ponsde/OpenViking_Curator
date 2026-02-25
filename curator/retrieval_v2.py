@@ -117,6 +117,7 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
             log.debug("  [%s] %s", ct, qtext)
 
     # 保留原始分快照，供 assess_coverage 使用（评估覆盖率应基于 OV 原始信号）
+    # 浅拷贝足够：rerank_with_feedback 不 in-place 修改 item dict（有 feedback 时新建 dict）
     all_items_raw = list(all_items)
 
     # feedback 微调排名（保守权重，OV 原始 score 仍主导排序和 load_context 优先级）

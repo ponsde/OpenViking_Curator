@@ -153,3 +153,13 @@ class TestRerankWithFeedback:
             result = rerank_with_feedback(_make_items(("b", 0.5)))
         assert result[0]["_feedback_delta"] >= -FEEDBACK_WEIGHT - 1e-6, \
             f"负向 delta 超出 FEEDBACK_WEIGHT: {result[0]['_feedback_delta']}"
+
+    def test_score_none_with_feedback(self):
+        """score=None 且有 feedback 记录时，不应崩溃，delta 应被正确应用。"""
+        from curator.retrieval_v2 import rerank_with_feedback
+        fb = {"null-score": {"up": 1, "down": 0, "adopt": 0}}
+        with _patch_fb(fb):
+            items = [{"uri": "null-score", "score": None}]
+            result = rerank_with_feedback(items)
+        assert result[0]["score"] is not None  # None → 0.0 + delta
+        assert result[0]["_feedback_delta"] > 0
