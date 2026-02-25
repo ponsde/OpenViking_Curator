@@ -199,8 +199,20 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
     from .review import ingest_markdown_v2
     try:
-        result = ingest_markdown_v2(backend, title=title, markdown=markdown,
-                                    freshness=freshness)
+        result = ingest_markdown_v2(
+            backend,
+            title=title,
+            markdown=markdown,
+            freshness=freshness,
+            source_urls=entry.get("source_urls") or [],
+            quality_feedback={
+                "judge_trust": entry.get("trust", 0),
+                "judge_reason": entry.get("conflict_summary", ""),
+                "has_conflict": bool(entry.get("conflict_summary")),
+                "conflict_summary": entry.get("conflict_summary", ""),
+                "approved_by": "review_cli",
+            },
+        )
     except Exception as e:
         print(f"[error] ingest_markdown_v2 failed: {e}", file=sys.stderr)
         return 1

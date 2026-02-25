@@ -226,7 +226,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
                         })
                         log.info("冲突阻止入库: preferred=%s, summary=%s",
                                  conflict_preferred, conflict.get("summary", ""))
-                        _write_pending(query, judge_result, conflict, reason=f"conflict:{conflict_preferred}")
+                        _write_pending(query, judge_result, conflict, reason=f"conflict:{conflict_preferred}", source_urls=_extract_urls(external_txt))
                     elif auto_ingest:
                         try:
                             from .review import ingest_markdown_v2
@@ -255,7 +255,7 @@ def run(query: str, client=None, auto_ingest: bool = True,
                         # Review mode: 内容通过 judge 但不自动入库，持久化到 pending_review.jsonl
                         m.step("ingest", False, {"reason": "review_mode_pending"})
                         log.info("审核模式: 内容待人工确认，未自动入库")
-                        _write_pending(query, judge_result, conflict, reason="review_mode")
+                        _write_pending(query, judge_result, conflict, reason="review_mode", source_urls=_extract_urls(external_txt))
     else:
         # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
@@ -349,7 +349,8 @@ def _log_query(query: str, coverage: float, need_external: bool,
         log.warning("query log 写入失败（不影响主流程）: %s", e)
 
 
-def _write_pending(query: str, judge_result: dict, conflict: dict, reason: str) -> None:
+def _write_pending(query: str, judge_result: dict, conflict: dict,
+                   reason: str, source_urls: list[str] | None = None) -> None:
     """待审核内容持久化到 DATA_PATH/pending_review.jsonl。
 
     当内容通过 judge 但因冲突或审核模式未自动入库时调用。
@@ -360,6 +361,7 @@ def _write_pending(query: str, judge_result: dict, conflict: dict, reason: str) 
         judge_result: Output from judge_and_ingest.
         conflict: Conflict resolution dict from pipeline.
         reason: Why ingest was blocked (e.g. 'conflict:human_review', 'review_mode').
+        source_urls: Extracted source URLs from external_txt (for review_cli approve).
     """
     pending_path = os.path.join(DATA_PATH, "pending_review.jsonl")
     entry = {
@@ -370,6 +372,7 @@ def _write_pending(query: str, judge_result: dict, conflict: dict, reason: str) 
         "freshness": judge_result.get("freshness", "unknown"),
         "conflict_summary": conflict.get("summary", ""),
         "conflict_preferred": conflict.get("resolution", {}).get("preferred", ""),
+        "source_urls": source_urls or [],
         "markdown": judge_result.get("markdown", ""),
     }
     try:
