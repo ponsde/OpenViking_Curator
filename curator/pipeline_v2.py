@@ -144,6 +144,18 @@ def run(query: str, client=None, auto_ingest: bool = True,
     trace["load_stage"] = load_stage
     trace["external_reason"] = cov_reason
 
+    # ── 自动记录 OV 命中（feedback 学习）──
+    # 被 load_context 实际采用的 URI 记一次 adopt，
+    # 供下次检索时 rerank_with_feedback() 微调排名。
+    if used_uris:
+        try:
+            import feedback_store
+            for uri in used_uris:
+                feedback_store.apply(uri, "adopt")
+            log.debug("feedback adopt: %d uris", len(used_uris))
+        except Exception as _fb_err:
+            log.debug("feedback_store 不可用，跳过: %s", _fb_err)
+
     result["context_text"] = context_text
     result["coverage"] = coverage
 

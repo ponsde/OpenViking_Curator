@@ -16,10 +16,69 @@ from .config import (
     log,
     THRESHOLD_L0_SUFFICIENT, THRESHOLD_L1_SUFFICIENT,
     THRESHOLD_COV_SUFFICIENT, THRESHOLD_COV_MARGINAL, THRESHOLD_COV_LOW,
+    FEEDBACK_WEIGHT,
 )
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
+
+
+def rerank_with_feedback(items: list) -> list:
+    """用 feedback_store 的命中记录微调检索排名。
+
+    调整公式（保守，OV 原始 score 仍主导）：
+        boost  = (up + adopt*2) / (total + 1) * FEEDBACK_WEIGHT
+        penalty = down           / (total + 1) * FEEDBACK_WEIGHT
+        adjusted = original_score + boost - penalty
+
+    up    = 显式「有用」标记
+    down  = 显式「没用」标记
+    adopt = OV 结果被 pipeline 实际采用（自动记录）
+
+    adopt 权重 ×2，因为它是 pipeline 根据实际效果自动记录的客观信号，
+    比手动标记更可靠。
+    """
+    if not items:
+        return items
+
+    try:
+        import feedback_store
+        fb = feedback_store.load()
+    except Exception:
+        return items   # feedback_store 不可用时静默跳过，不影响检索
+
+    if not fb:
+        return items   # 没有任何 feedback 记录，直接返回
+
+    adjusted = []
+    for item in items:
+        uri = item.get("uri", "")
+        rec = fb.get(uri)
+        if not rec:
+            adjusted.append(item)
+            continue
+
+        up = rec.get("up", 0)
+        down = rec.get("down", 0)
+        adopt = rec.get("adopt", 0)
+        total = up + down + adopt
+
+        boost   = (up + adopt * 2) / (total + 1) * FEEDBACK_WEIGHT
+        penalty = down              / (total + 1) * FEEDBACK_WEIGHT
+        delta   = round(boost - penalty, 4)
+
+        new_item = dict(item)
+        original = float(item.get("score", 0) or 0)
+        new_item["score"] = round(original + delta, 4)
+        new_item["_feedback_delta"] = delta
+        adjusted.append(new_item)
+        if delta:
+            log.debug("feedback rerank: uri=%s delta=%+.4f (up=%d down=%d adopt=%d)",
+                      uri, delta, up, down, adopt)
+
+    # 重新按 score 降序排列
+    adjusted.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return adjusted
 
 
 def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
@@ -31,7 +90,7 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
             "resources": [...],
             "skills": [...],
             "query_plan": {...} or None,
-            "all_items": [...]  # 三路合并的扁平列表
+            "all_items": [...]  # 三路合并的扁平列表，已按 feedback 微调排序
         }
     """
     result = session_mgr.search(query, limit=limit)
@@ -52,6 +111,9 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
             ct = getattr(q, "context_type", "?") if not isinstance(q, dict) else q.get("context_type", "?")
             qtext = getattr(q, "query", "") if not isinstance(q, dict) else q.get("query", "")
             log.debug("  [%s] %s", ct, qtext)
+
+    # feedback 微调排名（保守权重，OV 原始 score 仍主导）
+    all_items = rerank_with_feedback(all_items)
 
     return {
         "memories": memories,
