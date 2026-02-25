@@ -50,8 +50,10 @@ Curator is the **governance layer** — it decides what goes in and out of your 
 | **Conflict resolution** | Configurable: `auto` / `local` / `external` / `human`. Can block ingest. | `pipeline_v2.py` |
 | **Ingest** | Writes to OV with metadata: `source_urls`, `version`, `quality_feedback`, TTL. Local backup in `curated/`. | `review.py` |
 | **Verify ingest** | Searches OV again to confirm new content is retrievable. | `pipeline_v2.py` |
-| **Scan duplicates** | Title similarity (SequenceMatcher). Reports only — no auto-delete. | `dedup.py` |
+| **Scan duplicates** | Two-layer: URL hash (exact source match) → Jaccard word similarity (no external deps). Reports only — no auto-delete. | `dedup.py` |
 | **Score freshness** | URI timestamp → decay score (fresh → stale). | `freshness.py` |
+| **Feedback-driven reranking** | `feedback_store` records `up`/`down`/`adopt` per URI. Retrieval results are re-ranked by feedback signals (±0.10 max delta, OV score stays dominant). Pipeline auto-records `adopt` after using OV results. | `retrieval_v2.py` + `feedback_store.py` |
+| **Decision Report** | `format_report(result)` produces a CJK-safe ASCII box summary of every pipeline run: coverage, load stage, external trigger, LLM calls, conflict, duration. Also available as `format_report_short()` for log lines. Included in every `run()` return as `result["decision_report"]`. | `decision_report.py` |
 | **Track sessions** | Records queries + used URIs. Commits to extract long-term memory. | `session_manager.py` |
 | **Log queries** | Every query → `data/query_log.jsonl` with coverage, reasons, LLM calls. | `pipeline_v2.py` |
 | **Analyze weak topics** | Clusters query logs → finds knowledge gaps. | `scripts/analyze_weak.py` |
@@ -147,6 +149,20 @@ print(result["external_text"])        # external (if any)
 print(result["coverage"])             # 0.0 ~ 1.0
 print(result["meta"]["ingested"])     # True if new content stored
 print(result["conflict"])             # conflict detection
+
+# v0.1.0: decision report (always present)
+print(result["decision_report"])      # CJK-safe ASCII box summary
+# ┌─── Curator Decision Report ──────────────────────────┐
+# │ Coverage    : 0.68  (local_sufficient)               │
+# │ Load stage  : L0 (abstract 已足够)                   │
+# │ Used URIs   : 3                                      │
+# │ External    : No                                     │
+# └──────────────────────────────────────────────────────┘
+
+# v0.1.0: manual feedback (boosts retrieval ranking next time)
+import feedback_store
+feedback_store.apply("viking://resource/doc-id", "up")   # mark helpful
+feedback_store.apply("viking://resource/doc-id", "down") # mark unhelpful
 ```
 
 ## Output
@@ -286,11 +302,11 @@ python -m pytest tests/ -v
 - [x] Pydantic-validated judge output
 - [x] Weak topic analysis + proactive strengthening
 - [x] Freshness scanning + TTL management
-- [ ] Quality feedback loop (feedback → retrieval ranking)
-- [ ] Enhanced dedup (URL hash + embedding similarity)
+- [x] Quality feedback loop (feedback → retrieval ranking) ← v0.1.0
+- [x] Enhanced dedup (URL hash + Jaccard word similarity) ← v0.1.0
+- [x] Decision report (human-readable pipeline trace) ← v0.1.0
 - [ ] Async ingest (fire-and-forget background processing)
 - [ ] Auto-generate L0/L1 summaries on ingest
-- [ ] Decision report (human-readable trace)
 - [ ] More search providers (DuckDuckGo, Tavily)
 - [ ] Coverage auto-tuning (dynamic thresholds)
 - [ ] Usage-based TTL (hit → extend, unused → shrink)

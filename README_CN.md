@@ -50,8 +50,10 @@ Curator 是**治理层**——决定什么该进知识库、什么不该进。
 | **冲突解决** | 可配：`auto` / `local` / `external` / `human`。冲突可阻止入库 | `pipeline_v2.py` |
 | **入库** | 写回 OV 附元数据：`source_urls`、`version`、`quality_feedback`、TTL。本地备份 | `review.py` |
 | **入库验证** | 入库后再搜 OV 确认可检索 | `pipeline_v2.py` |
-| **去重扫描** | 标题相似度对比。报告疑似重复——不自动删除 | `dedup.py` |
+| **去重扫描** | 两层策略：URL 哈希（精确来源匹配）→ Jaccard 词集合相似度（无外部依赖）。只报告，不自动删除 | `dedup.py` |
 | **时效评分** | URI 时间戳 → 衰减分 | `freshness.py` |
+| **反馈驱动重排** | `feedback_store` 记录每个 URI 的 `up`/`down`/`adopt`。检索结果按反馈微调排名（最大 ±0.10，OV 原始分仍主导）。Pipeline 用完 OV 结果后自动记录 `adopt` | `retrieval_v2.py` + `feedback_store.py` |
+| **决策报告** | `format_report(result)` 生成每次 Pipeline 运行的 CJK 安全 ASCII box 摘要：覆盖率、加载阶段、外搜触发、LLM 调用次数、冲突、耗时。每次 `run()` 返回自动包含 `result["decision_report"]` | `decision_report.py` |
 | **Session 追踪** | 记录查询 + 使用的 URI。提交提取长期记忆 | `session_manager.py` |
 | **查询日志** | 每次查询 → `data/query_log.jsonl` | `pipeline_v2.py` |
 | **弱主题分析** | 聚类 query log 找知识空白 | `scripts/analyze_weak.py` |
@@ -252,11 +254,11 @@ python -m pytest tests/ -v
 - [x] Pydantic 校验
 - [x] 弱主题分析 + 补强
 - [x] 时效扫描 + TTL
-- [ ] 质量反馈闭环
-- [ ] 去重增强（URL 哈希 + embedding）
+- [x] 质量反馈闭环（feedback → 检索排名）← v0.1.0
+- [x] 去重增强（URL 哈希 + Jaccard 词集合）← v0.1.0
+- [x] 决策报告（Pipeline 执行轨迹可读摘要）← v0.1.0
 - [ ] 异步入库
 - [ ] 入库自动生成 L0/L1 摘要
-- [ ] Decision Report
 - [ ] 更多搜索提供者
 - [ ] 覆盖率自动调优
 - [ ] Usage-based TTL
