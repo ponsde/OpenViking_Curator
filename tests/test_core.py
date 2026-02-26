@@ -101,6 +101,56 @@ class TestAssessCoverage(unittest.TestCase):
         self.assertTrue(need_ext)
         self.assertIn(reason, ("low_coverage", "insufficient"))
 
+    def test_score_gap_degrades_coverage(self):
+        """Large gap between top1 and top2 should reduce confidence."""
+        # Tight cluster: top1=0.7, top2=0.65 → small gap → sufficient
+        tight = [
+            {"uri": "a", "score": 0.7, "abstract": "docker deploy"},
+            {"uri": "b", "score": 0.65, "abstract": "nginx config"},
+        ]
+        _, need_ext_tight, reason_tight = assess_coverage({"all_items": tight}, query="docker")
+
+        # Wide gap: top1=0.7, top2=0.3 → big gap → less confident
+        wide = [
+            {"uri": "a", "score": 0.7, "abstract": "docker deploy"},
+            {"uri": "b", "score": 0.3, "abstract": "unrelated"},
+        ]
+        cov_wide, need_ext_wide, reason_wide = assess_coverage({"all_items": wide}, query="docker")
+
+        # Wide gap should degrade coverage compared to tight cluster
+        self.assertEqual(reason_tight, "local_sufficient")
+        # With gap penalty, wide gap may drop to marginal or stay sufficient
+        # but coverage value should be lower
+        cov_tight, _, _ = assess_coverage({"all_items": tight}, query="docker")
+        self.assertLessEqual(cov_wide, cov_tight)
+
+    def test_keyword_overlap_affects_coverage(self):
+        """Low keyword overlap should trigger external search more often."""
+        from curator.retrieval_v2 import _keyword_overlap
+
+        # Good overlap
+        items_match = [{"abstract": "how to deploy Redis on Ubuntu Linux"}]
+        overlap = _keyword_overlap("deploy Redis Ubuntu", items_match)
+        self.assertGreater(overlap, 0.5)
+
+        # No overlap
+        items_nomatch = [{"abstract": "cooking recipes for pasta"}]
+        overlap_none = _keyword_overlap("deploy Redis Ubuntu", items_nomatch)
+        self.assertEqual(overlap_none, 0.0)
+
+    def test_keyword_overlap_empty_query(self):
+        """Empty query returns 0.0 overlap."""
+        from curator.retrieval_v2 import _keyword_overlap
+
+        self.assertEqual(_keyword_overlap("", [{"abstract": "test"}]), 0.0)
+
+    def test_keyword_overlap_no_keywords(self):
+        """Query with no extractable keywords returns 1.0 (can't measure)."""
+        from curator.retrieval_v2 import _keyword_overlap
+
+        # Single short chars can't form 3+ char EN tokens or 2+ CN chars
+        self.assertEqual(_keyword_overlap("a b", [{"abstract": "test"}]), 1.0)
+
 
 # ─── load_context (v2, strict on-demand) ─────────────────────
 

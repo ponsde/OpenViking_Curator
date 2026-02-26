@@ -241,17 +241,41 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     return context_text, used_uris, "L2"
 
 
+def _keyword_overlap(query: str, items: list) -> float:
+    """Check how many query keywords appear in top item abstracts.
+
+    Returns a ratio in [0.0, 1.0].  Higher = more keywords covered locally.
+    """
+    import re
+
+    if not query or not items:
+        return 0.0
+
+    # Extract query keywords (EN tokens 3+ chars, CN tokens 2-4 chars)
+    en_tokens = {t.lower() for t in re.findall(r"[a-zA-Z0-9_\-/.]{3,}", query)}
+    cn_tokens = set(re.findall(r"[\u4e00-\u9fff]{2,4}", query))
+    keywords = en_tokens | cn_tokens
+    if not keywords:
+        return 1.0  # no extractable keywords = can't measure, assume OK
+
+    # Combine abstracts from top items
+    combined = " ".join(str(it.get("abstract", "")) for it in items[:5]).lower()
+
+    matched = sum(1 for kw in keywords if kw.lower() in combined)
+    return matched / len(keywords)
+
+
 def assess_coverage(result: dict, query: str = "") -> tuple:
-    """基于 OV 原始 score 评估覆盖率（简化版）。
+    """基于 OV 原始 score 评估覆盖率。
 
     使用 result["all_items_raw"]（OV 原始分，未经 feedback 调整），
     确保覆盖率判断和是否触发外搜只依赖 OV 自身信号，不受 feedback 影响。
     若 all_items_raw 不存在（旧调用兼容），退回到 all_items。
 
-    规则：
-    - top_score > 0.55 且 count >= 2 → local_sufficient
-    - top_score > 0.45 且 count >= 1 → local_marginal
-    - 否则 → need_external
+    信号组合（0 LLM 调用）：
+    - OV score 阈值 + 结果数量（基础判断）
+    - Score gap：top1 >> top2 表示可能是孤立命中，降低信心
+    - Keyword overlap：query 关键词在 abstract 中的覆盖率
 
     返回: (coverage: float, need_external: bool, reason: str)
     """
@@ -265,27 +289,48 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     if not scored_items:
         return 0.0, True, "no_scores"
 
-    scores = [x.get("score", 0) for x in scored_items]
+    scores = sorted((x.get("score", 0) for x in scored_items), reverse=True)
     avg_score = sum(scores) / len(scores)
-    top_score = max(scores)
+    top_score = scores[0]
     count = len(scores)
 
+    # ── Score gap penalty ──
+    # If top1 >> top2 by a large margin, it's likely an isolated hit
+    # (one lucky document, rest are noise).  Reduce effective coverage.
+    gap_penalty = 0.0
+    if count >= 2:
+        gap = scores[0] - scores[1]
+        if gap > 0.25:
+            gap_penalty = min(0.10, gap * 0.3)
+
+    # ── Keyword overlap ──
+    kw_overlap = _keyword_overlap(query, scored_items)
+    # Low keyword coverage = local results might not actually answer the query
+    kw_penalty = 0.0
+    if kw_overlap < 0.4:
+        kw_penalty = 0.08
+    elif kw_overlap < 0.6:
+        kw_penalty = 0.04
+
+    # ── Scale factor ──
     # 规模修正：知识库结果数少时，OV score 分布不可信，适当放宽阈值
-    # n=1 → factor≈0.78, n=3 → factor≈0.84, n≥9 → factor=1.0（恢复原始阈值）
     scale_factor = min(1.0, 0.75 + 0.03 * count)
     effective_sufficient = THRESHOLD_COV_SUFFICIENT * scale_factor
     effective_marginal = THRESHOLD_COV_MARGINAL * scale_factor
 
+    # Apply penalties to effective score for threshold comparison
+    adjusted_top = top_score - gap_penalty - kw_penalty
+
     # 基于有效阈值判断
-    if top_score > effective_sufficient and count >= 2:
-        coverage = min(1.0, avg_score + 0.2)
+    if adjusted_top > effective_sufficient and count >= 2:
+        coverage = min(1.0, avg_score + 0.2 - gap_penalty)
         reason = "local_sufficient"
         need_external = False
-    elif top_score > effective_marginal and count >= 1:
-        coverage = avg_score
+    elif adjusted_top > effective_marginal and count >= 1:
+        coverage = avg_score - gap_penalty * 0.5
         reason = "local_marginal"
-        need_external = True  # marginal 也外搜补充
-    elif top_score > THRESHOLD_COV_LOW and count >= 1:
+        need_external = True
+    elif adjusted_top > THRESHOLD_COV_LOW and count >= 1:
         coverage = avg_score * 0.8
         reason = "low_coverage"
         need_external = True
