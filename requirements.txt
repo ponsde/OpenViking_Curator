@@ -1,3 +1,7 @@
+# Fallback for users without uv. Source of truth is pyproject.toml + uv.lock.
+# Keep in sync with pyproject.toml [project.dependencies].
 requests>=2.31,<3
 pydantic>=2.0,<3
+pydantic-settings>=2.0,<3
+structlog>=24.0,<26
 openviking>=0.1.17,<0.2

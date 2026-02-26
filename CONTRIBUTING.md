@@ -55,38 +55,43 @@ curator/
 ## Development
 
 ```bash
-# Setup
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Setup (creates .venv, installs all deps from uv.lock)
+uv sync --extra dev
 cp .env.example .env  # Fill in API keys
 
-# Run all tests (437+)
-python -m pytest tests/ -v
+# Run all tests (453+)
+uv run pytest tests/ -v
 
 # Run single test file
-python -m pytest tests/test_core.py -v
+uv run pytest tests/test_core.py -v
 
 # Run single test by name
-python -m pytest tests/test_core.py -k "test_route_scope" -v
+uv run pytest tests/test_core.py -k "test_route_scope" -v
 
 # Type check
-mypy curator/
+uv run mypy curator/
 
 # Health check
-python3 curator_query.py --status
+uv run python curator_query.py --status
 
 # Run benchmark
-python eval/benchmark.py
+uv run python eval/benchmark.py
+
+# Update lock file after changing deps in pyproject.toml
+uv lock
 ```
 
 ## Pre-commit Hooks
 
 ```bash
 # Install hooks (runs on every commit)
-pre-commit install
+uv run pre-commit install
 
 # Run manually
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 Hooks: `ruff` (lint + format) + `mypy` (type check, excludes `curator/legacy/`).
