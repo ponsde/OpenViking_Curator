@@ -21,6 +21,41 @@ if TYPE_CHECKING:
     from .backend import KnowledgeBackend
 
 
+# ── Judge prompt template loading ──
+
+_JUDGE_PROMPT_TEMPLATE: str | None = None
+
+
+def _load_judge_prompt() -> str | None:
+    """Load judge prompt from external template file.
+
+    Search order:
+      1) CURATOR_JUDGE_PROMPT env var path
+      2) curator/prompts/judge.prompt (package default)
+
+    Returns None if no template found (falls back to built-in).
+    """
+    global _JUDGE_PROMPT_TEMPLATE
+    if _JUDGE_PROMPT_TEMPLATE is not None:
+        return _JUDGE_PROMPT_TEMPLATE
+
+    candidates = []
+    env_path = os.getenv("CURATOR_JUDGE_PROMPT", "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path(__file__).parent / "prompts" / "judge.prompt")
+
+    for p in candidates:
+        if p.exists():
+            try:
+                _JUDGE_PROMPT_TEMPLATE = p.read_text(encoding="utf-8")
+                return _JUDGE_PROMPT_TEMPLATE
+            except Exception:
+                pass
+
+    return None
+
+
 # ── Pydantic model for judge output ──
 
 
@@ -185,29 +220,34 @@ def judge_and_ingest(
         joined = "\n".join(cv_warnings)
         warnings_block = f"\n\n⚠️ cross_validate 风险标注（审核时必须考虑）:\n{joined}"
 
-    sys_prompt = (
-        "你是知识库治理助手。你需要同时完成两件事：\n\n"
-        "1. **审核外搜结果**：判断是否值得入库\n"
-        "   - 内容准确性、时效性、入库价值\n"
-        "   - 超过1年未更新的标注[可能过时]\n"
-        "   - 已取消/变更的功能当作当前事实 → pass=false\n\n"
-        "2. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
-        "   - 细节差异不算冲突，结论矛盾才算\n\n"
-        f"当前日期: {today}"
-        f"{warnings_block}\n\n"
-        "输出严格 JSON:\n"
-        "{\n"
-        '  "pass": bool,\n'
-        '  "reason": "审核判断理由",\n'
-        '  "trust": 0-10,\n'
-        '  "freshness": "current|recent|outdated|unknown",\n'
-        '  "summary": "内容摘要",\n'
-        '  "markdown": "如果 pass=true，输出整理后的 markdown（含来源URL和日期）",\n'
-        '  "has_conflict": bool,\n'
-        '  "conflict_summary": "冲突摘要（无冲突则空）",\n'
-        '  "conflict_points": ["冲突点1", "冲突点2"]\n'
-        "}\n只输出 JSON。"
-    )
+    # Load prompt: external template → built-in fallback
+    template = _load_judge_prompt()
+    if template:
+        sys_prompt = template.format(today=today, warnings_block=warnings_block)
+    else:
+        sys_prompt = (
+            "你是知识库治理助手。你需要同时完成两件事：\n\n"
+            "1. **审核外搜结果**：判断是否值得入库\n"
+            "   - 内容准确性、时效性、入库价值\n"
+            "   - 超过1年未更新的标注[可能过时]\n"
+            "   - 已取消/变更的功能当作当前事实 → pass=false\n\n"
+            "2. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
+            "   - 细节差异不算冲突，结论矛盾才算\n\n"
+            f"当前日期: {today}"
+            f"{warnings_block}\n\n"
+            "输出严格 JSON:\n"
+            "{\n"
+            '  "pass": bool,\n'
+            '  "reason": "审核判断理由",\n'
+            '  "trust": 0-10,\n'
+            '  "freshness": "current|recent|outdated|unknown",\n'
+            '  "summary": "内容摘要",\n'
+            '  "markdown": "如果 pass=true，输出整理后的 markdown（含来源URL和日期）",\n'
+            '  "has_conflict": bool,\n'
+            '  "conflict_summary": "冲突摘要（无冲突则空）",\n'
+            '  "conflict_points": ["冲突点1", "冲突点2"]\n'
+            "}\n只输出 JSON。"
+        )
 
     user_content = f"用户问题: {query}\n\n" f"本地知识:\n{local_snippet}\n\n" f"外搜结果:\n{external_snippet}"
 
