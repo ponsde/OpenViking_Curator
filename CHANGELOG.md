@@ -4,6 +4,95 @@ All notable changes to OpenViking Curator are documented here.
 
 ---
 
+## [v0.7.0] — 2026-02-26
+
+### Added
+- **PyPI publish readiness**: `pyproject.toml` with setuptools, `py.typed`, `_version.py`, entry points
+- **Query-level search cache**: `search_cache.py` with TTL, freshness TTL, max entries, LRU eviction
+- **Circuit breaker**: per-model breaker wrapping `config.chat()` — threshold, recovery, half-open probe
+- **Pydantic Settings v2**: `settings.py` — typed, validated config with `BaseSettings`
+- **Structured logging**: `logging_setup.py` — structlog bridge with JSON / console toggle
+
+### Tests
+430+ tests. New: `test_circuit_breaker.py`, `test_search_cache.py`, `test_packaging.py`, `test_settings.py`, `test_logging_setup.py`.
+
+---
+
+## [v0.6.0] — 2026-02-26
+
+### Added
+- **Configurable judge prompt**: external `.prompt` template file support
+- **Configurable dedup**: `CURATOR_DEDUP_SCAN_LIMIT`, `CURATOR_DEDUP_THRESHOLD`
+- **Structured search results**: `SearchResult` dataclass replaces raw strings
+- **Feedback adopt**: score threshold + rank weighting for auto-adopt
+- **Coverage assessment**: score gap + keyword overlap signals
+- **Router config**: domain/time keywords configurable via `router_config.json`
+- **CuratorPipeline class**: reusable backend/session + health TTL
+- **File locking**: advisory file locking for concurrent writes
+
+### Fixed
+- Judge prompt template escaping + coverage clamp to `[0, 1]` + dedup safe parse
+- Replace 17 bare `except Exception` blocks with logged exceptions
+- Async ingest test race condition (wait inside patch scope)
+
+### Changed
+- Default models updated to `gpt-5.3-codex` + `Claude-Sonnet 4-6`
+- Split `requirements.txt`, pin versions to minor range
+- Eliminate duplicate `env()`/`_chat()` in `search_providers`
+
+### Tests
+417 tests.
+
+---
+
+## [v0.5.0] — 2026-02-25
+
+### Added
+- **Async ingest**: fire-and-forget mode with job tracking + recovery CLI
+- **Query log v2**: structured schema + aggregation script
+- **Coverage tuning**: suggestion script (read-only)
+- **Bidirectional conflict resolution**: local signals + scores
+- **Eval regression**: benchmark with fixed query set, `InMemoryBackend`
+
+### Tests
+369+ tests. New: `test_async_ingest.py`, `test_async_jobs.py`, `test_async_job_cli.py`, `test_eval_regression.py`, `test_conflict_resolution.py`, `test_query_log.py`, `test_coverage_tuning.py`.
+
+---
+
+## [v0.4.0] — 2026-02-25
+
+### Added
+- **Domain whitelist/blacklist**: `domain_filter.py` for external search results
+- **Usage-based TTL**: hot/warm/cold tiers in `usage_ttl.py` + `ttl_rebalance.py` script
+- **Concurrent search mode**: fire all providers in parallel, take fastest non-empty result
+- **L0/L1 auto-summary on ingest**: `CURATOR_AUTO_SUMMARIZE` opt-in
+
+### Changed
+- Pre-commit + ruff added, all lint issues fixed
+
+### Tests
+New: `test_domain_filter.py`, `test_usage_ttl.py`, `test_auto_summarize.py`.
+
+---
+
+## [v0.3.0] — 2026-02-25
+
+### Added
+- **Multi search provider support**: pluggable fallback chain (`grok`, `duckduckgo`, `tavily`)
+- **Pending review CLI**: `review_cli.py` — approve/reject/list pending reviews
+
+### Tests
+New: `test_search_providers.py`, `test_review_cli.py`.
+
+---
+
+## [v0.2.0] — 2026-02-25
+
+### Added
+- **Code quality R1 + R2**: cross-review with 二号, fixes for `_truncate_to` exact-fit, `cv_warnings` via sys_prompt
+
+---
+
 ## [v0.1.0] — 2026-02-25
 
 ### Added
@@ -30,13 +119,12 @@ All notable changes to OpenViking Curator are documented here.
 
 **Project structure**
 - `pyproject.toml` added: setuptools packaging, deps, dev extras, pytest config
-- Moved root-level modules into `curator/` package: `feedback_store.py`, `metrics.py`, `memory_capture.py`, `search_providers.py` — all imports updated to relative
-- `.env.example` rewritten: all variables documented with recommended values, threshold explanations, production vs. local guidance
-- `CHANGELOG.md` added
-- README.md + README_CN.md updated: new features documented, roadmap updated
+- Moved root-level modules into `curator/` package
+- `.env.example` rewritten with full documentation
+- README.md + README_CN.md updated
 
 ### Tests
-172 tests, all passing. New test files: `test_retrieval_feedback.py`, `test_dedup_enhanced.py`, `test_decision_report.py`.
+172 tests. New: `test_retrieval_feedback.py`, `test_dedup_enhanced.py`, `test_decision_report.py`.
 
 ---
 
