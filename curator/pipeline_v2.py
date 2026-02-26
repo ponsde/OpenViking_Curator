@@ -227,6 +227,10 @@ class CuratorPipeline:
         self._health_ttl = health_ttl
         self._last_health_check: float = 0.0
 
+        from .scheduler import start_scheduler
+
+        start_scheduler()
+
     def _ensure_session(self) -> str | None:
         """Lazy-init backend session, with TTL health check.
 
