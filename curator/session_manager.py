@@ -387,9 +387,9 @@ class SessionManager:
         sid = result.get("session_id", "")
         if not sid:
             raise RuntimeError("OV create_session 返回空 session_id")
-        os.makedirs(os.path.dirname(self._sid_file) or ".", exist_ok=True)
-        with open(self._sid_file, "w", encoding="utf-8") as f:
-            f.write(sid)
+        from .file_lock import locked_write
+
+        locked_write(self._sid_file, sid)
         log.info("新建 session: %s", sid)
         return sid
 

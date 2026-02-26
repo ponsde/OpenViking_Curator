@@ -68,10 +68,10 @@ def _load_entries(path: str) -> list[dict]:
 
 def _save_entries(path: str, entries: list[dict]) -> None:
     """Overwrite *path* with all entries (one JSON per line)."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    from .file_lock import locked_write
+
+    content = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries)
+    locked_write(path, content)
 
 
 def _update_entry(path: str, index: int, update: dict) -> bool:
@@ -89,10 +89,7 @@ def _update_entry(path: str, index: int, update: dict) -> bool:
 
 def _pending_entries(entries: list[dict]) -> list[tuple[int, dict]]:
     """Return (original_index, entry) pairs whose status is pending/absent."""
-    return [
-        (i, e) for i, e in enumerate(entries)
-        if e.get("status", "pending") == "pending"
-    ]
+    return [(i, e) for i, e in enumerate(entries) if e.get("status", "pending") == "pending"]
 
 
 def _extract_title(markdown: str, fallback: str = "untitled") -> str:
@@ -198,6 +195,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
         return 1
 
     from .review import ingest_markdown_v2
+
     try:
         result = ingest_markdown_v2(
             backend,
@@ -284,9 +282,11 @@ def _make_backend(args: argparse.Namespace):
     """
     if getattr(args, "in_memory", False):
         from .backend_memory import InMemoryBackend
+
         return InMemoryBackend()
 
     from .backend_ov import OpenVikingBackend
+
     return OpenVikingBackend()
 
 
@@ -299,11 +299,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Inspect and process pending_review.jsonl entries.",
     )
     parser.add_argument(
-        "--file", default=DEFAULT_PENDING_PATH,
+        "--file",
+        default=DEFAULT_PENDING_PATH,
         help=f"Path to pending_review.jsonl (default: {DEFAULT_PENDING_PATH})",
     )
     parser.add_argument(
-        "--in-memory", action="store_true",
+        "--in-memory",
+        action="store_true",
         help="Use InMemoryBackend instead of OpenViking (for testing / dry-run).",
     )
 
@@ -311,8 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # list
     p_list = sub.add_parser("list", help="List pending entries.")
-    p_list.add_argument("--all", action="store_true",
-                        help="Show all entries including approved/rejected.")
+    p_list.add_argument("--all", action="store_true", help="Show all entries including approved/rejected.")
 
     # show
     p_show = sub.add_parser("show", help="Show full content of one entry.")

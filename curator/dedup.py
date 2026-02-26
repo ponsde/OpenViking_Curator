@@ -125,13 +125,13 @@ def _load_dedup_log() -> dict:
 
 
 def _save_dedup_log(state: dict):
+    from .file_lock import locked_write
+
     state["last_run"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     state["checked_pairs"] = state["checked_pairs"][-500:]
     state["reports"] = state["reports"][-100:]
 
-    log_path = Path(DEDUP_LOG_FILE)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    locked_write(DEDUP_LOG_FILE, json.dumps(state, ensure_ascii=False, indent=2))
 
 
 def _pair_key(uri_a: str, uri_b: str) -> str:

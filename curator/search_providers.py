@@ -47,7 +47,8 @@ from .config import (
 
 # Time-sensitive keywords (Chinese + English) — triggers date context injection
 _TIME_KEYWORDS = re.compile(
-    r"最新|最近|现在|今年|今天|当前|目前|近期|刚刚|更新" r"|latest|recent|current|now|today|new|updated|2024|2025|2026",
+    r"最新|最近|现在|今年|今天|当前|目前|近期|刚刚|更新|本周|上月|昨天"
+    r"|latest|recent|current|now|today|new|updated|yesterday|last\s+week|20\d{2}",
     re.IGNORECASE,
 )
 

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ def capture_case(query: str, scope: dict, report: dict, answer: str, out_dir="ca
     p = Path(out_dir)
     p.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    fn = p / f"{int(time.time())}_{slug(query)}.md"
+    fn = p / f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{slug(query)}.md"
     content = f"""# Case: {query}
 
 - Date: {ts}

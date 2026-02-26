@@ -430,7 +430,11 @@ def ingest_markdown_v2(
     # 写本地文件备份
     p = Path(CURATED_DIR)
     p.mkdir(parents=True, exist_ok=True)
-    fn = p / f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', title)[:40]}.md"
+    import uuid
+
+    ts = int(time.time())
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", title)[:40]
+    fn = p / f"{ts}_{uuid.uuid4().hex[:8]}_{slug}.md"
     fn.write_text(full_content, encoding="utf-8")
 
     # 通过 backend 接口入库

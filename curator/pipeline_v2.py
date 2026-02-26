@@ -485,8 +485,9 @@ def _log_async_failure(query: str, error: Exception) -> None:
             "error": str(error),
             "error_type": type(error).__name__,
         }
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        from .file_lock import locked_append
+
+        locked_append(log_path, json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         log.warning("failed to write async failure log: %s", e)
 
@@ -532,8 +533,9 @@ def _log_query(
             "external_len": external_len,
             "auto_ingest": auto_ingest,
         }
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        from .file_lock import locked_append
+
+        locked_append(log_path, json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         log.warning("query log 写入失败（不影响主流程）: %s", e)
 
@@ -566,9 +568,9 @@ def _write_pending(
         "markdown": judge_result.get("markdown", ""),
     }
     try:
-        os.makedirs(os.path.dirname(pending_path) or ".", exist_ok=True)
-        with open(pending_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        from .file_lock import locked_append
+
+        locked_append(pending_path, json.dumps(entry, ensure_ascii=False) + "\n")
         log.info("pending review 已写入: %s (reason=%s)", pending_path, reason)
     except Exception as e:
         log.warning("pending review 写入失败: %s", e)

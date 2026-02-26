@@ -22,6 +22,7 @@ class Metrics:
     def finalize(self):
         self.data["finished_at"] = time.time()
         self.data["duration_sec"] = round(self.data["finished_at"] - self.data["started_at"], 2)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(self.data, ensure_ascii=False) + "\n")
+        from .file_lock import locked_append
+
+        locked_append(self.path, json.dumps(self.data, ensure_ascii=False) + "\n")
         return self.data

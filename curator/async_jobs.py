@@ -48,8 +48,9 @@ def _append_event(job_id: str, status: str, **extra) -> None:
             "status": status,
             **extra,
         }
-        with open(_jobs_path(), "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        from .file_lock import locked_append
+
+        locked_append(_jobs_path(), json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         log.warning("async_jobs: failed to write event: %s", e)
 
