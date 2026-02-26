@@ -60,7 +60,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env  # Fill in API keys
 
-# Run all tests (430+)
+# Run all tests (437+)
 python -m pytest tests/ -v
 
 # Run single test file
@@ -69,12 +69,34 @@ python -m pytest tests/test_core.py -v
 # Run single test by name
 python -m pytest tests/test_core.py -k "test_route_scope" -v
 
+# Type check
+mypy curator/
+
 # Health check
 python3 curator_query.py --status
 
 # Run benchmark
 python eval/benchmark.py
 ```
+
+## Pre-commit Hooks
+
+```bash
+# Install hooks (runs on every commit)
+pre-commit install
+
+# Run manually
+pre-commit run --all-files
+```
+
+Hooks: `ruff` (lint + format) + `mypy` (type check, excludes `curator/legacy/`).
+
+## Structured Logging
+
+Set `CURATOR_JSON_LOGGING=1` for JSON output (Loki/Prometheus compatible).
+
+Each pipeline run emits `run_id`, `query_prefix`, and `session_id` on every log line.
+Background async-ingest logs are also correlated via the same `run_id`.
 
 ## Testing Patterns
 
@@ -122,7 +144,7 @@ Examples:
 
 ## Pull Request Process
 
-1. Run `pytest tests/` — all 430+ tests must pass
+1. Run `pytest tests/` — all 437+ tests must pass
 2. Update README if the change affects public API
 3. Add tests for new functionality (aim for 80%+ coverage)
 4. Keep commits atomic and messages clear

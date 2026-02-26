@@ -4,6 +4,23 @@ All notable changes to OpenViking Curator are documented here.
 
 ---
 
+## [Unreleased] — 2026-02-26
+
+### Added
+- **Structured log context binding**: every pipeline run now binds `run_id`, `query_prefix`, `session_id` to structlog contextvars; background async-ingest threads inherit context via `copy_context()` for full log correlation under `CURATOR_JSON_LOGGING=1`
+- **mypy type checking**: zero errors in 28 source files; added to CI workflow and pre-commit hooks; `types-requests` stubs included
+- **Pydantic Settings v2 — dedup**: last `env()` call migrated; `CURATOR_DEDUP_SIMILARITY`, `CURATOR_DEDUP_MAX_ITEMS`, `CURATOR_DEDUP_LOG` now fully validated by `CuratorSettings`
+
+### Changed
+- `JudgeResult` fallback constructors use `model_validate()` instead of `**dict` (Pydantic v2 idiom)
+- `_run_impl` split into thin context-binding wrapper + `_run_impl_inner` for clean `try/finally` semantics
+- `result["run_id"]` added to pipeline output for caller log correlation
+
+### Tests
+437 passed, 4 subtests.
+
+---
+
 ## [v0.7.0] — 2026-02-26
 
 ### Added
