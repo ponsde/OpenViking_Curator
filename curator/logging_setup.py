@@ -41,18 +41,18 @@ def configure_logging() -> logging.Logger:
         if json_mode:
             renderer = structlog.processors.JSONRenderer()
         else:
-            renderer = structlog.dev.ConsoleRenderer()
+            renderer = structlog.dev.ConsoleRenderer()  # type: ignore[assignment]
 
         formatter = structlog.stdlib.ProcessorFormatter(
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                 renderer,
             ],
-            foreign_pre_chain=shared_processors,
+            foreign_pre_chain=shared_processors,  # type: ignore[arg-type]
         )
 
         structlog.configure(
-            processors=shared_processors
+            processors=shared_processors  # type: ignore[arg-type]
             + [
                 structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
             ],
@@ -62,7 +62,7 @@ def configure_logging() -> logging.Logger:
         )
 
     except ImportError:
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")  # type: ignore[assignment]
 
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)

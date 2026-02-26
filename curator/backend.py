@@ -97,7 +97,7 @@ class KnowledgeBackend(ABC):
         ...
 
     @abstractmethod
-    def search(self, query: str, limit: int = 10, session_id: str = None) -> SearchResponse:
+    def search(self, query: str, limit: int = 10, session_id: str | None = None) -> SearchResponse:
         """Full search with optional LLM intent analysis.
 
         Backends without LLM search can delegate to :meth:`find`.
@@ -155,7 +155,7 @@ class KnowledgeBackend(ABC):
         ...
 
     @abstractmethod
-    def ingest(self, content: str, title: str = "", metadata: dict = None) -> str:
+    def ingest(self, content: str, title: str = "", metadata: dict | None = None) -> str:
         """Store new content. Returns the URI/ID of the stored resource.
 
         Args:

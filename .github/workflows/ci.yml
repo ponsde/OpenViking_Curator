@@ -17,7 +17,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest mypy types-requests
+      - name: Type check
+        run: |
+          mypy curator/ --ignore-missing-imports --exclude curator/legacy/
       - name: Run tests
         env:
           CURATOR_OAI_BASE: http://localhost:8000/v1

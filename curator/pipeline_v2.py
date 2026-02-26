@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .config import ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, log, validate_config
 from .decision_report import format_report
@@ -63,8 +63,8 @@ def _do_judge_ingest(
 
     Returns dict with ``cv_warnings``, ``conflict``, ``ingested`` keys.
     """
-    cv_warnings = []
-    conflict = {"has_conflict": False, "summary": "", "points": []}
+    cv_warnings: list[str] = []
+    conflict: dict[str, Any] = {"has_conflict": False, "summary": "", "points": []}
     ingested = False
 
     # B3: cross_validate 只在 need_fresh 时跑
@@ -191,7 +191,7 @@ class CuratorPipeline:
 
     def __init__(
         self,
-        backend: KnowledgeBackend = None,
+        backend: KnowledgeBackend | None = None,
         *,
         health_ttl: float = 60.0,
     ):
@@ -236,7 +236,7 @@ class CuratorPipeline:
         return _run_impl(query, self._backend, auto_ingest, session_id, _skip_health=True)
 
 
-def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
+def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend | None = None) -> dict:
     """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
 
     Args:
@@ -278,7 +278,7 @@ def _run_impl(
     """Shared implementation for CuratorPipeline.run() and module-level run()."""
     m = Metrics()
 
-    result = {
+    result: dict[str, Any] = {
         "query": query,
         "ov_results": {},
         "context_text": "",
@@ -378,8 +378,8 @@ def _run_impl(
     # ── Step 4: 外搜 + 审核 + 冲突（可选，合并 LLM 调用）──
     external_txt = ""
     ingested = False
-    cv_warnings = []
-    conflict = {"has_conflict": False, "summary": "", "points": []}
+    cv_warnings: list[str] = []
+    conflict: dict[str, Any] = {"has_conflict": False, "summary": "", "points": []}
     async_ingest_pending = False
 
     if need_external:
@@ -530,7 +530,7 @@ def _run_impl(
         ingested=ingested,
         async_ingest_pending=async_ingest_pending,
         need_fresh=scope.get("need_fresh", False),
-        has_conflict=conflict.get("has_conflict", False),
+        has_conflict=bool(conflict.get("has_conflict", False)),
         external_len=len(external_txt),
         auto_ingest=auto_ingest,
     )

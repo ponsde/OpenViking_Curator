@@ -13,7 +13,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -167,11 +167,11 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
         A validated :class:`JudgeResult`.
     """
     if raw_text is None:
-        return JudgeResult(**{"pass": False, "reason": fallback_reason or "no_response"})
+        return JudgeResult.model_validate({"pass": False, "reason": fallback_reason or "no_response"})
 
     json_str = _extract_json(raw_text)
     if not json_str:
-        return JudgeResult(**{"pass": False, "reason": fallback_reason or "bad_json"})
+        return JudgeResult.model_validate({"pass": False, "reason": fallback_reason or "bad_json"})
 
     try:
         return JudgeResult.model_validate_json(json_str)
@@ -186,11 +186,11 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
             return JudgeResult.model_validate(data)
         except Exception as e:
             log.debug("judge output JSON parse fallback failed: %s", e)
-            return JudgeResult(**{"pass": False, "reason": fallback_reason or "json_parse_fail"})
+            return JudgeResult.model_validate({"pass": False, "reason": fallback_reason or "json_parse_fail"})
 
 
 def judge_and_ingest(
-    backend: KnowledgeBackend, query: str, local_ctx: str, external_text: str, cv_warnings: list = ()
+    backend: KnowledgeBackend, query: str, local_ctx: str, external_text: str, cv_warnings: Sequence[str] = ()
 ) -> dict:
     """B2: 合并审核 + 冲突检测为一次 LLM 调用。
 

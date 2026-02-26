@@ -101,7 +101,7 @@ def _search_result_to_dict(r) -> dict:
     }
 
 
-def backend_retrieve(backend, query: str, session_id: str = None, limit: int = 10) -> dict:
+def backend_retrieve(backend, query: str, session_id: str | None = None, limit: int = 10) -> dict:
     """主力检索：通过 KnowledgeBackend 接口搜索，与后端无关。
 
     Args:

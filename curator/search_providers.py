@@ -276,7 +276,7 @@ def _get_provider_chain() -> list[str]:
     return known or ["grok"]
 
 
-def get_provider(name: str = None):
+def get_provider(name: str | None = None):
     """Get search provider function by name. Default from env or 'grok'."""
     import sys
 
@@ -287,7 +287,7 @@ def get_provider(name: str = None):
     return getattr(mod, _PROVIDERS[name])
 
 
-def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
+def search(query: str, scope: dict, provider: str | None = None, **kwargs) -> str:
     """
     Unified search entry point with fallback chain.
 
@@ -384,8 +384,8 @@ async def _gather_search(query: str, scope: dict, providers: list, timeout: floa
 def search_concurrent(
     query: str,
     scope: dict,
-    providers: list = None,
-    timeout: float = None,
+    providers: list | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Synchronous entry point for concurrent multi-provider search.
 

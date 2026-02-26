@@ -34,6 +34,8 @@ dev = [
     "pytest>=7.0",
     "ruff>=0.4",
     "pre-commit>=3.0",
+    "mypy>=1.8",
+    "types-requests>=2.31",
 ]
 
 [project.scripts]
@@ -72,6 +74,11 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["curator"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+exclude = ["curator/legacy/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -28,7 +28,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .config import DATA_PATH, DEDUP_LOG, DEDUP_MAX_ITEMS, DEDUP_SIMILARITY, log
 
@@ -161,7 +161,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
     state = _load_dedup_log()
     checked_set = set(state["checked_pairs"])
 
-    result = {"checked": 0, "duplicates": []}
+    result: dict[str, Any] = {"checked": 0, "duplicates": []}
 
     valid_uris = [u for u in uris if u and isinstance(u, str)]
     if len(valid_uris) < 2:

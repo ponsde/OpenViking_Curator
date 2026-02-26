@@ -5,6 +5,7 @@ This wraps the existing OVClient dual-mode logic. All OV-specific code
 """
 
 import os
+import re
 import tempfile
 
 from .backend import KnowledgeBackend, SearchResponse, SearchResult
@@ -18,7 +19,7 @@ class OpenVikingBackend(KnowledgeBackend):
     Otherwise uses AsyncOpenViking embedded mode.
     """
 
-    def __init__(self, base_url: str = None):
+    def __init__(self, base_url: str | None = None):
         from .session_manager import OVClient
 
         self._ov = OVClient(base_url=base_url)
@@ -48,7 +49,7 @@ class OpenVikingBackend(KnowledgeBackend):
         raw = self._ov.find(query, limit=limit)
         return self._to_response(raw)
 
-    def search(self, query: str, limit: int = 10, session_id: str = None) -> SearchResponse:
+    def search(self, query: str, limit: int = 10, session_id: str | None = None) -> SearchResponse:
         raw = self._ov.search(query, session_id=session_id, limit=limit)
         return self._to_response(raw)
 
@@ -61,9 +62,13 @@ class OpenVikingBackend(KnowledgeBackend):
     def read(self, uri: str) -> str:
         return self._ov.read(uri)
 
-    def ingest(self, content: str, title: str = "", metadata: dict = None) -> str:
+    def ingest(self, content: str, title: str = "", metadata: dict | None = None) -> str:
         """Write content to a temp .md file, then add_resource to OV."""
-        safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (title or "untitled"))[:60]
+        # Replace non-alnum (except -) with _, then collapse runs.
+        # OV normalises spaces→_ in URIs; keeping spaces in filenames
+        # causes underscore-space mismatches (OV-5).
+        safe_title = "".join(c if c.isalnum() or c == "-" else "_" for c in (title or "untitled"))[:60]
+        safe_title = re.sub(r"_+", "_", safe_title).strip("_") or "untitled"
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".md",
@@ -74,20 +79,21 @@ class OpenVikingBackend(KnowledgeBackend):
             f.write(content)
             tmp_path = f.name
 
+        uri = ""
         try:
-            self._ov.add_resource(tmp_path, reason=title or "curator_ingest")
+            result = self._ov.add_resource(tmp_path, reason=title or "curator_ingest")
+            if isinstance(result, dict) and result.get("root_uri"):
+                uri = result["root_uri"]
             self._ov.wait_processed(timeout=30)
         except Exception as e:
-            log.warning("ingest 等索引超时（内容已存入）: %s", e)
+            log.warning("ingest failed or timed out: %s", e)
         finally:
-            # L1: OV add_resource 已拷贝内容，删除临时文件
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
 
-        # 注意: 临时文件已在 finally 中删除，返回路径仅供日志/记录用
-        return tmp_path
+        return uri
 
     def wait_indexed(self, timeout: int = 30):
         self._ov.wait_processed(timeout=timeout)
@@ -96,7 +102,7 @@ class OpenVikingBackend(KnowledgeBackend):
         # OV AsyncOpenViking has no delete method; HTTP mode can use fs DELETE
         if self._ov.mode == "http":
             try:
-                self._ov._impl._request("DELETE", "/api/v1/fs", params={"uri": uri})
+                self._ov._impl._request("DELETE", "/api/v1/fs", params={"uri": uri})  # type: ignore[union-attr]
                 return True
             except Exception as e:
                 log.debug("failed to delete URI %s via HTTP: %s", uri, e)

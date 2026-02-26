@@ -80,7 +80,7 @@ class InMemoryBackend(KnowledgeBackend):
         results = results[:limit]
         return SearchResponse(results=results, total=len(results))
 
-    def search(self, query: str, limit: int = 10, session_id: str = None) -> SearchResponse:
+    def search(self, query: str, limit: int = 10, session_id: str | None = None) -> SearchResponse:
         """Delegates to :meth:`find` (no LLM analysis in memory backend).
 
         Args:
@@ -129,7 +129,7 @@ class InMemoryBackend(KnowledgeBackend):
         rec = self._store.get(uri)
         return rec["content"] if rec else ""
 
-    def ingest(self, content: str, title: str = "", metadata: dict = None) -> str:
+    def ingest(self, content: str, title: str = "", metadata: dict | None = None) -> str:
         """Store content in memory and return a ``mem://`` URI.
 
         Args:

@@ -5,3 +5,9 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports, --exclude, curator/legacy/]
+        additional_dependencies: [types-requests>=2.31]

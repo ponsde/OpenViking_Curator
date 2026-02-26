@@ -34,7 +34,7 @@ class _HTTPClient:
     def __init__(self, base_url: str):
         self._base = base_url.rstrip("/")
 
-    def _request(self, method: str, path: str, data: dict = None, params: dict = None, timeout: int = 60):
+    def _request(self, method: str, path: str, data: dict | None = None, params: dict | None = None, timeout: int = 60):
         """统一请求，自动解包 {"status":"ok","result":...} 格式。"""
         url = f"{self._base}{path}"
         if params:
@@ -72,7 +72,7 @@ class _HTTPClient:
         result = self._request("POST", "/api/v1/search/find", data)
         return self._normalize_find(result)
 
-    def search(self, query: str, session_id: str = None, limit: int = 10) -> dict:
+    def search(self, query: str, session_id: str | None = None, limit: int = 10) -> dict:
         data = {"query": query, "limit": limit}
         if session_id:
             data["session_id"] = session_id
@@ -285,8 +285,9 @@ class _EmbeddedClient:
 class OVClient:
     """OV 统一客户端 — 自动选择 HTTP 或嵌入模式。"""
 
-    def __init__(self, base_url: str = None):
+    def __init__(self, base_url: str | None = None):
         url = base_url or os.environ.get("OV_BASE_URL", "").strip()
+        self._impl: _HTTPClient | _EmbeddedClient
         if url:
             self._impl = _HTTPClient(url)
             self._mode = "http"
@@ -360,7 +361,7 @@ _COMMIT_TIME_THRESHOLD = 1800
 class SessionManager:
     """管理 Curator 的持久 session。支持 HTTP 和嵌入两种模式。"""
 
-    def __init__(self, ov: OVClient, session_id_file: str = None):
+    def __init__(self, ov: OVClient, session_id_file: str | None = None):
         self.ov = ov
         self._sid_file = session_id_file or os.path.join(
             os.environ.get("CURATOR_DATA_PATH", "./data"), ".curator_session_id"
@@ -369,7 +370,7 @@ class SessionManager:
         self._session = None
         self._msg_count = 0
         self._last_commit = time.time()
-        self._used_uris = []
+        self._used_uris: list[str] = []
 
     def _load_or_create(self) -> str:
         if os.path.exists(self._sid_file):
@@ -418,7 +419,7 @@ class SessionManager:
         except Exception as e:
             log.debug("add user msg 失败: %s", e)
 
-    def add_assistant_response(self, answer: str, used_uris: list = None):
+    def add_assistant_response(self, answer: str, used_uris: list | None = None):
         try:
             content = answer[:800]
             if used_uris:
