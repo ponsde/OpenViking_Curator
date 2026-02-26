@@ -1,17 +1,27 @@
-"""Configuration: env vars, thresholds, logging, HTTP client."""
+"""Configuration: env vars, thresholds, logging, HTTP client.
+
+All values are sourced from ``CuratorSettings`` (pydantic-settings) for type
+safety and validation.  Module-level aliases preserve backward compatibility —
+no consumer code needs to change.
+"""
 
 import logging
 import os
 import time
-from pathlib import Path
 
 import requests
 
+from .settings import CuratorSettings
+
 
 def env(name: str, default: str = "") -> str:
+    """Read an env var (still used by dedup.py and a few others)."""
     v = os.getenv(name, default)
     return v.strip() if isinstance(v, str) else v
 
+
+# ── Settings singleton ──
+_settings = CuratorSettings()
 
 # ── Logging ──
 log = logging.getLogger("curator")
@@ -19,109 +29,83 @@ if not log.handlers:
     _h = logging.StreamHandler()
     _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
     log.addHandler(_h)
-    log.setLevel(logging.DEBUG if os.getenv("CURATOR_DEBUG") else logging.INFO)
+    log.setLevel(logging.DEBUG if _settings.debug else logging.INFO)
 
 
 # ── Paths ──
-OPENVIKING_CONFIG_FILE = env("OPENVIKING_CONFIG_FILE", str(Path.home() / ".openviking" / "ov.conf"))
-DATA_PATH = env("CURATOR_DATA_PATH", str(Path.cwd() / "data"))
-CURATED_DIR = env("CURATOR_CURATED_DIR", str(Path.cwd() / "curated"))
+OPENVIKING_CONFIG_FILE = _settings.openviking_config_file
+DATA_PATH = _settings.data_path
+CURATED_DIR = _settings.curated_dir
 
 # ── API endpoints ──
-OAI_BASE = env("CURATOR_OAI_BASE")
-OAI_KEY = env("CURATOR_OAI_KEY")
+OAI_BASE = _settings.oai_base
+OAI_KEY = _settings.oai_key
 from ._version import __version__ as _pkg_version
 
-CURATOR_VERSION = env("CURATOR_VERSION", _pkg_version)
+CURATOR_VERSION = _settings.version or _pkg_version
 
-ROUTER_MODELS = [
-    m.strip()
-    for m in env(
-        "CURATOR_ROUTER_MODELS",
-        "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6",
-    ).split(",")
-    if m.strip()
-]
-JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gpt-5.3-codex")
-JUDGE_MODELS = [
-    m.strip()
-    for m in env("CURATOR_JUDGE_MODELS", "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6").split(",")
-    if m.strip()
-]
-GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
-GROK_KEY = env("CURATOR_GROK_KEY")
-GROK_MODEL = env("CURATOR_GROK_MODEL", "grok-4-fast")
+ROUTER_MODELS = [m.strip() for m in _settings.router_models.split(",") if m.strip()]
+JUDGE_MODEL = _settings.judge_model
+JUDGE_MODELS = [m.strip() for m in _settings.judge_models.split(",") if m.strip()]
+GROK_BASE = _settings.grok_base
+GROK_KEY = _settings.grok_key
+GROK_MODEL = _settings.grok_model
 
 # Search providers: comma-separated, tried in order (fallback chain)
-SEARCH_PROVIDERS = env("CURATOR_SEARCH_PROVIDERS", "grok")  # e.g. "grok,duckduckgo,tavily"
-TAVILY_KEY = env("CURATOR_TAVILY_KEY", "")
+SEARCH_PROVIDERS = _settings.search_providers
+TAVILY_KEY = _settings.tavily_key
 
 # Domain filtering for external search results.
-# ALLOWED_DOMAINS: if set, only results from these domains are kept.
-# BLOCKED_DOMAINS: results from these domains are always removed.
-# Both accept comma-separated lists; blocked takes precedence over allowed.
-ALLOWED_DOMAINS = [d.strip().lower() for d in env("CURATOR_ALLOWED_DOMAINS", "").split(",") if d.strip()]
-BLOCKED_DOMAINS = [d.strip().lower() for d in env("CURATOR_BLOCKED_DOMAINS", "").split(",") if d.strip()]
+ALLOWED_DOMAINS = [d.strip().lower() for d in _settings.allowed_domains.split(",") if d.strip()]
+BLOCKED_DOMAINS = [d.strip().lower() for d in _settings.blocked_domains.split(",") if d.strip()]
 
-# Concurrent search mode: fire all providers in parallel, take fastest non-empty result
-SEARCH_CONCURRENT = env("CURATOR_SEARCH_CONCURRENT", "0") == "1"
-SEARCH_TIMEOUT = float(env("CURATOR_SEARCH_TIMEOUT", "60"))
-# Per-provider timeout should be below global timeout so concurrent coordinator can
-# still cancel/return before straggler calls fully block the run.
-SEARCH_PROVIDER_TIMEOUT = float(env("CURATOR_SEARCH_PROVIDER_TIMEOUT", str(max(1.0, SEARCH_TIMEOUT - 5.0))))
-if SEARCH_PROVIDER_TIMEOUT >= SEARCH_TIMEOUT:
-    SEARCH_PROVIDER_TIMEOUT = max(1.0, SEARCH_TIMEOUT * 0.8)
+# Concurrent search mode
+SEARCH_CONCURRENT = _settings.search_concurrent == "1"
+SEARCH_TIMEOUT = _settings.search_timeout
+SEARCH_PROVIDER_TIMEOUT = _settings.search_provider_timeout
 
 # ── Async ingest ──
-ASYNC_INGEST = env("CURATOR_ASYNC_INGEST", "0") == "1"
+ASYNC_INGEST = _settings.async_ingest == "1"
 
 # ── Tunable thresholds ──
-THRESHOLD_CURATED_OVERLAP = float(env("CURATOR_THRESHOLD_CURATED_OVERLAP", "0.25"))
-THRESHOLD_CURATED_MIN_HITS = int(env("CURATOR_THRESHOLD_CURATED_MIN_HITS", "3"))
+THRESHOLD_CURATED_OVERLAP = _settings.threshold_curated_overlap
+THRESHOLD_CURATED_MIN_HITS = _settings.threshold_curated_min_hits
 
 # Retrieval: L0/L1/L2 on-demand loading thresholds
-THRESHOLD_L0_SUFFICIENT = float(env("CURATOR_THRESHOLD_L0_SUFFICIENT", "0.62"))
-THRESHOLD_L1_SUFFICIENT = float(env("CURATOR_THRESHOLD_L1_SUFFICIENT", "0.5"))
+THRESHOLD_L0_SUFFICIENT = _settings.threshold_l0_sufficient
+THRESHOLD_L1_SUFFICIENT = _settings.threshold_l1_sufficient
 
 # Coverage assessment thresholds
-THRESHOLD_COV_SUFFICIENT = float(env("CURATOR_THRESHOLD_COV_SUFFICIENT", "0.55"))
-THRESHOLD_COV_MARGINAL = float(env("CURATOR_THRESHOLD_COV_MARGINAL", "0.45"))
-THRESHOLD_COV_LOW = float(env("CURATOR_THRESHOLD_COV_LOW", "0.35"))
+THRESHOLD_COV_SUFFICIENT = _settings.threshold_cov_sufficient
+THRESHOLD_COV_MARGINAL = _settings.threshold_cov_marginal
+THRESHOLD_COV_LOW = _settings.threshold_cov_low
 
 # feedback reranking
-# Max score delta applied by feedback signals (keeps OV score dominant).
-FEEDBACK_WEIGHT = float(env("CURATOR_FEEDBACK_WEIGHT", "0.10"))
+FEEDBACK_WEIGHT = _settings.feedback_weight
 
-# L2 full-read depth: max number of items to load at L2 per pipeline run
-MAX_L2_DEPTH = int(env("CURATOR_MAX_L2_DEPTH", "2"))
+# L2 full-read depth
+MAX_L2_DEPTH = _settings.max_l2_depth
 
-# L0/L1 auto-summarization on ingest (opt-in, requires OAI_BASE)
-# When enabled, ingest_markdown_v2 calls LLM once to generate:
-#   L0 abstract (~80 tokens): stored in meta + header comment
-#   L1 overview (key-point list): prepended to markdown as '## 摘要' section
-AUTO_SUMMARIZE = env("CURATOR_AUTO_SUMMARIZE", "0") == "1"
-SUMMARIZE_MODELS = [
-    m.strip()
-    for m in env("CURATOR_SUMMARIZE_MODELS", env("CURATOR_ROUTER_MODELS", "gpt-5.3-codex")).split(",")
-    if m.strip()
-]
+# L0/L1 auto-summarization on ingest
+AUTO_SUMMARIZE = _settings.auto_summarize == "1"
+SUMMARIZE_MODELS = [m.strip() for m in (_settings.summarize_models or _settings.router_models).split(",") if m.strip()]
 
 # ── Circuit breaker ──
-CB_ENABLED = env("CURATOR_CB_ENABLED", "1") == "1"
-CB_THRESHOLD = int(env("CURATOR_CB_THRESHOLD", "3"))
-CB_RECOVERY_SEC = float(env("CURATOR_CB_RECOVERY_SEC", "30"))
+CB_ENABLED = _settings.cb_enabled == "1"
+CB_THRESHOLD = _settings.cb_threshold
+CB_RECOVERY_SEC = _settings.cb_recovery_sec
 
 # ── Search cache ──
-CACHE_ENABLED = env("CURATOR_CACHE_ENABLED", "0") == "1"
-CACHE_TTL = int(env("CURATOR_CACHE_TTL", "3600"))
-CACHE_FRESH_TTL = int(env("CURATOR_CACHE_FRESH_TTL", "300"))
-CACHE_MAX_ENTRIES = int(env("CURATOR_CACHE_MAX_ENTRIES", "200"))
+CACHE_ENABLED = _settings.cache_enabled == "1"
+CACHE_TTL = _settings.cache_ttl
+CACHE_FRESH_TTL = _settings.cache_fresh_ttl
+CACHE_MAX_ENTRIES = _settings.cache_max_entries
 
-# Chat retry (lightweight, dependency-free)
-CHAT_RETRY_MAX = max(1, int(env("CURATOR_CHAT_RETRY_MAX", "3")))
-CHAT_RETRY_BACKOFF_SEC = max(0.0, float(env("CURATOR_CHAT_RETRY_BACKOFF_SEC", "0.6")))
+# Chat retry
+CHAT_RETRY_MAX = max(1, _settings.chat_retry_max)
+CHAT_RETRY_BACKOFF_SEC = max(0.0, _settings.chat_retry_backoff_sec)
 
-FAST_ROUTE = env("CURATOR_FAST_ROUTE", "1") == "1"
+FAST_ROUTE = _settings.fast_route == "1"
 
 
 def validate_config() -> None:
@@ -130,7 +114,6 @@ def validate_config() -> None:
         missing.append("CURATOR_OAI_BASE")
     if not OAI_KEY:
         missing.append("CURATOR_OAI_KEY")
-    # Check first provider in chain requires a key
     first_provider = SEARCH_PROVIDERS.split(",")[0].strip()
     if first_provider in ("grok",) and not GROK_KEY:
         missing.append("CURATOR_GROK_KEY")
@@ -156,7 +139,6 @@ def _should_retry_chat_error(err: Exception) -> bool:
     if isinstance(err, requests.RequestException):
         return True
 
-    # RuntimeError from non-JSON / invalid payload is usually deterministic.
     return False
 
 
