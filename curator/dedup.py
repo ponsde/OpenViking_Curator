@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .config import log
+from .config import env, log
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
@@ -44,7 +44,8 @@ DEDUP_LOG_FILE = os.getenv(
         "dedup_log.json",
     ),
 )
-SIMILARITY_THRESHOLD = 0.55
+SIMILARITY_THRESHOLD = float(env("CURATOR_DEDUP_SIMILARITY", "0.55"))
+MAX_SCAN_ITEMS = int(env("CURATOR_DEDUP_MAX_ITEMS", "10"))
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']{8,}")
 
@@ -180,7 +181,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
 
     # 读取内容
     uri_contents: dict[str, str] = {}
-    for u in valid_uris[:10]:
+    for u in valid_uris[:MAX_SCAN_ITEMS]:
         try:
             content = str(backend.read(u))
             if content and len(content) > 50:
