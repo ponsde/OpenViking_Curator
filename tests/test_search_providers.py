@@ -102,22 +102,23 @@ class TestSearchDuckDuckGo:
             {"title": "Result Two", "href": "https://example.com/2", "body": "Body two"},
         ]
 
-    def test_returns_formatted_text(self):
+    def test_returns_structured_results(self):
         import curator.search_providers as m
 
         mock_ddgs = MagicMock()
         mock_ddgs.return_value.text.return_value = self._make_ddg_results()
 
         with patch.dict(sys.modules, {"duckduckgo_search": MagicMock(DDGS=mock_ddgs)}):
-            # Need to reimport since DDGS is imported at call time
             result = m._search_duckduckgo("python packaging", SCOPE)
 
-        assert "Result One" in result
-        assert "https://example.com/1" in result
-        assert "Body one" in result
-        assert "Result Two" in result
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0].title == "Result One"
+        assert result[0].url == "https://example.com/1"
+        assert result[0].snippet == "Body one"
+        assert result[1].title == "Result Two"
 
-    def test_empty_results_returns_empty_string(self):
+    def test_empty_results_returns_empty_list(self):
         import curator.search_providers as m
 
         mock_ddgs = MagicMock()
@@ -126,7 +127,7 @@ class TestSearchDuckDuckGo:
         with patch.dict(sys.modules, {"duckduckgo_search": MagicMock(DDGS=mock_ddgs)}):
             result = m._search_duckduckgo("unknown topic", SCOPE)
 
-        assert result == ""
+        assert result == []
 
     def test_import_error_raises_import_error(self):
         """If duckduckgo_search package is missing, _search_duckduckgo raises ImportError."""
@@ -162,7 +163,7 @@ class TestSearchTavily:
             ]
         }
 
-    def test_returns_formatted_text(self):
+    def test_returns_structured_results(self):
         import curator.search_providers as m
 
         mock_client_cls = MagicMock()
@@ -172,9 +173,11 @@ class TestSearchTavily:
             with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
                 result = m._search_tavily("AI news", SCOPE)
 
-        assert "Tavily Result" in result
-        assert "https://tavily.com/r1" in result
-        assert "Some content" in result
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].title == "Tavily Result"
+        assert result[0].url == "https://tavily.com/r1"
+        assert result[0].snippet == "Some content"
 
     def test_missing_key_raises_runtime_error(self):
         import curator.search_providers as m
@@ -185,7 +188,7 @@ class TestSearchTavily:
                 with pytest.raises(RuntimeError, match="CURATOR_TAVILY_KEY"):
                     m._search_tavily("query", SCOPE)
 
-    def test_empty_results_returns_empty_string(self):
+    def test_empty_results_returns_empty_list(self):
         import curator.search_providers as m
 
         mock_client_cls = MagicMock()
@@ -195,7 +198,7 @@ class TestSearchTavily:
             with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
                 result = m._search_tavily("nothing", SCOPE)
 
-        assert result == ""
+        assert result == []
 
     def test_import_error_raises_import_error(self):
         import curator.search_providers as m
@@ -409,3 +412,39 @@ class TestSearchConcurrent:
         monkeypatch.setattr(m, "_async_search_provider", fake_dispatch)
         result = m.search_concurrent("q", SCOPE, providers=["grok", "duckduckgo"], timeout=0.2)
         assert result == "fallback-ok"
+
+
+# ─── SearchResult + format_results ────────────────────────────────────────────
+
+
+class TestSearchResult:
+    def test_format_results_basic(self):
+        from curator.search_providers import SearchResult, format_results
+
+        results = [
+            SearchResult(title="Title 1", url="https://a.com", snippet="Snippet 1"),
+            SearchResult(title="Title 2", url="https://b.com", snippet="Snippet 2"),
+        ]
+        text = format_results(results)
+        assert "**Title 1**" in text
+        assert "https://a.com" in text
+        assert "Snippet 1" in text
+        assert "**Title 2**" in text
+
+    def test_format_results_empty(self):
+        from curator.search_providers import format_results
+
+        assert format_results([]) == ""
+
+    def test_provider_output_to_text_string(self):
+        from curator.search_providers import _provider_output_to_text
+
+        assert _provider_output_to_text("plain text") == "plain text"
+
+    def test_provider_output_to_text_list(self):
+        from curator.search_providers import SearchResult, _provider_output_to_text
+
+        results = [SearchResult(title="T", url="https://x.com", snippet="S")]
+        text = _provider_output_to_text(results)
+        assert "**T**" in text
+        assert "https://x.com" in text

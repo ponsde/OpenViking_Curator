@@ -28,6 +28,8 @@ Adding a new provider:
 import asyncio
 import datetime
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from .config import (
     ALLOWED_DOMAINS,
@@ -51,6 +53,24 @@ _TIME_KEYWORDS = re.compile(
     r"|latest|recent|current|now|today|new|updated|yesterday|last\s+week|20\d{2}",
     re.IGNORECASE,
 )
+
+
+@dataclass
+class SearchResult:
+    title: str
+    url: str
+    date: str = ""
+    snippet: str = ""
+
+
+def format_results(results: list[SearchResult]) -> str:
+    """Format structured search results to markdown text (backward compatible)."""
+    if not results:
+        return ""
+    parts = []
+    for r in results:
+        parts.append(f"**{r.title}**\n{r.url}\n{r.snippet}")
+    return "\n\n".join(parts)
 
 
 def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
@@ -130,8 +150,8 @@ def oai_search(query: str, scope: dict, **kwargs) -> str:
 
 
 # ── Provider: DuckDuckGo ──
-def _search_duckduckgo(query: str, scope: dict) -> str:
-    """Search via DuckDuckGo (requires duckduckgo-search package)."""
+def _search_duckduckgo(query: str, scope: dict) -> list[SearchResult]:
+    """Search via DuckDuckGo and return structured results."""
     try:
         from duckduckgo_search import DDGS
     except ImportError as e:
@@ -141,25 +161,27 @@ def _search_duckduckgo(query: str, scope: dict) -> str:
 
     results = DDGS().text(query, max_results=5)
     if not results:
-        return ""
+        return []
 
     results = filter_results_by_domain(results, "href", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
     if not results:
-        return ""
+        return []
 
-    parts = []
+    out: list[SearchResult] = []
     for r in results:
-        title = r.get("title", "")
-        body = r.get("body", "")
-        href = r.get("href", "")
-        parts.append(f"**{title}**\n{href}\n{body}")
-
-    return "\n\n".join(parts)
+        out.append(
+            SearchResult(
+                title=str(r.get("title", "")),
+                url=str(r.get("href", "")),
+                snippet=str(r.get("body", "")),
+            )
+        )
+    return out
 
 
 # ── Provider: Tavily ──
-def _search_tavily(query: str, scope: dict) -> str:
-    """Search via Tavily (requires tavily-python package + CURATOR_TAVILY_KEY)."""
+def _search_tavily(query: str, scope: dict) -> list[SearchResult]:
+    """Search via Tavily and return structured results."""
     try:
         from tavily import TavilyClient
     except ImportError as e:
@@ -175,20 +197,22 @@ def _search_tavily(query: str, scope: dict) -> str:
 
     results = response.get("results", []) if isinstance(response, dict) else []
     if not results:
-        return ""
+        return []
 
     results = filter_results_by_domain(results, "url", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
     if not results:
-        return ""
+        return []
 
-    parts = []
+    out: list[SearchResult] = []
     for r in results:
-        title = r.get("title", "")
-        url = r.get("url", "")
-        content = r.get("content", "")
-        parts.append(f"**{title}**\n{url}\n{content}")
-
-    return "\n\n".join(parts)
+        out.append(
+            SearchResult(
+                title=str(r.get("title", "")),
+                url=str(r.get("url", "")),
+                snippet=str(r.get("content", "")),
+            )
+        )
+    return out
 
 
 # ── Provider registry ──
@@ -209,7 +233,7 @@ PROVIDERS = {
 }
 
 
-def _call_provider(pname: str, query: str, scope: dict) -> str:
+def _call_provider(pname: str, query: str, scope: dict) -> str | list[SearchResult]:
     """
     Resolve and call the provider function by name.
 
@@ -224,6 +248,19 @@ def _call_provider(pname: str, query: str, scope: dict) -> str:
         raise ValueError(f"Unknown provider {pname!r}")
     fn = getattr(mod, fn_attr)
     return fn(query, scope)
+
+
+def _provider_output_to_text(result: Any) -> str:
+    """Convert provider output to markdown text (supports structured results)."""
+    if isinstance(result, list):
+        structured: list[SearchResult] = []
+        for item in result:
+            if isinstance(item, SearchResult):
+                structured.append(item)
+        return format_results(structured)
+    if isinstance(result, str):
+        return result
+    return str(result or "")
 
 
 def _get_provider_chain() -> list[str]:
@@ -259,11 +296,11 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
     the first non-empty result. Returns "" if all providers fail.
     """
     if provider:
-        return _call_provider(provider, query, scope)
+        return _provider_output_to_text(_call_provider(provider, query, scope))
 
     for pname in _get_provider_chain():
         try:
-            result = _call_provider(pname, query, scope)
+            result = _provider_output_to_text(_call_provider(pname, query, scope))
             if result.strip():
                 return result
         except ImportError as e:
@@ -278,9 +315,10 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
 
 
 async def _async_search_provider(name: str, query: str, scope: dict) -> tuple[str, str]:
-    """Single-provider async wrapper. Returns (provider_name, result)."""
+    """Single-provider async wrapper. Returns (provider_name, result_text)."""
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _call_provider, name, query, scope)
+    raw = await loop.run_in_executor(None, _call_provider, name, query, scope)
+    result = _provider_output_to_text(raw)
     return name, result
 
 
