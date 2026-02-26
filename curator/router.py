@@ -6,7 +6,7 @@
 
 import re
 
-from .config import FAST_ROUTE, log
+from .config import log
 
 
 def route_scope(query: str) -> dict:
