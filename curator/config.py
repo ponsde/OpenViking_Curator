@@ -36,16 +36,14 @@ ROUTER_MODELS = [
     m.strip()
     for m in env(
         "CURATOR_ROUTER_MODELS",
-        "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5",
+        "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6",
     ).split(",")
     if m.strip()
 ]
-JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gemini-3-flash-preview")
+JUDGE_MODEL = env("CURATOR_JUDGE_MODEL", "gpt-5.3-codex")
 JUDGE_MODELS = [
     m.strip()
-    for m in env(
-        "CURATOR_JUDGE_MODELS", "gemini-3-flash-preview,gemini-3-flash-high,【Claude Code】Claude-Sonnet 4-5"
-    ).split(",")
+    for m in env("CURATOR_JUDGE_MODELS", "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6").split(",")
     if m.strip()
 ]
 GROK_BASE = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
@@ -102,7 +100,7 @@ MAX_L2_DEPTH = int(env("CURATOR_MAX_L2_DEPTH", "2"))
 AUTO_SUMMARIZE = env("CURATOR_AUTO_SUMMARIZE", "0") == "1"
 SUMMARIZE_MODELS = [
     m.strip()
-    for m in env("CURATOR_SUMMARIZE_MODELS", env("CURATOR_ROUTER_MODELS", "gpt-4o-mini")).split(",")
+    for m in env("CURATOR_SUMMARIZE_MODELS", env("CURATOR_ROUTER_MODELS", "gpt-5.3-codex")).split(",")
     if m.strip()
 ]
 
