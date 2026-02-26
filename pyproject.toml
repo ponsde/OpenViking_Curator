@@ -1,10 +1,10 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "openviking-curator"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Knowledge governance plugin for OpenViking — coverage assessment, external search, review, ingest, dedup, and feedback-driven ranking."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -34,16 +34,26 @@ dev = [
     "pre-commit>=3.0",
 ]
 
+[project.scripts]
+curator-query = "curator_query:main"
+curator-mcp = "mcp_server:main"
+
 [project.urls]
 Homepage    = "https://github.com/ponsde/OpenViking_Curator"
 Repository  = "https://github.com/ponsde/OpenViking_Curator"
 Issues      = "https://github.com/ponsde/OpenViking_Curator/issues"
 
+[tool.setuptools]
+py-modules = ["curator_query", "mcp_server"]
+
+[tool.setuptools.dynamic]
+version = {attr = "curator._version.__version__"}
+
 [tool.setuptools.packages.find]
 include = ["curator*"]
 
 [tool.setuptools.package-data]
-curator = ["py.typed"]
+curator = ["py.typed", "prompts/*.prompt", "router_config.json"]
 
 [tool.ruff]
 target-version = "py310"

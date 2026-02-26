@@ -13,6 +13,8 @@ Boundaries:
                    conflict detection + resolution, freshness scoring, dedup scanning
 """
 
+from ._version import __version__
+
 # Re-export public API
 from .backend import KnowledgeBackend, SearchResponse, SearchResult
 from .backend_memory import InMemoryBackend
@@ -98,4 +100,6 @@ __all__ = [
     "env",
     "log",
     "validate_config",
+    # version
+    "__version__",
 ]

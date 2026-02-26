@@ -29,13 +29,13 @@ import unicodedata
 _WIDTH = 56  # 内容区显示列宽（不含边框 │ 字符）
 
 _REASON_ZH = {
-    "local_sufficient":  "本地知识库已足够，不触发外搜",
-    "local_marginal":    "本地覆盖率边缘，触发外搜补充",
-    "low_coverage":      "本地覆盖率低，触发外搜",
-    "insufficient":      "本地知识库无匹配，触发外搜",
-    "no_results":        "OV 无结果，触发外搜",
-    "no_scores":         "OV 无分数结果，触发外搜",
-    "not_evaluated":     "未评估",
+    "local_sufficient": "本地知识库已足够，不触发外搜",
+    "local_marginal": "本地覆盖率边缘，触发外搜补充",
+    "low_coverage": "本地覆盖率低，触发外搜",
+    "insufficient": "本地知识库无匹配，触发外搜",
+    "no_results": "OV 无结果，触发外搜",
+    "no_scores": "OV 无分数结果，触发外搜",
+    "not_evaluated": "未评估",
 }
 
 _STAGE_ZH = {
@@ -136,6 +136,14 @@ def format_report(result: dict) -> str:
     else:
         conflict_label = "None"
 
+    cache_hit = (metrics.get("flags") or {}).get("cache_hit")
+    if cache_hit is True:
+        cache_label = "Hit"
+    elif cache_hit is False:
+        cache_label = "Miss"
+    else:
+        cache_label = "N/A"
+
     ingested = meta.get("ingested", False)
     ingested_label = "Yes" if ingested else "No"
 
@@ -155,16 +163,17 @@ def format_report(result: dict) -> str:
 
     lines = [
         header,
-        _row("Query",       f'"{query_display}"'),
-        _row("Coverage",    f"{coverage:.2f}  ({cov_reason})"),
-        _row("Reason",      cov_label),
-        _row("Load stage",  stage_label),
-        _row("Used URIs",   str(used_count)),
-        _row("External",    external_label),
-        _row("LLM calls",   str(llm_calls)),
-        _row("Conflict",    conflict_label),
-        _row("Ingested",    ingested_label),
-        _row("Duration",    dur_label),
+        _row("Query", f'"{query_display}"'),
+        _row("Coverage", f"{coverage:.2f}  ({cov_reason})"),
+        _row("Reason", cov_label),
+        _row("Load stage", stage_label),
+        _row("Used URIs", str(used_count)),
+        _row("External", external_label),
+        _row("Cache", cache_label),
+        _row("LLM calls", str(llm_calls)),
+        _row("Conflict", conflict_label),
+        _row("Ingested", ingested_label),
+        _row("Duration", dur_label),
     ]
     if warnings:
         lines.append(_row("Warnings", warn_label))
@@ -189,13 +198,13 @@ def format_report_short(result: dict) -> str:
     trace = meta.get("decision_trace") or {}
     conflict = result.get("conflict") or {}
 
-    coverage   = meta.get("coverage", 0.0)
+    coverage = meta.get("coverage", 0.0)
     cov_reason = meta.get("coverage_reason") or meta.get("external_reason") or "unknown"
-    stage      = trace.get("load_stage", "none")
-    used       = len(meta.get("used_uris") or [])
-    external   = "Yes" if meta.get("external_triggered") else "No"
-    llm_calls  = trace.get("llm_calls", 0)
-    has_conf   = "Yes" if conflict.get("has_conflict") else "No"
+    stage = trace.get("load_stage", "none")
+    used = len(meta.get("used_uris") or [])
+    external = "Yes" if meta.get("external_triggered") else "No"
+    llm_calls = trace.get("llm_calls", 0)
+    has_conf = "Yes" if conflict.get("has_conflict") else "No"
 
     return (
         f"[Curator] cov={coverage:.2f} ({cov_reason})"

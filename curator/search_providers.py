@@ -298,14 +298,25 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
     if provider:
         return _provider_output_to_text(_call_provider(provider, query, scope))
 
+    from .circuit_breaker import CircuitOpenError, get_breaker
+
     for pname in _get_provider_chain():
+        breaker = get_breaker(f"search:{pname}")
+        if not breaker.allow_request():
+            log.warning("search provider %r circuit open, skipping", pname)
+            continue
         try:
             result = _provider_output_to_text(_call_provider(pname, query, scope))
             if result.strip():
+                breaker.record_success()
                 return result
+        except CircuitOpenError:
+            log.warning("search provider %r circuit open (from chat), skipping", pname)
+            continue
         except ImportError as e:
             log.warning("search provider %r unavailable (missing package): %s", pname, e)
         except Exception as e:
+            breaker.record_failure()
             log.warning("search provider %r failed: %s, trying next", pname, e)
 
     return ""

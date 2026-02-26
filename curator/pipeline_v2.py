@@ -388,13 +388,31 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_ses
         m.flag("external_triggered", True)
         m.flag("external_reason", cov_reason)
         log.info("STEP 4/4 外部搜索... reason=%s", cov_reason)
-        try:
-            external_txt = external_search(query, scope)
-            m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason})
-            log.info("STEP 4a 外搜完成: %d chars", len(external_txt))
-        except Exception as e:
-            log.warning("STEP 4 外搜失败: %s", e)
-            m.step("external_search", False, {"error": str(e)})
+
+        # Check search cache first
+        from . import search_cache
+
+        cached = search_cache.get(query, scope)
+        if cached:
+            external_txt = cached
+            m.flag("cache_hit", True)
+            m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason, "cache": "hit"})
+            log.info("STEP 4a 缓存命中: %d chars", len(external_txt))
+        else:
+            m.flag("cache_hit", False)
+            try:
+                external_txt = external_search(query, scope)
+                m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason, "cache": "miss"})
+                log.info("STEP 4a 外搜完成: %d chars", len(external_txt))
+                if external_txt:
+                    search_cache.put(query, scope, external_txt)
+            except Exception as e:
+                from .circuit_breaker import CircuitOpenError
+
+                if isinstance(e, CircuitOpenError):
+                    m.flag("circuit_open", True)
+                log.warning("STEP 4 外搜失败: %s", e)
+                m.step("external_search", False, {"error": str(e)})
 
         if external_txt:
             # Async ingest: when enabled + auto_ingest, defer judge+ingest

@@ -13,13 +13,13 @@ OpenViking Curator — MCP Server (stdio)
   mcporter call --stdio "python3 mcp_server.py" curator_query query="MCP 是什么"
 """
 
-import json
-import sys
-import os
 import io
+import json
+import os
+import sys
 import traceback
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from contextlib import redirect_stdout, redirect_stderr
 
 # 加载 .env
 _env_file = Path(__file__).parent / ".env"
@@ -33,9 +33,11 @@ if _env_file.exists():
 # ── MCP Protocol Constants ──
 JSONRPC = "2.0"
 
+from curator._version import __version__ as _curator_version
+
 SERVER_INFO = {
     "name": "openviking-curator",
-    "version": "0.7.0",
+    "version": _curator_version,
 }
 
 CAPABILITIES = {
@@ -91,6 +93,7 @@ TOOLS = [
 
 # ── Tool Implementations ──
 
+
 def _tool_curator_query(args: dict) -> dict:
     query = args.get("query", "").strip()
     if not query:
@@ -98,7 +101,7 @@ def _tool_curator_query(args: dict) -> dict:
 
     # 门控
     sys.path.insert(0, str(Path(__file__).parent))
-    from curator_query import should_route, run_curator
+    from curator_query import run_curator, should_route
 
     route, reason = should_route(query)
     if not route:
@@ -115,15 +118,14 @@ def _tool_curator_query(args: dict) -> dict:
     return result
 
 
-
 def _tool_curator_ingest(args: dict) -> dict:
     title = args.get("title", "").strip()
     content = args.get("content", "").strip()
     if not title or not content:
         return {"error": "title and content are required"}
 
-    from curator.session_manager import OVClient
     from curator.review import ingest_markdown_v2
+    from curator.session_manager import OVClient
 
     ov = OVClient()
     if not ov.health():
@@ -163,6 +165,7 @@ TOOL_DISPATCH = {
 
 
 # ── JSON-RPC Handler ──
+
 
 def handle_request(req: dict) -> dict | None:
     method = req.get("method", "")

@@ -30,7 +30,9 @@ CURATED_DIR = env("CURATOR_CURATED_DIR", str(Path.cwd() / "curated"))
 # ── API endpoints ──
 OAI_BASE = env("CURATOR_OAI_BASE")
 OAI_KEY = env("CURATOR_OAI_KEY")
-CURATOR_VERSION = env("CURATOR_VERSION", "0.7.0")
+from ._version import __version__ as _pkg_version
+
+CURATOR_VERSION = env("CURATOR_VERSION", _pkg_version)
 
 ROUTER_MODELS = [
     m.strip()
@@ -104,6 +106,17 @@ SUMMARIZE_MODELS = [
     if m.strip()
 ]
 
+# ── Circuit breaker ──
+CB_ENABLED = env("CURATOR_CB_ENABLED", "1") == "1"
+CB_THRESHOLD = int(env("CURATOR_CB_THRESHOLD", "3"))
+CB_RECOVERY_SEC = float(env("CURATOR_CB_RECOVERY_SEC", "30"))
+
+# ── Search cache ──
+CACHE_ENABLED = env("CURATOR_CACHE_ENABLED", "0") == "1"
+CACHE_TTL = int(env("CURATOR_CACHE_TTL", "3600"))
+CACHE_FRESH_TTL = int(env("CURATOR_CACHE_FRESH_TTL", "300"))
+CACHE_MAX_ENTRIES = int(env("CURATOR_CACHE_MAX_ENTRIES", "200"))
+
 # Chat retry (lightweight, dependency-free)
 CHAT_RETRY_MAX = max(1, int(env("CURATOR_CHAT_RETRY_MAX", "3")))
 CHAT_RETRY_BACKOFF_SEC = max(0.0, float(env("CURATOR_CHAT_RETRY_BACKOFF_SEC", "0.6")))
@@ -148,7 +161,18 @@ def _should_retry_chat_error(err: Exception) -> bool:
 
 
 def chat(base, key, model, messages, timeout=60, temperature=None):
-    """OAI-compatible chat completion call with lightweight retries."""
+    """OAI-compatible chat completion call with lightweight retries.
+
+    Circuit breaker wraps the entire retry loop: one chat() invocation
+    (which may include multiple retry attempts) counts as a single
+    success or failure for the breaker.
+    """
+    from .circuit_breaker import CircuitOpenError, get_breaker
+
+    breaker = get_breaker(f"chat:{model}")
+    if not breaker.allow_request():
+        raise CircuitOpenError(f"circuit open for chat:{model}")
+
     last_err = None
     retry_max = max(1, CHAT_RETRY_MAX)
     body = {"model": model, "messages": messages, "stream": False}
@@ -176,6 +200,7 @@ def chat(base, key, model, messages, timeout=60, temperature=None):
                 err = payload.get("error") if isinstance(payload, dict) else payload
                 raise RuntimeError(f"Invalid chat response payload: {err}")
 
+            breaker.record_success()
             return choices[0]["message"]["content"]
         except Exception as e:
             last_err = e
@@ -186,4 +211,5 @@ def chat(base, key, model, messages, timeout=60, temperature=None):
             log.warning("chat retry %d/%d model=%s error=%s", attempt, retry_max, model, e)
             time.sleep(sleep_s)
 
+    breaker.record_failure()
     raise RuntimeError(f"chat failed after retries: {last_err}") from last_err

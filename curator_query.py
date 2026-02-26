@@ -7,7 +7,11 @@ curator_query.py — 一体化查询入口
   {"routed": false, "reason": "..."}                    — 不需要调插件
   {"routed": true, "context_text": "...", "meta": {...}} — 插件结构化结果
 """
-import json, os, re, sys
+
+import json
+import os
+import re
+import sys
 from pathlib import Path
 
 # ── 路由门控：LLM 判断 + 规则兜底 ──
@@ -57,7 +61,7 @@ def _llm_should_route(query: str) -> tuple[bool, str]:
     grok_key = os.getenv("CURATOR_GROK_KEY", "")
     if grok_key:
         endpoints.append((grok_base, grok_key, os.getenv("CURATOR_GROK_MODEL", "grok-4-fast")))
-    
+
     oai_base = os.getenv("CURATOR_OAI_BASE", "")
     oai_key = os.getenv("CURATOR_OAI_KEY", "")
     if oai_key:
@@ -81,7 +85,7 @@ def _llm_should_route(query: str) -> tuple[bool, str]:
             )
             r.raise_for_status()
             content = r.json()["choices"][0]["message"]["content"]
-            m = re.search(r'\{[^}]+\}', content)
+            m = re.search(r"\{[^}]+\}", content)
             if m:
                 parsed = json.loads(m.group(0))
                 return bool(parsed.get("route", False)), parsed.get("reason", "llm_judge")
@@ -109,7 +113,7 @@ def _rule_should_route(query: str) -> tuple[bool, str]:
         if re.search(p, q, re.IGNORECASE):
             return True, "rule_positive"
 
-    if len(q) > 15 and ('?' in q or '？' in q or '吗' in q or '呢' in q):
+    if len(q) > 15 and ("?" in q or "？" in q or "吗" in q or "呢" in q):
         return True, "rule_question_heuristic"
 
     return False, "rule_no_signal"
@@ -143,12 +147,12 @@ def should_route(query: str) -> tuple[bool, str]:
 
 def load_env():
     """Load .env file into os.environ."""
-    env_file = Path(__file__).parent / '.env'
+    env_file = Path(__file__).parent / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                k, v = line.split('=', 1)
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
 
@@ -169,6 +173,7 @@ def run_status() -> dict:
     # OpenViking check
     try:
         from curator.session_manager import OVClient
+
         ov = OVClient()
         healthy = ov.health()
         if healthy:
@@ -226,6 +231,7 @@ def run_curator(query: str, auto_ingest: bool = True) -> dict:
 
     try:
         from curator.pipeline_v2 import run
+
         result = run(query, auto_ingest=auto_ingest)
     except Exception as e:
         return {"routed": True, "error": str(e)}
@@ -283,7 +289,7 @@ Output (JSON):
 """
 
 
-if __name__ == "__main__":
+def main():
     args = sys.argv[1:]
 
     if not args or "--help" in args or "-h" in args:
@@ -306,3 +312,7 @@ if __name__ == "__main__":
     if review_mode:
         result["review_mode"] = True
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
