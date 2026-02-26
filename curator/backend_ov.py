@@ -120,22 +120,55 @@ class OpenVikingBackend(KnowledgeBackend):
 
     # ── Session tracking ──
 
+    def _session_dir_exists(self, sid: str) -> bool:
+        """Check if the session directory exists in OV's embedded data store.
+
+        OV's session().load() silently starts a fresh empty session when the
+        session_id doesn't exist — there is no validation at the OV API level.
+        For embedded mode we can check the filesystem directly to avoid silently
+        reusing a stale ID after an OV data reset.
+
+        Uses the same path resolution as session_manager._init_embedded():
+            OV_DATA_PATH → CURATOR_DATA_PATH → "./data"
+        """
+        # Mirror session_manager._DEFAULT_DATA_PATH resolution logic
+        data_path = os.environ.get(
+            "OV_DATA_PATH",
+            os.environ.get("CURATOR_DATA_PATH", "./data"),
+        )
+        return os.path.isdir(os.path.join(data_path, "viking", "session", sid))
+
     def load_or_create_session(self, session_file: str = "") -> str:
         """Load existing session from *session_file* or create a new one.
 
         Persists the session ID to *session_file* so context carries over
         across pipeline runs.
+
+        For embedded mode, validates the session directory still exists in OV
+        data before reusing a stored ID — OV data resets would otherwise cause
+        the stale ID to be silently accepted as a fresh empty session.
+        HTTP mode skips the filesystem check (session lives on OV server).
         """
-        if session_file:
-            if os.path.exists(session_file):
-                try:
-                    with open(session_file, encoding="utf-8") as f:
-                        sid = f.read().strip()
+        if session_file and os.path.exists(session_file):
+            try:
+                with open(session_file, encoding="utf-8") as f:
+                    sid = f.read().strip()
+                if sid:
+                    # Embedded mode: validate session directory still exists.
+                    # OV silently starts a fresh session for unknown IDs, so we
+                    # must check the filesystem ourselves.
+                    if self._ov.mode != "http" and not self._session_dir_exists(sid):
+                        log.info(
+                            "session %s not found in OV data (data reset?), creating new session",
+                            sid,
+                        )
+                        sid = ""  # fall through to create_session()
+
                     if sid:
                         log.info("复用 session: %s", sid)
                         return sid
-                except OSError:
-                    pass
+            except OSError:
+                pass
 
         sid = self.create_session()
 
