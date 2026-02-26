@@ -5,12 +5,12 @@ safety and validation.  Module-level aliases preserve backward compatibility —
 no consumer code needs to change.
 """
 
-import logging
 import os
 import time
 
 import requests
 
+from .logging_setup import configure_logging
 from .settings import CuratorSettings
 
 
@@ -23,13 +23,8 @@ def env(name: str, default: str = "") -> str:
 # ── Settings singleton ──
 _settings = CuratorSettings()
 
-# ── Logging ──
-log = logging.getLogger("curator")
-if not log.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
-    log.addHandler(_h)
-    log.setLevel(logging.DEBUG if _settings.debug else logging.INFO)
+# ── Logging (structlog bridge with JSON toggle) ──
+log = configure_logging()
 
 
 # ── Paths ──
