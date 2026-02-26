@@ -256,15 +256,14 @@ class TestAsyncIngest(unittest.TestCase):
 
                             run("failing query", backend=backend, auto_ingest=True)
 
-            # Wait for background thread to finish writing
-            self.assertTrue(failure_done.wait(timeout=3), "failure log was not written")
-
-            log_path = Path(tmpdir) / "async_ingest_failures.jsonl"
-            self.assertTrue(log_path.exists(), "failure log file should exist")
-            lines = log_path.read_text().strip().split("\n")
-            entry = json.loads(lines[-1])
-            self.assertEqual(entry["query"], "failing query")
-            self.assertIn("LLM timeout", entry["error"])
+                            # Wait inside patch scope so background thread keeps mocks
+                            self.assertTrue(failure_done.wait(timeout=3), "failure log was not written")
+                            log_path = Path(tmpdir) / "async_ingest_failures.jsonl"
+                            self.assertTrue(log_path.exists(), "failure log file should exist")
+                            lines = log_path.read_text().strip().split("\n")
+                            entry = json.loads(lines[-1])
+                            self.assertEqual(entry["query"], "failing query")
+                            self.assertIn("LLM timeout", entry["error"])
 
     def test_concurrent_async_runs_serialized(self):
         """Multiple concurrent async ingest runs should not overlap (lock)."""
