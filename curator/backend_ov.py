@@ -93,7 +93,8 @@ class OpenVikingBackend(KnowledgeBackend):
             try:
                 self._ov._impl._request("DELETE", "/api/v1/fs", params={"uri": uri})
                 return True
-            except Exception:
+            except Exception as e:
+                log.debug("failed to delete URI %s via HTTP: %s", uri, e)
                 return False
         return False
 
@@ -102,7 +103,8 @@ class OpenVikingBackend(KnowledgeBackend):
             uri = prefix or "viking://resources"
             items = self._ov.ls(uri)
             return [item.get("uri", item) if isinstance(item, dict) else str(item) for item in items]
-        except Exception:
+        except Exception as e:
+            log.debug("failed to list resources with prefix %r: %s", prefix, e)
             return []
 
     # ── Session tracking ──
@@ -124,8 +126,8 @@ class OpenVikingBackend(KnowledgeBackend):
                 from .session_manager import _ov_run
 
                 _ov_run(self._ov._client.session_add_message(session_id, role, text))
-            except Exception:
-                pass  # Embedded mode: caller manages session objects directly
+            except Exception as e:
+                log.debug("failed to add session message (embedded mode) for session %s: %s", session_id, e)
 
     def session_used(self, session_id: str, uris: list[str]):
         if self._ov.mode == "http":

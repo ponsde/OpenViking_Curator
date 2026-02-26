@@ -51,7 +51,8 @@ def rerank_with_feedback(items: list) -> list:
         from curator import feedback_store
 
         fb = feedback_store.load()
-    except Exception:
+    except Exception as e:
+        log.debug("feedback_store load failed: %s", e)
         return items  # feedback_store 不可用时静默跳过，不影响检索
 
     if not fb:
@@ -188,8 +189,8 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
         overview = ""
         try:
             overview = backend.overview(uri)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("L1 overview failed for %s: %s", uri, e)
 
         text = (overview or item.get("abstract", "") or "").strip()
         if len(text) < 20:
@@ -230,8 +231,8 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
                     blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
                     used_uris.append(uri)
                 l2_count += 1
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("L2 read failed for %s: %s", uri, e)
 
     context_text = "\n\n".join(blocks)
     log.info(

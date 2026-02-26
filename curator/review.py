@@ -140,7 +140,8 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
 
     try:
         return JudgeResult.model_validate_json(json_str)
-    except Exception:
+    except Exception as e:
+        log.debug("model_validate_json failed, trying fallback: %s", e)
         # Fallback: try plain json.loads then construct
         try:
             data = json.loads(json_str)
@@ -148,7 +149,8 @@ def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> Judg
             if not isinstance(data.get("conflict_points"), list):
                 data["conflict_points"] = []
             return JudgeResult.model_validate(data)
-        except Exception:
+        except Exception as e:
+            log.debug("judge output JSON parse fallback failed: %s", e)
             return JudgeResult(**{"pass": False, "reason": fallback_reason or "json_parse_fail"})
 
 
@@ -277,7 +279,8 @@ def judge_and_pack(query: str, external_text: str):
         return {"pass": False, "reason": "bad_json", "tags": [], "trust": 0, "summary": "", "markdown": ""}
     try:
         return json.loads(json_str)
-    except Exception:
+    except Exception as e:
+        log.debug("judge_and_pack JSON parse failed: %s", e)
         return {"pass": False, "reason": "json_parse_fail", "tags": [], "trust": 0, "summary": "", "markdown": ""}
 
 
@@ -309,7 +312,8 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         if "points" not in j or not isinstance(j.get("points"), list):
             j["points"] = []
         return j
-    except Exception:
+    except Exception as e:
+        log.debug("detect_conflict JSON parse failed: %s", e)
         return {"has_conflict": False, "summary": "", "points": []}
 
 

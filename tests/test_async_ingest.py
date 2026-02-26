@@ -99,18 +99,17 @@ class TestAsyncIngest(unittest.TestCase):
 
                 result = run("test query", backend=backend, auto_ingest=True)
 
-        # run() returned while judge is still blocked
-        self.assertTrue(result["meta"].get("async_ingest_pending", False))
-        self.assertIn("external_text", result)
-        self.assertEqual(result["external_text"], "External search result content")
+                # run() returned while judge is still blocked
+                self.assertTrue(result["meta"].get("async_ingest_pending", False))
+                self.assertIn("external_text", result)
+                self.assertEqual(result["external_text"], "External search result content")
 
-        # Verify the background thread actually started
-        self.assertTrue(judge_started.wait(timeout=2), "background judge thread did not start")
+                # Verify the background thread actually started
+                self.assertTrue(judge_started.wait(timeout=3), "background judge thread did not start")
 
-        # Let the background judge finish
-        judge_proceed.set()
-        # Give background thread time to complete
-        time.sleep(0.5)
+                # Let the background judge finish inside patch scope
+                judge_proceed.set()
+                time.sleep(0.3)
 
     def test_async_on_still_returns_external_text(self):
         """Async mode should include external_text in the result."""
@@ -138,8 +137,7 @@ class TestAsyncIngest(unittest.TestCase):
                 from curator.pipeline_v2 import run
 
                 result = run("test query", backend=backend, auto_ingest=True)
-
-        self.assertEqual(result["external_text"], "External search result content")
+                self.assertEqual(result["external_text"], "External search result content")
 
     def test_async_background_failure_does_not_crash(self):
         """If judge fails in background, no exception propagates."""
@@ -159,10 +157,9 @@ class TestAsyncIngest(unittest.TestCase):
 
                 # Should not raise
                 result = run("test query", backend=backend, auto_ingest=True)
-
-        self.assertTrue(result["meta"].get("async_ingest_pending", False))
-        # Give background thread time to fail gracefully
-        time.sleep(0.5)
+                self.assertTrue(result["meta"].get("async_ingest_pending", False))
+                # Wait for background thread to complete inside patch scope
+                time.sleep(0.5)
 
     def test_async_off_when_no_external(self):
         """When coverage is sufficient, no external search, no async needed."""
@@ -425,10 +422,10 @@ class TestAsyncIngest(unittest.TestCase):
 
                 result = run("fresh query", backend=backend, auto_ingest=True)
 
-        self.assertTrue(result["meta"].get("async_ingest_pending", False))
+                self.assertTrue(result["meta"].get("async_ingest_pending", False))
 
-        # cross_validate should have been called in the background thread
-        self.assertTrue(cv_called.wait(timeout=3), "cross_validate should be called in async path")
+                # cross_validate should have been called in the background thread
+                self.assertTrue(cv_called.wait(timeout=3), "cross_validate should be called in async path")
 
 
 if __name__ == "__main__":

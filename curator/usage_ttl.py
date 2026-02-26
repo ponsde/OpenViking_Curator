@@ -23,11 +23,15 @@ Usage in pipeline (compute_usage_ttl_for_ingest):
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger("curator")
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_HOT_THRESHOLD = 5       # adopt count to qualify as hot
+_HOT_THRESHOLD = 5  # adopt count to qualify as hot
 _MULTIPLIERS = {
-    "hot":  1.5,
+    "hot": 1.5,
     "warm": 1.0,
     "cold": 0.5,
 }
@@ -35,6 +39,7 @@ _MAX_TTL = 365
 
 
 # ── Core functions ─────────────────────────────────────────────────────────────
+
 
 def usage_tier(adopt_count: int) -> str:
     """Classify adopt_count into a tier string.
@@ -86,6 +91,7 @@ def adjust_ttl(base_ttl: int, tier: str) -> int:
 
 # ── Pipeline helper ────────────────────────────────────────────────────────────
 
+
 def compute_usage_ttl_for_ingest(
     base_ttl: int,
     existing_uris: list,
@@ -117,7 +123,8 @@ def compute_usage_ttl_for_ingest(
 
     try:
         data = _load_feedback()
-    except Exception:
+    except Exception as e:
+        log.debug("failed to load feedback data for TTL computation: %s", e)
         return base_ttl, "warm"
 
     # Find the maximum adopt signal across all provided URIs

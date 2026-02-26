@@ -61,7 +61,8 @@ class _HTTPClient:
         try:
             r = self._request("GET", "/health")
             return r.get("status") == "ok" if isinstance(r, dict) else True
-        except Exception:
+        except Exception as e:
+            log.debug("HTTP health check failed: %s", e)
             return False
 
     def find(self, query: str, limit: int = 10, target_uri: str = "") -> dict:
@@ -197,7 +198,8 @@ class _EmbeddedClient:
     def health(self) -> bool:
         try:
             return self._client.is_healthy()
-        except Exception:
+        except Exception as e:
+            log.debug("embedded client health check failed: %s", e)
             return False
 
     def find(self, query, limit=10, target_uri=""):

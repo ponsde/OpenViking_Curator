@@ -617,7 +617,8 @@ def _aggregate_local_signals(used_uris: list | set) -> dict | None:
             up += item.get("up", 0)
             down += item.get("down", 0)
         return {"adopt_count": adopt, "up_count": up, "down_count": down}
-    except Exception:
+    except Exception as e:
+        log.debug("failed to load feedback signals for URIs %s: %s", used_uris, e)
         return None
 
 

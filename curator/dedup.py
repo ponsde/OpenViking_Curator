@@ -119,8 +119,8 @@ def _load_dedup_log() -> dict:
     try:
         if os.path.exists(DEDUP_LOG_FILE):
             return json.loads(Path(DEDUP_LOG_FILE).read_text())
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("failed to load dedup log from %s: %s", DEDUP_LOG_FILE, e)
     return {"checked_pairs": [], "reports": [], "last_run": None}
 
 
@@ -185,7 +185,8 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
             content = str(backend.read(u))
             if content and len(content) > 50:
                 uri_contents[u] = content
-        except Exception:
+        except Exception as e:
+            log.debug("failed to read content for URI %s: %s", u, e)
             continue
 
     if len(uri_contents) < 2:

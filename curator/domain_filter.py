@@ -15,8 +15,11 @@ Domain matching rules:
   - Matching is case-insensitive.
 """
 
+import logging
 import re
 from urllib.parse import urlparse
+
+log = logging.getLogger("curator")
 
 # ── Core helpers ──────────────────────────────────────────────────────────────
 
@@ -42,7 +45,8 @@ def extract_domain(url: str) -> str:
         # or there's no meaningful path/host structure.
         if host in ("https", "http", "") and not parsed.path.strip("/"):
             return ""
-    except Exception:
+    except Exception as e:
+        log.debug("failed to parse URL %r: %s", raw, e)
         return ""
 
     if not host:
