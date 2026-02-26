@@ -1,0 +1,60 @@
+{
+  "domain_map": {
+    "technology": [
+      "docker",
+      "nginx",
+      "linux",
+      "k8s",
+      "kubernetes",
+      "systemd",
+      "git",
+      "python",
+      "asyncio",
+      "rust",
+      "golang",
+      "javascript",
+      "typescript",
+      "api",
+      "mcp",
+      "rag",
+      "llm",
+      "openai",
+      "claude",
+      "grok",
+      "embedding",
+      "vector",
+      "openviking",
+      "grok2api",
+      "wordpress",
+      "cloudflare",
+      "向量",
+      "容器",
+      "部署",
+      "配置",
+      "排查",
+      "服务器",
+      "数据库"
+    ],
+    "devops": [
+      "vps",
+      "ssh",
+      "firewall",
+      "防火墙",
+      "安全加固",
+      "监控",
+      "systemctl",
+      "journalctl",
+      "iptables",
+      "ufw"
+    ]
+  },
+  "time_keywords": [
+    "最新",
+    "更新",
+    "release",
+    "changelog",
+    "2026",
+    "2025",
+    "latest"
+  ]
+}
