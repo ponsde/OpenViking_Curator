@@ -39,8 +39,21 @@ class TestConfigureLogging:
         result = configure_logging()
         assert result.level == logging.DEBUG
 
-    def test_json_mode_output(self, monkeypatch, capsys):
+    def test_debug_zero_is_not_debug(self, monkeypatch):
+        """CURATOR_DEBUG=0 should NOT enable debug level."""
+        monkeypatch.setenv("CURATOR_DEBUG", "0")
+        logger = logging.getLogger("curator")
+        logger.handlers.clear()
+
+        from curator.logging_setup import configure_logging
+
+        result = configure_logging()
+        assert result.level == logging.INFO
+
+    def test_json_mode_output(self, monkeypatch):
         """JSON mode produces parseable JSON lines."""
+        import io
+
         monkeypatch.setenv("CURATOR_JSON_LOGGING", "1")
         monkeypatch.delenv("CURATOR_DEBUG", raising=False)
         logger = logging.getLogger("curator")
@@ -49,10 +62,18 @@ class TestConfigureLogging:
         from curator.logging_setup import configure_logging
 
         log = configure_logging()
-        log.info("test_message", extra={"key": "value"})
 
-        capsys.readouterr()  # consume output
-        assert log.name == "curator"
+        # Capture handler output via a StringIO stream
+        buf = io.StringIO()
+        for h in log.handlers:
+            h.stream = buf
+
+        log.info("test_json_event")
+        output = buf.getvalue().strip()
+        assert output, "Expected JSON output but got empty string"
+        parsed = json.loads(output)
+        assert parsed["event"] == "test_json_event"
+        assert "level" in parsed
 
     def test_idempotent(self):
         """Calling configure_logging twice doesn't double handlers."""

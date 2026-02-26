@@ -22,7 +22,7 @@ def configure_logging() -> logging.Logger:
     if logger.handlers:
         return logger
 
-    debug = bool(os.getenv("CURATOR_DEBUG"))
+    debug = os.getenv("CURATOR_DEBUG", "") in ("1", "true", "yes", "on")
     json_mode = os.getenv("CURATOR_JSON_LOGGING", "0") == "1"
 
     try:
