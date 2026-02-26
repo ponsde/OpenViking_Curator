@@ -56,14 +56,20 @@ _TIME_KEYWORDS = re.compile(
 
 
 @dataclass
-class SearchResult:
+class WebSearchResult:
+    """External web search result (distinct from backend.SearchResult for KB retrieval)."""
+
     title: str
     url: str
     date: str = ""
     snippet: str = ""
 
 
-def format_results(results: list[SearchResult]) -> str:
+# Backward-compatible alias — remove in next major version
+SearchResult = WebSearchResult
+
+
+def format_results(results: list[WebSearchResult]) -> str:
     """Format structured search results to markdown text (backward compatible)."""
     if not results:
         return ""
@@ -150,7 +156,7 @@ def oai_search(query: str, scope: dict, **kwargs) -> str:
 
 
 # ── Provider: DuckDuckGo ──
-def _search_duckduckgo(query: str, scope: dict) -> list[SearchResult]:
+def _search_duckduckgo(query: str, scope: dict) -> list[WebSearchResult]:
     """Search via DuckDuckGo and return structured results."""
     try:
         from duckduckgo_search import DDGS
@@ -167,10 +173,10 @@ def _search_duckduckgo(query: str, scope: dict) -> list[SearchResult]:
     if not results:
         return []
 
-    out: list[SearchResult] = []
+    out: list[WebSearchResult] = []
     for r in results:
         out.append(
-            SearchResult(
+            WebSearchResult(
                 title=str(r.get("title", "")),
                 url=str(r.get("href", "")),
                 snippet=str(r.get("body", "")),
@@ -180,7 +186,7 @@ def _search_duckduckgo(query: str, scope: dict) -> list[SearchResult]:
 
 
 # ── Provider: Tavily ──
-def _search_tavily(query: str, scope: dict) -> list[SearchResult]:
+def _search_tavily(query: str, scope: dict) -> list[WebSearchResult]:
     """Search via Tavily and return structured results."""
     try:
         from tavily import TavilyClient
@@ -203,10 +209,10 @@ def _search_tavily(query: str, scope: dict) -> list[SearchResult]:
     if not results:
         return []
 
-    out: list[SearchResult] = []
+    out: list[WebSearchResult] = []
     for r in results:
         out.append(
-            SearchResult(
+            WebSearchResult(
                 title=str(r.get("title", "")),
                 url=str(r.get("url", "")),
                 snippet=str(r.get("content", "")),
@@ -233,7 +239,7 @@ PROVIDERS = {
 }
 
 
-def _call_provider(pname: str, query: str, scope: dict) -> str | list[SearchResult]:
+def _call_provider(pname: str, query: str, scope: dict) -> str | list[WebSearchResult]:
     """
     Resolve and call the provider function by name.
 
@@ -253,7 +259,7 @@ def _call_provider(pname: str, query: str, scope: dict) -> str | list[SearchResu
 def _provider_output_to_text(result: Any) -> str:
     """Convert provider output to markdown text (supports structured results)."""
     if isinstance(result, list):
-        structured: list[SearchResult] = []
+        structured: list[WebSearchResult] = []
         for item in result:
             if isinstance(item, SearchResult):
                 structured.append(item)

@@ -396,11 +396,11 @@ def _auto_summarize(content: str, title: str) -> dict:
                 ],
                 timeout=30,
             )
-            # 从 raw 里提取 JSON
-            m = re.search(r"\{.*\}", raw, re.DOTALL)
-            if not m:
+            # 从 raw 里提取 JSON（括号深度匹配，比贪婪 regex 安全）
+            json_str = _extract_json(raw)
+            if not json_str:
                 continue
-            data = json.loads(m.group())
+            data = json.loads(json_str)
             abstract = str(data.get("abstract", "")).strip()
             overview = str(data.get("overview", "")).strip()
             if abstract:
