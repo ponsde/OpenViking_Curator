@@ -212,6 +212,24 @@ class KnowledgeBackend(ABC):
         """
         return ""
 
+    def load_or_create_session(self, session_file: str = "") -> str:
+        """Load an existing session from *session_file*, or create a new one.
+
+        Backends with persistent sessions (e.g. OV) should override this to
+        read/write the session ID from the given file path so that context
+        carries over across pipeline runs.
+
+        The default implementation ignores *session_file* and always creates a
+        fresh session via :meth:`create_session`.
+
+        Args:
+            session_file: Path to a file that stores the persisted session ID.
+
+        Returns:
+            Session ID string.
+        """
+        return self.create_session()
+
     def session_add_message(self, session_id: str, role: str, text: str):
         """Record a message in the session.
 

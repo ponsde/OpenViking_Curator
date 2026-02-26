@@ -23,6 +23,8 @@ class OpenVikingBackend(KnowledgeBackend):
         from .session_manager import OVClient
 
         self._ov = OVClient(base_url=base_url)
+        # Per-session URI tracking for active_count fix on commit
+        self._session_used_uris: dict[str, list] = {}
 
     @property
     def name(self) -> str:
@@ -113,6 +115,37 @@ class OpenVikingBackend(KnowledgeBackend):
 
     # ── Session tracking ──
 
+    def load_or_create_session(self, session_file: str = "") -> str:
+        """Load existing session from *session_file* or create a new one.
+
+        Persists the session ID to *session_file* so context carries over
+        across pipeline runs.
+        """
+        if session_file:
+            import os
+
+            if os.path.exists(session_file):
+                try:
+                    with open(session_file, encoding="utf-8") as f:
+                        sid = f.read().strip()
+                    if sid:
+                        log.info("复用 session: %s", sid)
+                        return sid
+                except OSError:
+                    pass
+
+        sid = self.create_session()
+
+        if session_file and sid:
+            try:
+                from .file_lock import locked_write
+
+                locked_write(session_file, sid)
+            except Exception as e:
+                log.debug("failed to persist session ID: %s", e)
+
+        return sid
+
     def create_session(self) -> str:
         from .session_manager import _ov_run
 
@@ -120,7 +153,10 @@ class OpenVikingBackend(KnowledgeBackend):
             result = self._ov._impl.create_session()
         else:
             result = _ov_run(self._ov._client.create_session())
-        return result.get("session_id", "")
+        sid = result.get("session_id", "")
+        if sid:
+            log.info("新建 session: %s", sid)
+        return sid
 
     def session_add_message(self, session_id: str, role: str, text: str):
         if self._ov.mode == "http":
@@ -134,13 +170,97 @@ class OpenVikingBackend(KnowledgeBackend):
                 log.debug("failed to add session message (embedded mode) for session %s: %s", session_id, e)
 
     def session_used(self, session_id: str, uris: list[str]):
+        # Track URIs for active_count fix applied during commit
+        if session_id not in self._session_used_uris:
+            self._session_used_uris[session_id] = []
+        self._session_used_uris[session_id].extend(uris)
         if self._ov.mode == "http":
-            self._ov._impl.session_used(session_id, uris)
+            self._ov._impl.session_used(session_id, list(uris))
 
     def session_commit(self, session_id: str) -> dict:
+        from .session_manager import _ov_run
+
+        used = list(self._session_used_uris.pop(session_id, []))
+
+        result: dict = {}
         if self._ov.mode == "http":
-            return self._ov._impl.session_commit(session_id)
-        return {}
+            try:
+                result = self._ov._impl.session_commit(session_id)
+            except Exception as e:
+                log.debug("HTTP session_commit failed: %s", e)
+        else:
+            # Embedded mode: commit via session object
+            try:
+                session_obj = _ov_run(self._ov._client.session(session_id))
+                if hasattr(session_obj, "load"):
+                    session_obj.load()
+                raw = _ov_run(session_obj.commit())
+                result = raw if isinstance(raw, dict) else {}
+            except Exception as e:
+                log.debug("embedded session_commit failed: %s", e)
+
+        # Workaround: OV's native active_count update is broken in some versions
+        fixed = self._fix_active_counts(used) if used else 0
+
+        log.info(
+            "session commit: memories=%s, active_count=%s (fixed=%d), archived=%s",
+            result.get("memories_extracted", 0),
+            result.get("active_count_updated", 0),
+            fixed,
+            result.get("archived"),
+        )
+        return result
+
+    def _fix_active_counts(self, uris: list) -> int:
+        """Workaround for OV upstream active_count bug. Embedded mode only.
+
+        Accesses OV internals via guarded attribute lookups.  If OV upstream
+        refactors, this will silently no-op rather than crash.
+        """
+        from .session_manager import _ov_run
+
+        if self._ov.mode != "embedded" or not uris:
+            return 0
+
+        try:
+            client = self._ov._client
+            inner = getattr(client, "_client", None)
+            if inner is None:
+                return 0
+            service = getattr(inner, "_service", None)
+            if service is None:
+                return 0
+            db = getattr(service, "_vikingdb_manager", None)
+            if db is None or not hasattr(db, "_get_collection"):
+                return 0
+            coll = db._get_collection("context")
+        except Exception as e:
+            log.debug("_fix_active_counts: cannot access vectordb: %s", e)
+            return 0
+
+        updated = 0
+        seen_ids: set = set()
+        for uri in uris:
+            try:
+                result = coll.search_by_random(
+                    index_name=db.DEFAULT_INDEX_NAME,
+                    limit=10,
+                    filters={"op": "must", "field": "uri", "conds": [uri]},
+                )
+                for item in result.data:
+                    rec = dict(item.fields) if item.fields else {}
+                    rid = item.id
+                    if rid in seen_ids or rec.get("uri") != uri:
+                        continue
+                    seen_ids.add(rid)
+                    old_ac = rec.get("active_count", 0) or 0
+                    ok = _ov_run(db.update("context", rid, {"active_count": old_ac + 1}))
+                    if ok:
+                        updated += 1
+            except Exception as e:
+                log.debug("_fix_active_counts: URI %s failed: %s", uri, e)
+
+        return updated
 
     # ── Internal ──
 

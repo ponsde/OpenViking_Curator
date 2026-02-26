@@ -89,8 +89,31 @@ def rerank_with_feedback(items: list) -> list:
     return adjusted
 
 
-def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
-    """主力检索：通过 SessionManager 调 OV search。
+def _search_result_to_dict(r) -> dict:
+    """Normalise a SearchResult dataclass or a raw dict to a plain dict."""
+    if isinstance(r, dict):
+        return r
+    return {
+        "uri": r.uri,
+        "abstract": r.abstract,
+        "overview": r.overview,
+        "score": r.score,
+        "context_type": r.context_type,
+        "match_reason": r.match_reason,
+        "category": r.category,
+        "relations": r.relations,
+        "metadata": r.metadata,
+    }
+
+
+def backend_retrieve(backend, query: str, session_id: str = None, limit: int = 10) -> dict:
+    """主力检索：通过 KnowledgeBackend 接口搜索，与后端无关。
+
+    Args:
+        backend: A :class:`KnowledgeBackend` instance.
+        query: User query string.
+        session_id: Optional session ID for context-aware search.
+        limit: Maximum number of results to return.
 
     返回:
         {
@@ -101,8 +124,61 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
             "all_items": [...]  # 三路合并的扁平列表，已按 feedback 微调排序
         }
     """
-    result = session_mgr.search(query, limit=limit)
+    resp = backend.search(query, session_id=session_id, limit=limit)
 
+    items = [_search_result_to_dict(r) for r in resp.results]
+
+    # Split by context_type; default unclassified items to "resource"
+    memories = [i for i in items if i.get("context_type") == "memory"]
+    skills = [i for i in items if i.get("context_type") == "skill"]
+    categorised_uris = {i["uri"] for i in memories + skills}
+    resources = [i for i in items if i["uri"] not in categorised_uris]
+
+    log.info("检索: memories=%d, resources=%d, skills=%d", len(memories), len(resources), len(skills))
+
+    if resp.query_plan:
+        qp = resp.query_plan
+        queries = getattr(qp, "queries", []) if not isinstance(qp, dict) else qp.get("queries", [])
+        log.info("query_plan: %d 个子查询", len(queries))
+        for q in queries[:3]:
+            ct = getattr(q, "context_type", "?") if not isinstance(q, dict) else q.get("context_type", "?")
+            qtext = getattr(q, "query", "") if not isinstance(q, dict) else q.get("query", "")
+            log.debug("  [%s] %s", ct, qtext)
+
+    # 保留原始分快照，供 assess_coverage 使用（评估覆盖率应基于原始信号，不受 feedback 影响）
+    all_items_raw = list(items)
+
+    # feedback 微调排名（保守权重，原始 score 仍主导）
+    all_items = rerank_with_feedback(items)
+
+    return {
+        "memories": memories,
+        "resources": resources,
+        "skills": skills,
+        "query_plan": resp.query_plan,
+        "all_items": all_items,
+        "all_items_raw": all_items_raw,
+    }
+
+
+# Backward-compat alias — callers using the old OV-specific name still work.
+# Deprecated: use backend_retrieve() directly.
+def ov_retrieve(session_mgr_or_backend, query: str, limit: int = 10) -> dict:
+    """Deprecated alias for :func:`backend_retrieve`.
+
+    Accepts either the old ``SessionManager`` (duck-typed: must have
+    ``.search(query, limit)``) or a :class:`KnowledgeBackend` instance.
+
+    New code should call ``backend_retrieve(backend, query, session_id)``
+    directly.
+    """
+    from .backend import KnowledgeBackend
+
+    if isinstance(session_mgr_or_backend, KnowledgeBackend):
+        return backend_retrieve(session_mgr_or_backend, query, limit=limit)
+
+    # Legacy path: session_mgr duck-typed object with .search(query, limit)
+    result = session_mgr_or_backend.search(query, limit=limit)
     memories = result.get("memories", []) or []
     resources = result.get("resources", []) or []
     skills = result.get("skills", []) or []
@@ -114,16 +190,8 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
         qp = result["query_plan"]
         queries = getattr(qp, "queries", []) if not isinstance(qp, dict) else qp.get("queries", [])
         log.info("query_plan: %d 个子查询", len(queries))
-        for q in queries[:3]:
-            ct = getattr(q, "context_type", "?") if not isinstance(q, dict) else q.get("context_type", "?")
-            qtext = getattr(q, "query", "") if not isinstance(q, dict) else q.get("query", "")
-            log.debug("  [%s] %s", ct, qtext)
 
-    # 保留原始分快照，供 assess_coverage 使用（评估覆盖率应基于 OV 原始信号）
-    # 浅拷贝足够：rerank_with_feedback 不 in-place 修改 item dict（有 feedback 时新建 dict）
     all_items_raw = list(all_items)
-
-    # feedback 微调排名（保守权重，OV 原始 score 仍主导排序和 load_context 优先级）
     all_items = rerank_with_feedback(all_items)
 
     return {
@@ -131,8 +199,8 @@ def ov_retrieve(session_mgr, query: str, limit: int = 10) -> dict:
         "resources": resources,
         "skills": skills,
         "query_plan": result.get("query_plan"),
-        "all_items": all_items,  # feedback-adjusted，用于 load_context 排序
-        "all_items_raw": all_items_raw,  # OV 原始分，用于 assess_coverage 覆盖率判断
+        "all_items": all_items,
+        "all_items_raw": all_items_raw,
     }
 
 

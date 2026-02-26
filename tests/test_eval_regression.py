@@ -152,10 +152,10 @@ def _mock_judge(*a, **kw):
     }
 
 
-def _make_ov_retrieve_from_backend(backend):
-    """Build an ov_retrieve mock that queries InMemoryBackend instead of OV."""
+def _make_backend_retrieve_from_backend(backend):
+    """Build a backend_retrieve mock that queries InMemoryBackend instead of real backend."""
 
-    def _mock_ov_retrieve(session_mgr, query, limit=10):
+    def _mock_backend_retrieve(bk, query, session_id=None, limit=10):
         find_result = backend.find(query, limit=limit)
         resources = []
         for r in find_result.results:
@@ -173,9 +173,10 @@ def _make_ov_retrieve_from_backend(backend):
             "skills": [],
             "query_plan": None,
             "all_items": resources,
+            "all_items_raw": resources,
         }
 
-    return _mock_ov_retrieve
+    return _mock_backend_retrieve
 
 
 class TestEvalRegression(unittest.TestCase):
@@ -192,8 +193,7 @@ class TestEvalRegression(unittest.TestCase):
     def _run_query(self, query: str) -> dict:
         """Run a single query through the pipeline with mocked externals."""
         patches = {
-            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-            "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+            "backend_retrieve": MagicMock(side_effect=_make_backend_retrieve_from_backend(self.backend)),
             "external_search": MagicMock(return_value="External search mock content"),
             "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),
             "judge_and_ingest": MagicMock(side_effect=_mock_judge),
@@ -287,8 +287,7 @@ class TestEvalRegression(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             patches = {
-                "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-                "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+                "backend_retrieve": MagicMock(side_effect=_make_backend_retrieve_from_backend(self.backend)),
                 "assess_coverage": MagicMock(return_value=(0.2, True, "low_coverage")),
                 "external_search": MagicMock(return_value="External conflict content"),
                 "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),
@@ -326,8 +325,7 @@ class TestEvalRegression(unittest.TestCase):
             return {"domain": "tech", "need_fresh": True}
 
         patches = {
-            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-            "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+            "backend_retrieve": MagicMock(side_effect=_make_backend_retrieve_from_backend(self.backend)),
             "external_search": MagicMock(return_value="External fresh content"),
             "cross_validate": MagicMock(side_effect=_tracking_cv),
             "judge_and_ingest": MagicMock(side_effect=_mock_judge),
@@ -347,8 +345,7 @@ class TestEvalRegression(unittest.TestCase):
     def test_async_ingest_pending_flag_combinations(self):
         """async_ingest_pending in meta should follow ASYNC_INGEST × auto_ingest matrix."""
         patches = {
-            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-            "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+            "backend_retrieve": MagicMock(side_effect=_make_backend_retrieve_from_backend(self.backend)),
             "assess_coverage": MagicMock(return_value=(0.2, True, "low_coverage")),
             "external_search": MagicMock(return_value="External content"),
             "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),

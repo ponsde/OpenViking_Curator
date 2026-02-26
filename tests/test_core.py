@@ -685,13 +685,14 @@ class TestCuratorPipeline(unittest.TestCase):
 
     def _mock_pipeline_deps(self):
         return {
-            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-            "ov_retrieve": MagicMock(
+            "backend_retrieve": MagicMock(
                 return_value={
                     "all_items": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "all_items_raw": [{"uri": "a", "score": 0.8, "abstract": "good"}],
                     "memories": [],
                     "resources": [{"uri": "a", "score": 0.8, "abstract": "good"}],
                     "skills": [],
+                    "query_plan": None,
                 }
             ),
             "assess_coverage": MagicMock(return_value=(0.8, False, "local_sufficient")),
@@ -734,22 +735,30 @@ class TestCuratorPipeline(unittest.TestCase):
         self.assertEqual(r2["query"], "query 2")
 
     def test_pipeline_health_ttl(self):
-        """Session init is not called again within health_ttl window."""
+        """Session not re-initialised within health_ttl window."""
         from curator.backend_memory import InMemoryBackend
         from curator.pipeline_v2 import CuratorPipeline
 
         backend = InMemoryBackend()
-        mock_init = MagicMock(return_value=(MagicMock(), MagicMock()))
         patches = self._mock_pipeline_deps()
-        patches["_init_session_manager"] = mock_init
+
+        # Track how many times load_or_create_session is called
+        call_count = [0]
+        original = backend.load_or_create_session
+
+        def _counted(*args, **kwargs):
+            call_count[0] += 1
+            return original(*args, **kwargs)
+
+        backend.load_or_create_session = _counted
 
         with patch.multiple("curator.pipeline_v2", **patches):
             pipeline = CuratorPipeline(backend=backend, health_ttl=60.0)
             pipeline.run("query 1")
             pipeline.run("query 2")
 
-        # _init_session_manager called once (by _ensure_session), not twice
-        mock_init.assert_called_once()
+        # load_or_create_session called once (first run), cached for second run (health_ttl)
+        self.assertEqual(call_count[0], 1)
 
 
 if __name__ == "__main__":

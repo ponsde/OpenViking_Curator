@@ -18,13 +18,14 @@ class TestAsyncIngest(unittest.TestCase):
     def _mock_pipeline_deps(self):
         """Return common patches for pipeline_v2 module attributes."""
         return {
-            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
-            "ov_retrieve": MagicMock(
+            "backend_retrieve": MagicMock(
                 return_value={
                     "all_items": [{"uri": "a", "score": 0.2, "abstract": "short"}],
+                    "all_items_raw": [{"uri": "a", "score": 0.2, "abstract": "short"}],
                     "memories": [],
                     "resources": [{"uri": "a", "score": 0.2, "abstract": "short"}],
                     "skills": [],
+                    "query_plan": None,
                 }
             ),
             "assess_coverage": MagicMock(return_value=(0.2, True, "low_coverage")),

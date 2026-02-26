@@ -14,15 +14,14 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from .config import DATA_PATH, MAX_L2_DEPTH, OPENVIKING_CONFIG_FILE, log, validate_config
+from .config import DATA_PATH, MAX_L2_DEPTH, log, validate_config
 from .decision_report import format_report, format_report_short
 from .memory_capture import capture_case
 from .metrics import Metrics
-from .retrieval_v2 import assess_coverage, load_context, ov_retrieve
-from .review import detect_conflict, judge_and_ingest
+from .retrieval_v2 import assess_coverage, backend_retrieve, load_context
+from .review import judge_and_ingest
 from .router import route_scope
 from .search import cross_validate, external_search
-from .session_manager import OVClient, SessionManager
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
@@ -40,22 +39,6 @@ def _init_backend():
     from .backend_ov import OpenVikingBackend
 
     return OpenVikingBackend()
-
-
-def _init_session_manager() -> tuple:
-    """初始化 OV 客户端和 session manager。自动选嵌入/HTTP模式。
-
-    Returns:
-        Tuple of ``(OVClient, SessionManager)``.
-    """
-    ov = OVClient()  # 根据 OV_BASE_URL env 自动选模式
-
-    if not ov.health():
-        raise RuntimeError(f"OV 不可用 (mode={ov.mode})")
-
-    sid_file = os.path.join(DATA_PATH, ".curator_session_id")
-    sm = SessionManager(ov, sid_file)
-    return ov, sm
 
 
 def _do_judge_ingest(
@@ -213,30 +196,36 @@ class CuratorPipeline:
         health_ttl: float = 60.0,
     ):
         validate_config()
-        os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
         self._backend = backend if backend is not None else _init_backend()
-        self._ov: OVClient | None = None
-        self._sm: SessionManager | None = None
+        self._session_id: str | None = None
         self._health_ttl = health_ttl
         self._last_health_check: float = 0.0
         self._healthy = False
 
-    def _ensure_session(self) -> tuple:
-        """Lazy-init OVClient + SessionManager, with TTL health check."""
-        now = time.time()
-        if self._ov is not None and (now - self._last_health_check < self._health_ttl):
-            return self._ov, self._sm
+    def _ensure_session(self) -> str | None:
+        """Lazy-init backend session, with TTL health check.
 
-        if self._ov is None:
-            self._ov, self._sm = _init_session_manager()
-        else:
-            if not self._ov.health():
-                raise RuntimeError(f"OV 不可用 (mode={self._ov.mode})")
+        Returns:
+            Session ID string, or ``None`` if sessions are not supported.
+        """
+        if not self._backend.supports_sessions:
+            return None
+
+        now = time.time()
+        if self._session_id is not None and (now - self._last_health_check < self._health_ttl):
+            return self._session_id
+
+        if not self._backend.health():
+            raise RuntimeError(f"Backend {self._backend.name} 不可用")
+
+        if self._session_id is None:
+            sid_file = os.path.join(DATA_PATH, ".curator_session_id")
+            self._session_id = self._backend.load_or_create_session(sid_file)
 
         self._last_health_check = now
         self._healthy = True
-        return self._ov, self._sm
+        return self._session_id
 
     @property
     def backend(self) -> KnowledgeBackend:
@@ -244,7 +233,8 @@ class CuratorPipeline:
 
     def run(self, query: str, *, auto_ingest: bool = True) -> dict:
         """Run the pipeline for *query*. See module-level ``run()`` for docs."""
-        return _run_impl(query, self._backend, auto_ingest, self._ensure_session)
+        session_id = self._ensure_session()
+        return _run_impl(query, self._backend, auto_ingest, session_id)
 
 
 def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
@@ -268,18 +258,17 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     - 外搜（需验证时效） → 2 次（+cross_validate）
     """
     validate_config()
-    os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
 
     if backend is None:
         backend = _init_backend()
 
-    def _init_session():
-        return _init_session_manager()
+    # Module-level run() creates a fresh session per call (stateless)
+    session_id = backend.create_session() if backend.supports_sessions else None
 
-    return _run_impl(query, backend, auto_ingest, _init_session)
+    return _run_impl(query, backend, auto_ingest, session_id)
 
 
-def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_session) -> dict:
+def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, session_id: str | None) -> dict:
     """Shared implementation for CuratorPipeline.run() and module-level run()."""
     m = Metrics()
 
@@ -307,9 +296,10 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_ses
     log.info("STEP 1/4 初始化 + 路由...")
 
     try:
-        ov, sm = init_session()
+        if not backend.health():
+            raise RuntimeError(f"Backend {backend.name} 不可用")
     except Exception as e:
-        log.error("OV 初始化失败: %s", e)
+        log.error("Backend 初始化失败: %s", e)
         result["meta"]["error"] = f"知识库服务不可用: {e}"
         result["decision_report"] = format_report(result)
         return result
@@ -320,11 +310,12 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_ses
     m.step("route", True, {"domain": scope.get("domain")})
     log.info("STEP 1 完成: domain=%s", scope.get("domain"))
 
-    sm.add_user_query(query)
+    if session_id and backend.supports_sessions:
+        backend.session_add_message(session_id, "user", query)
 
-    # ── Step 2: OV 检索 ──
-    log.info("STEP 2/4 OV 检索...")
-    retrieval_result = ov_retrieve(sm, query, limit=10)
+    # ── Step 2: 检索 ──
+    log.info("STEP 2/4 检索...")
+    retrieval_result = backend_retrieve(backend, query, session_id=session_id, limit=10)
     all_items = retrieval_result["all_items"]
     m.step(
         "retrieve",
@@ -478,8 +469,10 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_ses
 
     # ── Session 反馈 ──
     summary = f"检索完成: coverage={coverage:.2f}, sources={len(used_uris)}, external={'是' if need_external else '否'}"
-    sm.add_assistant_response(summary, used_uris)
-    sm.maybe_commit()
+    if session_id and backend.supports_sessions:
+        backend.session_add_message(session_id, "assistant", summary)
+        backend.session_used(session_id, list(used_uris))
+        backend.session_commit(session_id)
     m.step("feedback", True)
 
     # ── 结果组装 ──
