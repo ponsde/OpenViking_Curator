@@ -11,8 +11,33 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+try:
+    import structlog as _structlog
+
+    def _bind_run_context(query: str, session_id: str | None) -> str:
+        """Bind per-request context to structlog contextvars. Returns run_id."""
+        run_id = uuid.uuid4().hex[:8]
+        ctx: dict[str, str] = {"run_id": run_id, "query_prefix": query[:40]}
+        if session_id:
+            ctx["session_id"] = session_id
+        _structlog.contextvars.bind_contextvars(**ctx)
+        return run_id
+
+    def _clear_run_context() -> None:
+        _structlog.contextvars.clear_contextvars()
+
+except ImportError:
+
+    def _bind_run_context(query: str, session_id: str | None) -> str:  # type: ignore[misc]
+        return uuid.uuid4().hex[:8]
+
+    def _clear_run_context() -> None:  # type: ignore[misc]
+        pass
+
 
 from .config import ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, log, validate_config
 from .decision_report import format_report
@@ -276,10 +301,27 @@ def _run_impl(
     _skip_health: bool = False,
 ) -> dict:
     """Shared implementation for CuratorPipeline.run() and module-level run()."""
+    run_id = _bind_run_context(query, session_id)
+    try:
+        return _run_impl_inner(query, backend, auto_ingest, session_id, _skip_health, run_id)
+    finally:
+        _clear_run_context()
+
+
+def _run_impl_inner(
+    query: str,
+    backend: KnowledgeBackend,
+    auto_ingest: bool,
+    session_id: str | None,
+    _skip_health: bool,
+    run_id: str,
+) -> dict:
+    """Body of _run_impl, called after context binding."""
     m = Metrics()
 
     result: dict[str, Any] = {
         "query": query,
+        "run_id": run_id,
         "ov_results": {},
         "context_text": "",
         "external_text": "",
@@ -446,7 +488,10 @@ def _run_impl(
                             _log_async_failure(query, e)
                             update_job(_jid, "failed", error=str(e))
 
-                threading.Thread(target=_bg_judge_ingest, daemon=True).start()
+                import contextvars as _cv
+
+                _ctx = _cv.copy_context()
+                threading.Thread(target=_ctx.run, args=(_bg_judge_ingest,), daemon=True).start()
                 log.info("async ingest: job %s deferred to background thread", _job_id)
                 m.step("judge_and_conflict", False, {"reason": "async_deferred", "job_id": _job_id})
             else:
