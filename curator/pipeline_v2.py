@@ -335,7 +335,12 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
             if use_async:
                 async_ingest_pending = True
 
-                def _bg_judge_ingest():
+                from .async_jobs import create_job, update_job
+
+                _job_id = create_job(query, scope=scope)
+
+                def _bg_judge_ingest(_jid=_job_id):
+                    update_job(_jid, "running")
                     with _ingest_lock:
                         try:
                             _do_judge_ingest(
@@ -350,13 +355,15 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
                                 None,
                                 async_mode=True,
                             )
+                            update_job(_jid, "success")
                         except Exception as e:
                             log.warning("async judge+ingest failed: %s", e)
                             _log_async_failure(query, e)
+                            update_job(_jid, "failed", error=str(e))
 
                 threading.Thread(target=_bg_judge_ingest, daemon=True).start()
-                log.info("async ingest: judge+ingest deferred to background thread")
-                m.step("judge_and_conflict", False, {"reason": "async_deferred"})
+                log.info("async ingest: job %s deferred to background thread", _job_id)
+                m.step("judge_and_conflict", False, {"reason": "async_deferred", "job_id": _job_id})
             else:
                 # Synchronous path (default) — no lock needed because the
                 # caller blocks until completion; concurrent sync runs each

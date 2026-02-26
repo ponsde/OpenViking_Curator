@@ -375,11 +375,15 @@ class TestAsyncIngest(unittest.TestCase):
 
                                 run("ingest fail query", backend=backend, auto_ingest=True)
 
-            self.assertTrue(failure_done.wait(timeout=3), "ingest internal failure should be logged")
-            log_path = Path(tmpdir) / "async_ingest_failures.jsonl"
-            self.assertTrue(log_path.exists())
-            entry = json.loads(log_path.read_text().strip().split("\n")[-1])
-            self.assertIn("backend write error", entry["error"])
+                                # Wait inside patch scope so background thread still has mocks active
+                                self.assertTrue(
+                                    failure_done.wait(timeout=3),
+                                    "ingest internal failure should be logged",
+                                )
+                                log_path = Path(tmpdir) / "async_ingest_failures.jsonl"
+                                self.assertTrue(log_path.exists())
+                                entry = json.loads(log_path.read_text().strip().split("\n")[-1])
+                                self.assertIn("backend write error", entry["error"])
 
     def test_async_need_fresh_path(self):
         """Async mode with need_fresh=True should still cross_validate in background."""
