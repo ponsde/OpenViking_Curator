@@ -11,3 +11,4 @@ repos:
       - id: mypy
         args: [--ignore-missing-imports, --exclude, curator/legacy/]
         additional_dependencies: [types-requests>=2.31]
+        files: ^curator/

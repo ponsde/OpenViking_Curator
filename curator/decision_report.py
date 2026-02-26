@@ -1,11 +1,14 @@
-"""Decision Report: 把 pipeline 决策路径转成人类可读摘要。
+"""Decision Report: 把 pipeline 决策路径转成多种格式摘要。
 
-``format_report(result)`` 接收 ``pipeline_v2.run()`` 的返回值，
-生成结构化的纯文本决策摘要，方便调试、日志输出和 CLI 展示。
+接收 ``pipeline_v2.run()`` 的返回值，支持四种输出格式：
+
+- :func:`format_report` — ASCII box，终端友好（CJK 安全）
+- :func:`format_report_short` — 单行紧凑摘要，适合日志
+- :func:`format_report_json` — JSON 字符串，适合 API / Loki
+- :func:`format_report_html` — HTML 片段，适合 Web UI 嵌入
 
 设计原则：
-- 无外部依赖，纯 Python（unicodedata 为标准库）
-- 纯文本输出，终端友好（ASCII box），正确处理 CJK 字符宽度
+- 无外部依赖，纯 Python（unicodedata、json、html 均为标准库）
 - 所有字段有默认值，result 结构不完整时不报错
 - 信息密度 > 装饰
 
@@ -24,6 +27,8 @@
 
 from __future__ import annotations
 
+import html as _html
+import json
 import unicodedata
 
 _WIDTH = 56  # 内容区显示列宽（不含边框 │ 字符）
@@ -182,6 +187,36 @@ def format_report(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _extract_report_fields(result: dict) -> dict:
+    """Extract all decision fields from a pipeline result into a plain dict.
+
+    Used by :func:`format_report_json` and :func:`format_report_html`.
+    All keys always present; missing source fields fall back to safe defaults.
+    """
+    meta = result.get("meta") or {}
+    trace = meta.get("decision_trace") or {}
+    metrics = result.get("metrics") or {}
+    conflict = result.get("conflict") or {}
+    flags = metrics.get("flags") or {}
+
+    return {
+        "query": str(result.get("query") or ""),
+        "run_id": str(result.get("run_id") or ""),
+        "coverage": float(meta.get("coverage") or 0.0),
+        "coverage_reason": str(meta.get("coverage_reason") or meta.get("external_reason") or "unknown"),
+        "load_stage": str(trace.get("load_stage") or "none"),
+        "used_uris": list(meta.get("used_uris") or []),
+        "external_triggered": bool(meta.get("external_triggered", False)),
+        "cache_hit": flags.get("cache_hit"),  # True / False / None
+        "llm_calls": int(trace.get("llm_calls") or 0),
+        "has_conflict": bool(conflict.get("has_conflict", False)),
+        "conflict_summary": str(conflict.get("summary") or ""),
+        "ingested": bool(meta.get("ingested", False)),
+        "duration_sec": metrics.get("duration_sec"),  # float or None
+        "warnings": list(meta.get("warnings") or []),
+    }
+
+
 def format_report_short(result: dict) -> str:
     """单行紧凑摘要，适合日志写入和 metrics 追踪。
 
@@ -210,4 +245,91 @@ def format_report_short(result: dict) -> str:
         f"[Curator] cov={coverage:.2f} ({cov_reason})"
         f" stage={stage} used={used}"
         f" ext={external} llm={llm_calls} conflict={has_conf}"
+    )
+
+
+def format_report_json(result: dict) -> str:
+    """Return decision report as a JSON string.
+
+    Suitable for structured logging (Loki), API responses, and machine
+    consumption. All field names use snake_case; missing values fall back
+    to safe defaults.
+
+    Args:
+        result: Return value of ``pipeline_v2.run()``.
+
+    Returns:
+        Indented JSON string (``ensure_ascii=False``).
+    """
+    f = _extract_report_fields(result)
+    payload = {
+        "query": f["query"],
+        "run_id": f["run_id"],
+        "coverage": round(f["coverage"], 4),
+        "coverage_reason": f["coverage_reason"],
+        "load_stage": f["load_stage"],
+        "used_uris_count": len(f["used_uris"]),
+        "external_triggered": f["external_triggered"],
+        "cache_hit": f["cache_hit"],
+        "llm_calls": f["llm_calls"],
+        "has_conflict": f["has_conflict"],
+        "conflict_summary": f["conflict_summary"],
+        "ingested": f["ingested"],
+        "duration_sec": f["duration_sec"],
+        "warnings": [str(w) for w in f["warnings"]],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def format_report_html(result: dict) -> str:
+    """Return decision report as a self-contained HTML fragment.
+
+    Produces a ``<div class="curator-decision-report">`` containing a
+    plain ``<table>`` — no external CSS or JS dependencies.  Safe for
+    embedding in dashboards, Jupyter notebooks, or email reports.
+
+    Args:
+        result: Return value of ``pipeline_v2.run()``.
+
+    Returns:
+        HTML string fragment (not a full document).
+    """
+    f = _extract_report_fields(result)
+
+    def _tr(label: str, value: str) -> str:
+        return (
+            f"  <tr>"
+            f"<th style='text-align:left;padding:2px 8px'>{_html.escape(label)}</th>"
+            f"<td style='padding:2px 8px'>{_html.escape(value)}</td>"
+            f"</tr>"
+        )
+
+    cache_label = "Hit" if f["cache_hit"] is True else "Miss" if f["cache_hit"] is False else "N/A"
+    conflict_label = f["conflict_summary"] or ("Yes" if f["has_conflict"] else "None")
+    dur_label = f"{f['duration_sec']:.1f}s" if isinstance(f["duration_sec"], (int, float)) else "—"
+    stage_label = _STAGE_ZH.get(f["load_stage"], f["load_stage"])
+
+    rows = [
+        _tr("Query", f["query"][:100]),
+        _tr("Run ID", f["run_id"]),
+        _tr("Coverage", f"{f['coverage']:.2f} ({f['coverage_reason']})"),
+        _tr("Load Stage", stage_label),
+        _tr("Used URIs", str(len(f["used_uris"]))),
+        _tr("External", "Yes" if f["external_triggered"] else "No"),
+        _tr("Cache", cache_label),
+        _tr("LLM Calls", str(f["llm_calls"])),
+        _tr("Conflict", conflict_label),
+        _tr("Ingested", "Yes" if f["ingested"] else "No"),
+        _tr("Duration", dur_label),
+    ]
+    if f["warnings"]:
+        rows.append(_tr("Warnings", "; ".join(str(w) for w in f["warnings"][:3])))
+
+    inner = "\n".join(rows)
+    return (
+        '<div class="curator-decision-report">\n'
+        '<table style="border-collapse:collapse;font-family:monospace;font-size:13px">\n'
+        f"{inner}\n"
+        "</table>\n"
+        "</div>"
     )

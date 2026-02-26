@@ -233,3 +233,154 @@ class TestTruncateTo(unittest.TestCase):
     def test_single_cjk_no_room(self):
         """CJK char (width 2) with max_width=1: can't fit, return '…'."""
         self.assertEqual(self.t("中", 1), "…")
+
+
+class TestExtractReportFields(unittest.TestCase):
+    def test_all_keys_present(self):
+        from curator.decision_report import _extract_report_fields
+
+        f = _extract_report_fields(_make_result())
+        for key in (
+            "query",
+            "run_id",
+            "coverage",
+            "coverage_reason",
+            "load_stage",
+            "used_uris",
+            "external_triggered",
+            "cache_hit",
+            "llm_calls",
+            "has_conflict",
+            "conflict_summary",
+            "ingested",
+            "duration_sec",
+            "warnings",
+        ):
+            self.assertIn(key, f)
+
+    def test_empty_result_no_crash(self):
+        from curator.decision_report import _extract_report_fields
+
+        f = _extract_report_fields({})
+        self.assertEqual(f["coverage"], 0.0)
+        self.assertEqual(f["llm_calls"], 0)
+        self.assertFalse(f["has_conflict"])
+
+    def test_run_id_extracted(self):
+        from curator.decision_report import _extract_report_fields
+
+        f = _extract_report_fields({**_make_result(), "run_id": "abc12345"})
+        self.assertEqual(f["run_id"], "abc12345")
+
+
+class TestFormatReportJson(unittest.TestCase):
+    def test_returns_valid_json(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        s = format_report_json(_make_result())
+        data = json.loads(s)
+        self.assertIsInstance(data, dict)
+
+    def test_contains_key_fields(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        data = json.loads(format_report_json(_make_result()))
+        self.assertIn("coverage", data)
+        self.assertIn("coverage_reason", data)
+        self.assertIn("load_stage", data)
+        self.assertIn("used_uris_count", data)
+        self.assertIn("llm_calls", data)
+
+    def test_coverage_value(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        data = json.loads(format_report_json(_make_result()))
+        self.assertAlmostEqual(data["coverage"], 0.65, places=2)
+
+    def test_used_uris_count(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        data = json.loads(format_report_json(_make_result()))
+        self.assertEqual(data["used_uris_count"], 2)
+
+    def test_empty_result_no_crash(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        data = json.loads(format_report_json({}))
+        self.assertFalse(data["has_conflict"])
+        self.assertEqual(data["llm_calls"], 0)
+
+    def test_ensure_ascii_false(self):
+        from curator.decision_report import format_report_json
+
+        result = _make_result(query="中文查询")
+        s = format_report_json(result)
+        self.assertIn("中文查询", s)
+
+    def test_conflict_fields(self):
+        import json
+
+        from curator.decision_report import format_report_json
+
+        result = _make_result(conflict={"has_conflict": True, "summary": "版本冲突", "points": []})
+        data = json.loads(format_report_json(result))
+        self.assertTrue(data["has_conflict"])
+        self.assertEqual(data["conflict_summary"], "版本冲突")
+
+
+class TestFormatReportHtml(unittest.TestCase):
+    def test_returns_string(self):
+        from curator.decision_report import format_report_html
+
+        s = format_report_html(_make_result())
+        self.assertIsInstance(s, str)
+
+    def test_contains_div_and_table(self):
+        from curator.decision_report import format_report_html
+
+        s = format_report_html(_make_result())
+        self.assertIn("<div", s)
+        self.assertIn("<table", s)
+        self.assertIn("</table>", s)
+        self.assertIn("</div>", s)
+
+    def test_contains_key_labels(self):
+        from curator.decision_report import format_report_html
+
+        s = format_report_html(_make_result())
+        self.assertIn("Coverage", s)
+        self.assertIn("LLM Calls", s)
+        self.assertIn("External", s)
+
+    def test_html_escaping(self):
+        from curator.decision_report import format_report_html
+
+        result = _make_result(query='<script>alert("xss")</script>')
+        s = format_report_html(result)
+        self.assertNotIn("<script>", s)
+        self.assertIn("&lt;script&gt;", s)
+
+    def test_empty_result_no_crash(self):
+        from curator.decision_report import format_report_html
+
+        s = format_report_html({})
+        self.assertIn("<table", s)
+
+    def test_warnings_shown(self):
+        from curator.decision_report import format_report_html
+
+        result = _make_result()
+        result["meta"]["warnings"] = ["stale source", "low trust"]
+        s = format_report_html(result)
+        self.assertIn("Warnings", s)
+        self.assertIn("stale source", s)
