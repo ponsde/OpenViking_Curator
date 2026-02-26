@@ -10,6 +10,7 @@ import time
 
 import requests
 
+from ._version import __version__ as _pkg_version
 from .logging_setup import configure_logging
 from .settings import CuratorSettings
 
@@ -35,7 +36,6 @@ CURATED_DIR = _settings.curated_dir
 # ── API endpoints ──
 OAI_BASE = _settings.oai_base
 OAI_KEY = _settings.oai_key
-from ._version import __version__ as _pkg_version
 
 CURATOR_VERSION = _settings.version or _pkg_version
 
@@ -112,6 +112,8 @@ def validate_config() -> None:
     first_provider = SEARCH_PROVIDERS.split(",")[0].strip()
     if first_provider in ("grok",) and not GROK_KEY:
         missing.append("CURATOR_GROK_KEY")
+    if first_provider == "tavily" and not TAVILY_KEY:
+        missing.append("CURATOR_TAVILY_KEY")
     if missing:
         raise RuntimeError(
             f"Missing required env vars: {', '.join(missing)}\n"
@@ -178,7 +180,11 @@ def chat(base, key, model, messages, timeout=60, temperature=None):
                 raise RuntimeError(f"Invalid chat response payload: {err}")
 
             breaker.record_success()
-            return choices[0]["message"]["content"]
+            msg = choices[0].get("message") or {}
+            content = msg.get("content")
+            if content is None:
+                raise RuntimeError(f"Missing content in chat response choices[0]: {choices[0]}")
+            return content
         except Exception as e:
             last_err = e
             can_retry = attempt < retry_max and _should_retry_chat_error(e)
@@ -188,5 +194,9 @@ def chat(base, key, model, messages, timeout=60, temperature=None):
             log.warning("chat retry %d/%d model=%s error=%s", attempt, retry_max, model, e)
             time.sleep(sleep_s)
 
-    breaker.record_failure()
+    # Only trip the circuit breaker for transient failures (network/server errors).
+    # Permanent failures (bad auth, wrong model, malformed request) are caller bugs
+    # and should not cause the breaker to reject subsequent valid requests.
+    if last_err is not None and _should_retry_chat_error(last_err):
+        breaker.record_failure()
     raise RuntimeError(f"chat failed after retries: {last_err}") from last_err

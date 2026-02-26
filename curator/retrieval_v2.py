@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from .config import (
     FEEDBACK_WEIGHT,
     THRESHOLD_COV_LOW,
@@ -21,9 +19,6 @@ from .config import (
     THRESHOLD_L1_SUFFICIENT,
     log,
 )
-
-if TYPE_CHECKING:
-    from .backend import KnowledgeBackend
 
 
 def rerank_with_feedback(items: list) -> list:
@@ -233,7 +228,7 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
         # Direct L2: search results already have abstracts embedded; just read top items
         blocks = []
         used_uris = []
-        for item in scored[: max_l2 or 2]:
+        for item in scored[: max_l2 if max_l2 > 0 else 2]:
             uri = item.get("uri", "")
             if not uri:
                 continue

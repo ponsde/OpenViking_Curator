@@ -14,8 +14,8 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from .config import DATA_PATH, MAX_L2_DEPTH, log, validate_config
-from .decision_report import format_report, format_report_short
+from .config import ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, log, validate_config
+from .decision_report import format_report
 from .memory_capture import capture_case
 from .metrics import Metrics
 from .retrieval_v2 import assess_coverage, backend_retrieve, load_context
@@ -415,7 +415,7 @@ def _run_impl(
         if external_txt:
             # Async ingest: when enabled + auto_ingest, defer judge+ingest
             # to a background thread so the user gets results faster.
-            use_async = (os.environ.get("CURATOR_ASYNC_INGEST", "0") == "1") and auto_ingest
+            use_async = ASYNC_INGEST and auto_ingest
 
             if use_async:
                 async_ingest_pending = True
@@ -761,7 +761,7 @@ def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) 
 
     # ── Score external source ──
     # trust: 0-10 from judge LLM
-    # freshness bonus: current=+2, recent=+1, stale=-1, outdated=-2
+    # freshness bonus: current=+2, recent=+1, stale=-2, outdated=-3
     freshness_bonus = {"current": 2, "recent": 1, "unknown": 0, "stale": -2, "outdated": -3}
     ext_score = trust + freshness_bonus.get(freshness, 0)
 

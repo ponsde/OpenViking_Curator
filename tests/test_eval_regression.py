@@ -364,8 +364,10 @@ class TestEvalRegression(unittest.TestCase):
 
         for async_env, auto_ingest, expected_pending in cases:
             with self.subTest(async_env=async_env, auto_ingest=auto_ingest):
+                async_flag = async_env == "1"
+                test_patches = {**patches, "ASYNC_INGEST": async_flag}
                 with patch.dict(os.environ, {"CURATOR_ASYNC_INGEST": async_env}):
-                    with patch.multiple("curator.pipeline_v2", **patches):
+                    with patch.multiple("curator.pipeline_v2", **test_patches):
                         from curator.pipeline_v2 import run
 
                         result = run("grok2api 部署", backend=self.backend, auto_ingest=auto_ingest)

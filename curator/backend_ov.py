@@ -6,10 +6,9 @@ This wraps the existing OVClient dual-mode logic. All OV-specific code
 
 import os
 import tempfile
-import time
 
 from .backend import KnowledgeBackend, SearchResponse, SearchResult
-from .config import log
+from .config import CURATED_DIR, log
 
 
 class OpenVikingBackend(KnowledgeBackend):
@@ -69,7 +68,7 @@ class OpenVikingBackend(KnowledgeBackend):
             mode="w",
             suffix=".md",
             prefix=f"{safe_title}_",
-            dir=os.environ.get("CURATOR_CURATED_DIR", "."),
+            dir=CURATED_DIR,
             delete=False,
         ) as f:
             f.write(content)
@@ -181,9 +180,11 @@ class OpenVikingBackend(KnowledgeBackend):
         used = list(self._session_used_uris.pop(session_id, []))
 
         result: dict = {}
+        commit_ok = False
         if self._ov.mode == "http":
             try:
                 result = self._ov._impl.session_commit(session_id)
+                commit_ok = True
             except Exception as e:
                 log.debug("HTTP session_commit failed: %s", e)
         else:
@@ -194,11 +195,13 @@ class OpenVikingBackend(KnowledgeBackend):
                     session_obj.load()
                 raw = _ov_run(session_obj.commit())
                 result = raw if isinstance(raw, dict) else {}
+                commit_ok = True
             except Exception as e:
                 log.debug("embedded session_commit failed: %s", e)
 
-        # Workaround: OV's native active_count update is broken in some versions
-        fixed = self._fix_active_counts(used) if used else 0
+        # Workaround: OV's native active_count update is broken in some versions.
+        # Only run if commit actually succeeded to avoid incrementing on failed commits.
+        fixed = self._fix_active_counts(used) if (used and commit_ok) else 0
 
         log.info(
             "session commit: memories=%s, active_count=%s (fixed=%d), archived=%s",
@@ -280,6 +283,7 @@ class OpenVikingBackend(KnowledgeBackend):
                         match_reason=item.get("match_reason", ""),
                         category=item.get("category", ""),
                         relations=item.get("relations", []),
+                        metadata=item.get("metadata", {}),
                     )
                 )
         results.sort(key=lambda r: r.score, reverse=True)

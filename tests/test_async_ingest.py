@@ -15,9 +15,10 @@ os.environ.setdefault("OAI_KEY", "test-key")
 class TestAsyncIngest(unittest.TestCase):
     """Verify CURATOR_ASYNC_INGEST=1 makes judge+ingest non-blocking."""
 
-    def _mock_pipeline_deps(self):
+    def _mock_pipeline_deps(self, async_ingest: bool = True):
         """Return common patches for pipeline_v2 module attributes."""
         return {
+            "ASYNC_INGEST": async_ingest,
             "backend_retrieve": MagicMock(
                 return_value={
                     "all_items": [{"uri": "a", "score": 0.2, "abstract": "short"}],
@@ -55,7 +56,7 @@ class TestAsyncIngest(unittest.TestCase):
                 "conflict_points": [],
             }
 
-        patches = self._mock_pipeline_deps()
+        patches = self._mock_pipeline_deps(async_ingest=False)
         patches["judge_and_ingest"] = MagicMock(side_effect=mock_judge)
 
         with patch.dict(os.environ, {"CURATOR_ASYNC_INGEST": "0"}):

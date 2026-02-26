@@ -9,7 +9,6 @@ from __future__ import annotations
 import time
 import uuid
 from difflib import SequenceMatcher
-from typing import Optional
 
 from .backend import KnowledgeBackend, SearchResponse, SearchResult
 

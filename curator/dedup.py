@@ -138,8 +138,8 @@ def _save_dedup_log(state: dict):
     from .file_lock import locked_write
 
     state["last_run"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    state["checked_pairs"] = state["checked_pairs"][-500:]
-    state["reports"] = state["reports"][-100:]
+    state["checked_pairs"] = (state.get("checked_pairs") or [])[-500:]
+    state["reports"] = (state.get("reports") or [])[-100:]
 
     locked_write(DEDUP_LOG_FILE, json.dumps(state, ensure_ascii=False, indent=2))
 

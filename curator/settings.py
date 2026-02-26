@@ -6,15 +6,9 @@ aliases so that **no consumer code changes** are required.
 """
 
 from pathlib import Path
-from typing import List
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
-
-
-def _csv_list(raw: str) -> List[str]:
-    """Split comma-separated string into a stripped, non-empty list."""
-    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 class CuratorSettings(BaseSettings):
