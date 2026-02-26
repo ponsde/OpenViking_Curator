@@ -19,12 +19,12 @@ jobs:
         run: uv sync --extra dev
       - name: Type check
         run: uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
-      - name: Run tests
+      - name: Run tests with coverage
         env:
           CURATOR_OAI_BASE: http://localhost:8000/v1
           CURATOR_OAI_KEY: test-key
           CURATOR_GROK_KEY: test-key
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q --cov=curator --cov-report=term-missing --cov-fail-under=70 --cov-config=pyproject.toml
       - name: Run smoke minimal
         env:
           CURATOR_OAI_BASE: http://localhost:8000/v1
