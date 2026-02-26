@@ -7,8 +7,11 @@ Run:
     python -m pytest tests/test_eval_regression.py -v
 """
 
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("OAI_BASE", "http://localhost:8000/v1")
@@ -266,6 +269,117 @@ class TestEvalRegression(unittest.TestCase):
         result = self._run_query("grok2api 怎么部署")
         report = result.get("decision_report", "")
         self.assertTrue(len(report) > 0, "decision_report should be non-empty")
+
+    def test_conflict_blocks_ingest_writes_pending(self):
+        """When judge returns conflict preferred=human_review, ingest is blocked and pending is written."""
+
+        def _conflict_judge(*a, **kw):
+            return {
+                "pass": True,
+                "trust": 5,
+                "freshness": "current",
+                "reason": "conflict detected",
+                "markdown": "# Conflicting Content",
+                "has_conflict": True,
+                "conflict_summary": "Local says X, external says Y",
+                "conflict_points": ["point A"],
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            patches = {
+                "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
+                "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+                "assess_coverage": MagicMock(return_value=(0.2, True, "low_coverage")),
+                "external_search": MagicMock(return_value="External conflict content"),
+                "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),
+                "judge_and_ingest": MagicMock(side_effect=_conflict_judge),
+                "capture_case": MagicMock(return_value=None),
+                "validate_config": MagicMock(),
+            }
+
+            with patch("curator.pipeline_v2.DATA_PATH", tmpdir):
+                with patch.multiple("curator.pipeline_v2", **patches):
+                    from curator.pipeline_v2 import run
+
+                    result = run("grok2api 部署", backend=self.backend)
+
+            # Conflict should be detected
+            self.assertTrue(result["conflict"]["has_conflict"])
+            # Ingest should NOT have happened (blocked by conflict)
+            self.assertFalse(result["meta"]["ingested"])
+            # Pending review file should be written
+            pending = Path(tmpdir) / "pending_review.jsonl"
+            self.assertTrue(pending.exists(), "pending_review.jsonl should be written for conflict")
+            entry = json.loads(pending.read_text().strip().split("\n")[-1])
+            self.assertIn("conflict", entry["reason"])
+
+    def test_need_fresh_triggers_cross_validate(self):
+        """When scope has need_fresh=True, cross_validate should be called."""
+        cv_called = False
+
+        def _tracking_cv(query, text, scope):
+            nonlocal cv_called
+            cv_called = True
+            return {"validated": text, "warnings": ["stale warning"]}
+
+        def _mock_route(q):
+            return {"domain": "tech", "need_fresh": True}
+
+        patches = {
+            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
+            "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+            "external_search": MagicMock(return_value="External fresh content"),
+            "cross_validate": MagicMock(side_effect=_tracking_cv),
+            "judge_and_ingest": MagicMock(side_effect=_mock_judge),
+            "route_scope": MagicMock(side_effect=_mock_route),
+            "capture_case": MagicMock(return_value=None),
+            "validate_config": MagicMock(),
+        }
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            from curator.pipeline_v2 import run
+
+            result = run("latest grok2api changes", backend=self.backend)
+
+        self.assertTrue(cv_called, "cross_validate should be called when need_fresh=True")
+        self.assertIn("stale warning", result["meta"].get("warnings", []))
+
+    def test_async_ingest_pending_flag_combinations(self):
+        """async_ingest_pending in meta should follow ASYNC_INGEST × auto_ingest matrix."""
+        patches = {
+            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
+            "ov_retrieve": MagicMock(side_effect=_make_ov_retrieve_from_backend(self.backend)),
+            "assess_coverage": MagicMock(return_value=(0.2, True, "low_coverage")),
+            "external_search": MagicMock(return_value="External content"),
+            "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),
+            "judge_and_ingest": MagicMock(side_effect=_mock_judge),
+            "capture_case": MagicMock(return_value=None),
+            "validate_config": MagicMock(),
+        }
+
+        cases = [
+            # (async_env, auto_ingest, expected_async_pending)
+            ("0", True, False),  # async off → sync judge
+            ("0", False, False),  # async off + review mode → sync judge
+            ("1", True, True),  # async on + auto → deferred
+            ("1", False, False),  # async on + review mode → sync (user needs result)
+        ]
+
+        for async_env, auto_ingest, expected_pending in cases:
+            with self.subTest(async_env=async_env, auto_ingest=auto_ingest):
+                with patch.dict(os.environ, {"CURATOR_ASYNC_INGEST": async_env}):
+                    with patch.multiple("curator.pipeline_v2", **patches):
+                        from curator.pipeline_v2 import run
+
+                        result = run("grok2api 部署", backend=self.backend, auto_ingest=auto_ingest)
+
+                actual = result["meta"].get("async_ingest_pending", False)
+                self.assertEqual(
+                    actual,
+                    expected_pending,
+                    f"ASYNC={async_env}, auto_ingest={auto_ingest}: "
+                    f"expected async_pending={expected_pending}, got {actual}",
+                )
 
 
 if __name__ == "__main__":
