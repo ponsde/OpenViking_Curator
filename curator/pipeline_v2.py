@@ -201,7 +201,6 @@ class CuratorPipeline:
         self._session_id: str | None = None
         self._health_ttl = health_ttl
         self._last_health_check: float = 0.0
-        self._healthy = False
 
     def _ensure_session(self) -> str | None:
         """Lazy-init backend session, with TTL health check.
@@ -224,7 +223,6 @@ class CuratorPipeline:
             self._session_id = self._backend.load_or_create_session(sid_file)
 
         self._last_health_check = now
-        self._healthy = True
         return self._session_id
 
     @property
@@ -234,7 +232,8 @@ class CuratorPipeline:
     def run(self, query: str, *, auto_ingest: bool = True) -> dict:
         """Run the pipeline for *query*. See module-level ``run()`` for docs."""
         session_id = self._ensure_session()
-        return _run_impl(query, self._backend, auto_ingest, session_id)
+        # _ensure_session already performed the health check; skip it in _run_impl
+        return _run_impl(query, self._backend, auto_ingest, session_id, _skip_health=True)
 
 
 def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
@@ -268,7 +267,14 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     return _run_impl(query, backend, auto_ingest, session_id)
 
 
-def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, session_id: str | None) -> dict:
+def _run_impl(
+    query: str,
+    backend: KnowledgeBackend,
+    auto_ingest: bool,
+    session_id: str | None,
+    *,
+    _skip_health: bool = False,
+) -> dict:
     """Shared implementation for CuratorPipeline.run() and module-level run()."""
     m = Metrics()
 
@@ -295,14 +301,15 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, session_
     # ── Step 1: 初始化 + 路由 ──
     log.info("STEP 1/4 初始化 + 路由...")
 
-    try:
-        if not backend.health():
-            raise RuntimeError(f"Backend {backend.name} 不可用")
-    except Exception as e:
-        log.error("Backend 初始化失败: %s", e)
-        result["meta"]["error"] = f"知识库服务不可用: {e}"
-        result["decision_report"] = format_report(result)
-        return result
+    if not _skip_health:
+        try:
+            if not backend.health():
+                raise RuntimeError(f"Backend {backend.name} 不可用")
+        except Exception as e:
+            log.error("Backend 初始化失败: %s", e)
+            result["meta"]["error"] = f"知识库服务不可用: {e}"
+            result["decision_report"] = format_report(result)
+            return result
 
     m.step("init", True)
 

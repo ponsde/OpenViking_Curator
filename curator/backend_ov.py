@@ -122,8 +122,6 @@ class OpenVikingBackend(KnowledgeBackend):
         across pipeline runs.
         """
         if session_file:
-            import os
-
             if os.path.exists(session_file):
                 try:
                     with open(session_file, encoding="utf-8") as f:
@@ -226,16 +224,19 @@ class OpenVikingBackend(KnowledgeBackend):
             client = self._ov._client
             inner = getattr(client, "_client", None)
             if inner is None:
+                log.warning("_fix_active_counts: OV internal API changed (_client missing), skipping")
                 return 0
             service = getattr(inner, "_service", None)
             if service is None:
+                log.warning("_fix_active_counts: OV internal API changed (_service missing), skipping")
                 return 0
             db = getattr(service, "_vikingdb_manager", None)
             if db is None or not hasattr(db, "_get_collection"):
+                log.warning("_fix_active_counts: OV internal API changed (_vikingdb_manager missing), skipping")
                 return 0
             coll = db._get_collection("context")
         except Exception as e:
-            log.debug("_fix_active_counts: cannot access vectordb: %s", e)
+            log.warning("_fix_active_counts: cannot access vectordb: %s", e)
             return 0
 
         updated = 0
