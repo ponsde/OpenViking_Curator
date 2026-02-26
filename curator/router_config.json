@@ -49,12 +49,10 @@
     ]
   },
   "time_keywords": [
-    "最新",
-    "更新",
-    "release",
-    "changelog",
-    "2026",
-    "2025",
-    "latest"
+    "最新", "最近", "现在", "今年", "今天", "当前", "目前", "近期", "刚刚",
+    "更新", "本周", "上月", "昨天",
+    "release", "changelog", "latest", "recent", "current", "now", "today",
+    "new", "updated", "yesterday", "last week",
+    "2026", "2025", "2024"
   ]
 }

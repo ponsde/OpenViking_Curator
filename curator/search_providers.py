@@ -47,12 +47,21 @@ from .config import (
     log,
 )
 
-# Time-sensitive keywords (Chinese + English) — triggers date context injection
-_TIME_KEYWORDS = re.compile(
-    r"最新|最近|现在|今年|今天|当前|目前|近期|刚刚|更新|本周|上月|昨天"
-    r"|latest|recent|current|now|today|new|updated|yesterday|last\s+week|20\d{2}",
-    re.IGNORECASE,
-)
+
+# Time-sensitive keywords — built from router_config.json so both modules stay in sync.
+# router._TIME_KEYWORDS is already loaded from the JSON (with defaults fallback).
+def _build_time_keywords_pattern() -> re.Pattern:
+    from .router import get_time_keywords
+
+    _router_kws = get_time_keywords()  # list[str], already normalized
+
+    # Escape each keyword and join as alternation; also keep year-pattern wildcard
+    escaped = [re.escape(k) for k in _router_kws]
+    escaped.append(r"20\d{2}")  # catch any 4-digit year like 2024/2025/2026
+    return re.compile("|".join(escaped), re.IGNORECASE)
+
+
+_TIME_KEYWORDS = _build_time_keywords_pattern()
 
 
 @dataclass

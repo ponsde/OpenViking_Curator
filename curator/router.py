@@ -131,6 +131,11 @@ def _load_router_config() -> tuple[dict[str, list[str]], list[str]]:
 _DOMAIN_MAP, _TIME_KEYWORDS = _load_router_config()
 
 
+def get_time_keywords() -> list[str]:
+    """Return the loaded time-sensitive keyword list (from router_config.json)."""
+    return _TIME_KEYWORDS
+
+
 def route_scope(query: str) -> dict:
     """轻量路由：返回 domain + need_fresh + keywords。
 
