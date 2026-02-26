@@ -27,32 +27,50 @@ Adding a new provider:
 
 import asyncio
 import datetime
-import logging
-import os
+import re
 
-log = logging.getLogger("curator")
+from .config import (
+    ALLOWED_DOMAINS,
+    BLOCKED_DOMAINS,
+    GROK_BASE,
+    GROK_KEY,
+    GROK_MODEL,
+    OAI_BASE,
+    OAI_KEY,
+    SEARCH_PROVIDER_TIMEOUT,
+    SEARCH_TIMEOUT,
+    TAVILY_KEY,
+    chat,
+    env,
+    log,
+)
 
-
-def env(name: str, default: str = "") -> str:
-    v = os.getenv(name, default)
-    return v.strip() if isinstance(v, str) else v
+# Time-sensitive keywords (Chinese + English) — triggers date context injection
+_TIME_KEYWORDS = re.compile(
+    r"最新|最近|现在|今年|今天|当前|目前|近期|刚刚|更新" r"|latest|recent|current|now|today|new|updated|2024|2025|2026",
+    re.IGNORECASE,
+)
 
 
 def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
     """Build system + user prompt for search. Shared across LLM-backed providers."""
-    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
     from .domain_filter import build_domain_prompt_hint
 
     today = datetime.date.today().isoformat()
     domain_hint = build_domain_prompt_hint(ALLOWED_DOMAINS, BLOCKED_DOMAINS)
+
+    # Inject explicit time context for time-sensitive queries
+    time_ctx = ""
+    if _TIME_KEYWORDS.search(query):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        time_ctx = f"当前精确时间: {now.strftime('%Y-%m-%d %H:%M UTC')}。请确保搜索结果反映最新状态。"
+
     system = (
         "你是实时搜索助手。重视可验证来源和信息时效性。"
-        f"当前日期: {today}。"
-        "对于技术类问题，优先引用官方文档和近期更新。"
+        f"当前日期: {today}。" + (f"{time_ctx}" if time_ctx else "") + "对于技术类问题，优先引用官方文档和近期更新。"
         "如果搜到的信息可能已过时（如超过1年的项目、已变更的API流程），"
         "必须明确标注并提示用户验证。"
-        "对于GitHub项目，务必区分：项目存在 ≠ 项目能用。"
-        + (f" {domain_hint}" if domain_hint else "")
+        "对于GitHub项目，务必区分：项目存在 ≠ 项目能用。" + (f" {domain_hint}" if domain_hint else "")
     )
     user = (
         f"问题: {query}\n"
@@ -70,46 +88,18 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
     return system, user
 
 
-def _chat(base, key, model, messages, timeout=90):
-    """OAI chat call. Uses requests (same as curator) for consistency."""
-    import requests
-    r = requests.post(
-        f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": messages, "temperature": 0.3, "stream": False},
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    try:
-        payload = r.json()
-    except ValueError as e:
-        ctype = r.headers.get("content-type", "")
-        preview = (r.text or "")[:240].replace("\n", " ")
-        raise RuntimeError(
-            f"Non-JSON response from search provider (content-type={ctype}): {preview}"
-        ) from e
-
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    if not choices:
-        err = payload.get("error") if isinstance(payload, dict) else payload
-        raise RuntimeError(f"Invalid chat response payload: {err}")
-
-    return choices[0]["message"]["content"]
-
-
 # ── Provider: Grok ──
 def _search_grok(query: str, scope: dict) -> str:
-    """Search via Grok (OAI-compatible endpoint)."""
-    from .config import SEARCH_PROVIDER_TIMEOUT
-
-    base = env("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
-    key = env("CURATOR_GROK_KEY")
-    model = env("CURATOR_GROK_MODEL", "grok-4-fast")
+    """Search via Grok (OAI-compatible endpoint). Uses config.chat with retry."""
     system, user = _build_search_prompt(query, scope)
-    return _chat(base, key, model, [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ], timeout=SEARCH_PROVIDER_TIMEOUT)
+    return chat(
+        GROK_BASE,
+        GROK_KEY,
+        GROK_MODEL,
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        timeout=SEARCH_PROVIDER_TIMEOUT,
+        temperature=0.3,
+    )
 
 
 # Keep legacy name for backward compatibility
@@ -121,16 +111,16 @@ def grok_search(query: str, scope: dict, **kwargs) -> str:
 # ── Provider: OAI-compatible ──
 def _search_oai(query: str, scope: dict) -> str:
     """Search via any OAI-compatible chat endpoint with internet access."""
-    from .config import SEARCH_PROVIDER_TIMEOUT
-
-    base = env("CURATOR_OAI_BASE")
-    key = env("CURATOR_OAI_KEY")
     model = env("CURATOR_SEARCH_OAI_MODEL", "gpt-4o")
     system, user = _build_search_prompt(query, scope)
-    return _chat(base, key, model, [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ], timeout=SEARCH_PROVIDER_TIMEOUT)
+    return chat(
+        OAI_BASE,
+        OAI_KEY,
+        model,
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        timeout=SEARCH_PROVIDER_TIMEOUT,
+        temperature=0.3,
+    )
 
 
 def oai_search(query: str, scope: dict, **kwargs) -> str:
@@ -146,7 +136,6 @@ def _search_duckduckgo(query: str, scope: dict) -> str:
     except ImportError as e:
         raise ImportError("duckduckgo-search not installed: pip install duckduckgo-search") from e
 
-    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
     from .domain_filter import filter_results_by_domain
 
     results = DDGS().text(query, max_results=5)
@@ -175,15 +164,13 @@ def _search_tavily(query: str, scope: dict) -> str:
     except ImportError as e:
         raise ImportError("tavily-python not installed: pip install tavily-python") from e
 
-    key = env("CURATOR_TAVILY_KEY")
-    if not key:
+    if not TAVILY_KEY:
         raise RuntimeError("CURATOR_TAVILY_KEY not configured; skipping Tavily")
 
-    client = TavilyClient(api_key=key)
-    response = client.search(query, max_results=5)
-
-    from .config import ALLOWED_DOMAINS, BLOCKED_DOMAINS
     from .domain_filter import filter_results_by_domain
+
+    client = TavilyClient(api_key=TAVILY_KEY)
+    response = client.search(query, max_results=5)
 
     results = response.get("results", []) if isinstance(response, dict) else []
     if not results:
@@ -229,6 +216,7 @@ def _call_provider(pname: str, query: str, scope: dict) -> str:
     patches applied to the module's function attributes are honoured.
     """
     import sys
+
     mod = sys.modules[__name__]
     fn_attr = _PROVIDERS.get(pname)
     if fn_attr is None:
@@ -241,7 +229,6 @@ def _get_provider_chain() -> list[str]:
     """Return ordered list of providers to try, from CURATOR_SEARCH_PROVIDERS env var."""
     raw = env("CURATOR_SEARCH_PROVIDERS", env("CURATOR_SEARCH_PROVIDER", "grok"))
     chain = [p.strip() for p in raw.split(",") if p.strip()]
-    # Filter out unknown providers with a warning
     known = []
     for p in chain:
         if p in _PROVIDERS:
@@ -254,11 +241,10 @@ def _get_provider_chain() -> list[str]:
 def get_provider(name: str = None):
     """Get search provider function by name. Default from env or 'grok'."""
     import sys
+
     name = name or env("CURATOR_SEARCH_PROVIDER", "grok")
     if name not in _PROVIDERS:
-        raise ValueError(
-            f"Unknown search provider: {name}. Available: {list(_PROVIDERS.keys())}"
-        )
+        raise ValueError(f"Unknown search provider: {name}. Available: {list(_PROVIDERS.keys())}")
     mod = sys.modules[__name__]
     return getattr(mod, _PROVIDERS[name])
 
@@ -272,7 +258,6 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
     the first non-empty result. Returns "" if all providers fail.
     """
     if provider:
-        # Single-provider mode (backward compat / explicit override)
         return _call_provider(provider, query, scope)
 
     for pname in _get_provider_chain():
@@ -285,10 +270,11 @@ def search(query: str, scope: dict, provider: str = None, **kwargs) -> str:
         except Exception as e:
             log.warning("search provider %r failed: %s, trying next", pname, e)
 
-    return ""  # All providers failed — pipeline will skip external search
+    return ""
 
 
 # ── Concurrent search (async) ──
+
 
 async def _async_search_provider(name: str, query: str, scope: dict) -> tuple[str, str]:
     """Single-provider async wrapper. Returns (provider_name, result)."""
@@ -306,10 +292,7 @@ async def _gather_search(query: str, scope: dict, providers: list, timeout: floa
     if not providers:
         return ""
 
-    tasks = [
-        asyncio.ensure_future(_async_search_provider(p, query, scope))
-        for p in providers
-    ]
+    tasks = [asyncio.ensure_future(_async_search_provider(p, query, scope)) for p in providers]
 
     best = ""
     deadline = asyncio.get_event_loop().time() + timeout
@@ -323,12 +306,10 @@ async def _gather_search(query: str, scope: dict, providers: list, timeout: floa
                 pname, result = await asyncio.wait_for(coro, timeout=remaining)
                 if result and result.strip():
                     log.debug("concurrent search: winner=%s", pname)
-                    # Cancel remaining tasks
                     for t in tasks:
                         if not t.done():
                             t.cancel()
                     return result.strip()
-                # Keep empty results as last resort
                 if not best and result:
                     best = result
             except asyncio.TimeoutError:
@@ -342,11 +323,9 @@ async def _gather_search(query: str, scope: dict, providers: list, timeout: floa
     except asyncio.TimeoutError:
         log.warning("concurrent search: global timeout reached (%.1fs)", timeout)
     finally:
-        # Ensure all pending tasks are cancelled on exit
         for t in tasks:
             if not t.done():
                 t.cancel()
-        # Await cancellations to avoid ResourceWarning
         await asyncio.gather(*tasks, return_exceptions=True)
 
     return best
@@ -367,8 +346,6 @@ def search_concurrent(
     the coroutine is scheduled via run_coroutine_threadsafe in a new thread loop.
     Otherwise asyncio.run() is used.
     """
-    from .config import SEARCH_TIMEOUT
-
     if providers is None:
         providers = _get_provider_chain()
     if timeout is None:
@@ -377,14 +354,11 @@ def search_concurrent(
     coro = _gather_search(query, scope, providers, timeout)
 
     try:
-        # Check if there's already a running event loop
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
 
     if loop is not None and loop.is_running():
-        # We're inside an async context — run in a separate thread with its own loop
-        import concurrent.futures
         import threading
 
         result_holder = {}
@@ -393,15 +367,13 @@ def search_concurrent(
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
             try:
-                result_holder["result"] = new_loop.run_until_complete(
-                    _gather_search(query, scope, providers, timeout)
-                )
+                result_holder["result"] = new_loop.run_until_complete(_gather_search(query, scope, providers, timeout))
             finally:
                 new_loop.close()
 
         t = threading.Thread(target=_run_in_thread, daemon=True)
         t.start()
-        t.join(timeout + 1)  # +1s grace for cleanup
+        t.join(timeout + 1)
         return result_holder.get("result", "")
     else:
         return asyncio.run(coro)

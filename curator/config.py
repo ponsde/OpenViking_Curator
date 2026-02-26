@@ -149,17 +149,20 @@ def _should_retry_chat_error(err: Exception) -> bool:
     return False
 
 
-def chat(base, key, model, messages, timeout=60):
+def chat(base, key, model, messages, timeout=60, temperature=None):
     """OAI-compatible chat completion call with lightweight retries."""
     last_err = None
     retry_max = max(1, CHAT_RETRY_MAX)
+    body = {"model": model, "messages": messages, "stream": False}
+    if temperature is not None:
+        body["temperature"] = temperature
 
     for attempt in range(1, retry_max + 1):
         try:
             r = requests.post(
                 f"{base}/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": messages, "stream": False},
+                json=body,
                 timeout=timeout,
             )
             r.raise_for_status()

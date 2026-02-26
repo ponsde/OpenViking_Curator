@@ -31,7 +31,7 @@ class TestSearchGrok:
     def test_returns_result_on_success(self):
         import curator.search_providers as m
 
-        with patch.object(m, "_chat", return_value="grok answer") as mock_chat:
+        with patch.object(m, "chat", return_value="grok answer") as mock_chat:
             result = m._search_grok("what is openviking?", SCOPE)
 
         assert result == "grok answer"
@@ -42,11 +42,11 @@ class TestSearchGrok:
 
         captured = {}
 
-        def fake_chat(base, key, model, messages, timeout=90):
+        def fake_chat(base, key, model, messages, timeout=60, temperature=None):
             captured["messages"] = messages
             return "ok"
 
-        with patch.object(m, "_chat", side_effect=fake_chat):
+        with patch.object(m, "chat", side_effect=fake_chat):
             m._search_grok("unique-query-xyz", SCOPE)
 
         user_content = captured["messages"][-1]["content"]
@@ -55,9 +55,41 @@ class TestSearchGrok:
     def test_propagates_exception(self):
         import curator.search_providers as m
 
-        with patch.object(m, "_chat", side_effect=RuntimeError("timeout")):
+        with patch.object(m, "chat", side_effect=RuntimeError("timeout")):
             with pytest.raises(RuntimeError, match="timeout"):
                 m._search_grok("query", SCOPE)
+
+    def test_time_context_injected_for_time_queries(self):
+        """Time-sensitive queries should inject current datetime into prompt."""
+        import curator.search_providers as m
+
+        captured = {}
+
+        def fake_chat(base, key, model, messages, timeout=60, temperature=None):
+            captured["messages"] = messages
+            return "ok"
+
+        with patch.object(m, "chat", side_effect=fake_chat):
+            m._search_grok("最新的 Python 3.13 特性", SCOPE)
+
+        system_content = captured["messages"][0]["content"]
+        assert "当前精确时间" in system_content
+
+    def test_no_time_context_for_normal_queries(self):
+        """Non-time-sensitive queries should not get time context."""
+        import curator.search_providers as m
+
+        captured = {}
+
+        def fake_chat(base, key, model, messages, timeout=60, temperature=None):
+            captured["messages"] = messages
+            return "ok"
+
+        with patch.object(m, "chat", side_effect=fake_chat):
+            m._search_grok("how to deploy Redis", SCOPE)
+
+        system_content = captured["messages"][0]["content"]
+        assert "当前精确时间" not in system_content
 
 
 # ─── DuckDuckGo provider ──────────────────────────────────────────────────────
@@ -130,48 +162,43 @@ class TestSearchTavily:
             ]
         }
 
-    def test_returns_formatted_text(self, monkeypatch):
+    def test_returns_formatted_text(self):
         import curator.search_providers as m
-
-        monkeypatch.setenv("CURATOR_TAVILY_KEY", "tvly-test-key")
 
         mock_client_cls = MagicMock()
         mock_client_cls.return_value.search.return_value = self._make_tavily_response()
 
-        with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
-            result = m._search_tavily("AI news", SCOPE)
+        with patch.object(m, "TAVILY_KEY", "tvly-test-key"):
+            with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
+                result = m._search_tavily("AI news", SCOPE)
 
         assert "Tavily Result" in result
         assert "https://tavily.com/r1" in result
         assert "Some content" in result
 
-    def test_missing_key_raises_runtime_error(self, monkeypatch):
+    def test_missing_key_raises_runtime_error(self):
         import curator.search_providers as m
-
-        monkeypatch.delenv("CURATOR_TAVILY_KEY", raising=False)
 
         mock_tavily = MagicMock()
-        with patch.dict(sys.modules, {"tavily": mock_tavily}):
-            with pytest.raises(RuntimeError, match="CURATOR_TAVILY_KEY"):
-                m._search_tavily("query", SCOPE)
+        with patch.object(m, "TAVILY_KEY", ""):
+            with patch.dict(sys.modules, {"tavily": mock_tavily}):
+                with pytest.raises(RuntimeError, match="CURATOR_TAVILY_KEY"):
+                    m._search_tavily("query", SCOPE)
 
-    def test_empty_results_returns_empty_string(self, monkeypatch):
+    def test_empty_results_returns_empty_string(self):
         import curator.search_providers as m
-
-        monkeypatch.setenv("CURATOR_TAVILY_KEY", "tvly-test-key")
 
         mock_client_cls = MagicMock()
         mock_client_cls.return_value.search.return_value = {"results": []}
 
-        with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
-            result = m._search_tavily("nothing", SCOPE)
+        with patch.object(m, "TAVILY_KEY", "tvly-test-key"):
+            with patch.dict(sys.modules, {"tavily": MagicMock(TavilyClient=mock_client_cls)}):
+                result = m._search_tavily("nothing", SCOPE)
 
         assert result == ""
 
-    def test_import_error_raises_import_error(self, monkeypatch):
+    def test_import_error_raises_import_error(self):
         import curator.search_providers as m
-
-        monkeypatch.setenv("CURATOR_TAVILY_KEY", "tvly-test-key")
 
         real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
@@ -180,12 +207,12 @@ class TestSearchTavily:
                 raise ImportError("No module named 'tavily'")
             return real_import(name, *args, **kwargs)
 
-        # Remove cached module if present
         orig = sys.modules.pop("tavily", None)
         try:
-            with patch("builtins.__import__", side_effect=fake_import):
-                with pytest.raises(ImportError, match="tavily-python"):
-                    m._search_tavily("query", SCOPE)
+            with patch.object(m, "TAVILY_KEY", "tvly-test-key"):
+                with patch("builtins.__import__", side_effect=fake_import):
+                    with pytest.raises(ImportError, match="tavily-python"):
+                        m._search_tavily("query", SCOPE)
         finally:
             if orig is not None:
                 sys.modules["tavily"] = orig
