@@ -194,6 +194,59 @@ def _do_judge_ingest(
     return {"cv_warnings": cv_warnings, "conflict": conflict, "ingested": ingested, "external_text": external_txt}
 
 
+class CuratorPipeline:
+    """Reusable pipeline instance — initialise backend + session once.
+
+    Usage::
+
+        pipeline = CuratorPipeline()          # one-time init
+        r1 = pipeline.run("how to deploy?")   # reuses backend/session
+        r2 = pipeline.run("what is RAG?")
+
+    Health checks are cached for ``health_ttl`` seconds (default 60).
+    """
+
+    def __init__(
+        self,
+        backend: KnowledgeBackend = None,
+        *,
+        health_ttl: float = 60.0,
+    ):
+        validate_config()
+        os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
+
+        self._backend = backend if backend is not None else _init_backend()
+        self._ov: OVClient | None = None
+        self._sm: SessionManager | None = None
+        self._health_ttl = health_ttl
+        self._last_health_check: float = 0.0
+        self._healthy = False
+
+    def _ensure_session(self) -> tuple:
+        """Lazy-init OVClient + SessionManager, with TTL health check."""
+        now = time.time()
+        if self._ov is not None and (now - self._last_health_check < self._health_ttl):
+            return self._ov, self._sm
+
+        if self._ov is None:
+            self._ov, self._sm = _init_session_manager()
+        else:
+            if not self._ov.health():
+                raise RuntimeError(f"OV 不可用 (mode={self._ov.mode})")
+
+        self._last_health_check = now
+        self._healthy = True
+        return self._ov, self._sm
+
+    @property
+    def backend(self) -> KnowledgeBackend:
+        return self._backend
+
+    def run(self, query: str, *, auto_ingest: bool = True) -> dict:
+        """Run the pipeline for *query*. See module-level ``run()`` for docs."""
+        return _run_impl(query, self._backend, auto_ingest, self._ensure_session)
+
+
 def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBackend = None) -> dict:
     """Main pipeline v2 — 返回结构化数据，调用方自己组装 LLM 上下文。
 
@@ -214,9 +267,21 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     - 外搜（普通） → 1 次（judge+conflict 合并）
     - 外搜（需验证时效） → 2 次（+cross_validate）
     """
-    m = Metrics()
     validate_config()
     os.environ["OPENVIKING_CONFIG_FILE"] = OPENVIKING_CONFIG_FILE
+
+    if backend is None:
+        backend = _init_backend()
+
+    def _init_session():
+        return _init_session_manager()
+
+    return _run_impl(query, backend, auto_ingest, _init_session)
+
+
+def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_session) -> dict:
+    """Shared implementation for CuratorPipeline.run() and module-level run()."""
+    m = Metrics()
 
     result = {
         "query": query,
@@ -241,12 +306,8 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     # ── Step 1: 初始化 + 路由 ──
     log.info("STEP 1/4 初始化 + 路由...")
 
-    # Init backend (used for ingest / verify)
-    if backend is None:
-        backend = _init_backend()
-
     try:
-        ov, sm = _init_session_manager()
+        ov, sm = init_session()
     except Exception as e:
         log.error("OV 初始化失败: %s", e)
         result["meta"]["error"] = f"知识库服务不可用: {e}"
@@ -292,8 +353,6 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     trace["external_reason"] = cov_reason
 
     # ── 自动记录 OV 命中（feedback 学习）──
-    # 被 load_context 实际采用的 URI 记一次 adopt，
-    # 供下次检索时 rerank_with_feedback() 微调排名。
     if used_uris:
         try:
             from curator import feedback_store
@@ -329,7 +388,6 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
         if external_txt:
             # Async ingest: when enabled + auto_ingest, defer judge+ingest
             # to a background thread so the user gets results faster.
-            # Read env var dynamically so tests can override via patch.dict
             use_async = (os.environ.get("CURATOR_ASYNC_INGEST", "0") == "1") and auto_ingest
 
             if use_async:
@@ -365,9 +423,6 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
                 log.info("async ingest: job %s deferred to background thread", _job_id)
                 m.step("judge_and_conflict", False, {"reason": "async_deferred", "job_id": _job_id})
             else:
-                # Synchronous path (default) — no lock needed because the
-                # caller blocks until completion; concurrent sync runs each
-                # have their own backend/query context and don't share state.
                 judge_out = _do_judge_ingest(
                     backend,
                     query,
@@ -384,7 +439,6 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
                 ingested = judge_out.get("ingested", False)
                 external_txt = judge_out.get("external_text", external_txt)
     else:
-        # B1: 不触发外搜 → 跳过冲突检测（0 次 LLM）
         m.flag("external_triggered", False)
         m.flag("external_reason", cov_reason)
         log.info("STEP 4/4 跳过外搜+冲突检测: %s", cov_reason)
@@ -419,7 +473,7 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
         "memories_count": len(retrieval_result["memories"]),
         "resources_count": len(retrieval_result["resources"]),
         "skills_count": len(retrieval_result["skills"]),
-        "decision_trace": trace,  # D1
+        "decision_trace": trace,
     }
     result["metrics"] = {
         "duration_sec": report["duration_sec"],
@@ -437,7 +491,6 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
         trace["llm_calls"],
     )
 
-    # 写 query 日志
     _log_query(
         query,
         coverage,

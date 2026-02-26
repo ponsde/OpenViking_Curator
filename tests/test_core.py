@@ -627,5 +627,80 @@ class TestAnalyzeWeak(unittest.TestCase):
         self.assertNotIn("和", kw_lower)
 
 
+# ─── CuratorPipeline class ───────────────────────────────
+
+
+class TestCuratorPipeline(unittest.TestCase):
+    """Test CuratorPipeline reusable instance."""
+
+    def _mock_pipeline_deps(self):
+        return {
+            "_init_session_manager": MagicMock(return_value=(MagicMock(), MagicMock())),
+            "ov_retrieve": MagicMock(
+                return_value={
+                    "all_items": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "memories": [],
+                    "resources": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "skills": [],
+                }
+            ),
+            "assess_coverage": MagicMock(return_value=(0.8, False, "local_sufficient")),
+            "load_context": MagicMock(return_value=("context", ["viking://a"], "L0")),
+            "capture_case": MagicMock(return_value=None),
+            "validate_config": MagicMock(),
+        }
+
+    def test_pipeline_class_runs(self):
+        """CuratorPipeline can be instantiated and run."""
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        patches = self._mock_pipeline_deps()
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            pipeline = CuratorPipeline(backend=backend)
+            result = pipeline.run("test query")
+
+        self.assertEqual(result["query"], "test query")
+        self.assertIn("context_text", result)
+        self.assertIn("meta", result)
+
+    def test_pipeline_reuses_backend(self):
+        """Multiple runs reuse the same backend instance."""
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        patches = self._mock_pipeline_deps()
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            pipeline = CuratorPipeline(backend=backend)
+            r1 = pipeline.run("query 1")
+            r2 = pipeline.run("query 2")
+
+        self.assertIs(pipeline.backend, backend)
+        self.assertEqual(r1["query"], "query 1")
+        self.assertEqual(r2["query"], "query 2")
+
+    def test_pipeline_health_ttl(self):
+        """Session init is not called again within health_ttl window."""
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        mock_init = MagicMock(return_value=(MagicMock(), MagicMock()))
+        patches = self._mock_pipeline_deps()
+        patches["_init_session_manager"] = mock_init
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            pipeline = CuratorPipeline(backend=backend, health_ttl=60.0)
+            pipeline.run("query 1")
+            pipeline.run("query 2")
+
+        # _init_session_manager called once (by _ensure_session), not twice
+        mock_init.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
