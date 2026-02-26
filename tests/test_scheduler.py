@@ -184,6 +184,24 @@ class TestRunStrengthen:
         assert result["strengthened"] == 1  # only the dict entry
         assert "valid topic" in run_fn.calls[0]
 
+    def test_non_list_json_returns_zeros(self, tmp_path):
+        # Edge case: weak_topics.json is a dict instead of a list
+        (tmp_path / "weak_topics.json").write_text('{"topic": "oops"}', encoding="utf-8")
+        run_fn = _mock_run_fn()
+        result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
+        assert result == {"strengthened": 0, "skipped": 0}
+        assert run_fn.calls == []
+
+    def test_invalid_top_n_env_falls_back_to_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CURATOR_STRENGTHEN_TOP_N", "not-a-number")
+        (tmp_path / "weak_topics.json").write_text(
+            json.dumps([{"topic": "topic_a"}, {"topic": "topic_b"}]), encoding="utf-8"
+        )
+        run_fn = _mock_run_fn()
+        result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
+        # Falls back to top_n=3, processes all 2 topics
+        assert result["strengthened"] == 2
+
 
 # ── Lifecycle ──
 

@@ -58,8 +58,8 @@ def _run_freshen(
     Returns:
         Summary dict: ``{checked, stale, re_searched}``.
     """
-    stale_threshold = float(env("CURATOR_FRESHNESS_STALE_THRESHOLD", "0.4"))
     try:
+        stale_threshold = float(env("CURATOR_FRESHNESS_STALE_THRESHOLD", "0.4"))
         if _backend is None:
             from .backend_ov import OpenVikingBackend
 
@@ -123,7 +123,14 @@ def _run_strengthen(
         Summary dict: ``{strengthened, skipped}``.
     """
     _data_path = data_path or DATA_PATH
-    _top_n = top_n if top_n is not None else int(env("CURATOR_STRENGTHEN_TOP_N", "3"))
+    if top_n is not None:
+        _top_n = top_n
+    else:
+        try:
+            _top_n = max(1, int(env("CURATOR_STRENGTHEN_TOP_N", "3")))
+        except (ValueError, TypeError):
+            log.warning("scheduler.strengthen: invalid CURATOR_STRENGTHEN_TOP_N, using 3")
+            _top_n = 3
 
     if _run_fn is None:
         from .pipeline_v2 import run as _pipeline_run
@@ -142,6 +149,12 @@ def _run_strengthen(
             weak_topics = json.load(f)
     except Exception as e:
         log.warning("scheduler.strengthen: failed to read weak_topics.json: %s", e)
+        return {"strengthened": 0, "skipped": 0}
+
+    if not isinstance(weak_topics, list):
+        log.warning(
+            "scheduler.strengthen: weak_topics.json is not a list (got %s), skipping", type(weak_topics).__name__
+        )
         return {"strengthened": 0, "skipped": 0}
 
     targets = weak_topics[:_top_n]
