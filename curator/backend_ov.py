@@ -36,6 +36,10 @@ class OpenVikingBackend(KnowledgeBackend):
     def supports_llm_search(self) -> bool:
         return True
 
+    @property
+    def supports_tiered_loading(self) -> bool:
+        return True
+
     def health(self) -> bool:
         return self._ov.health()
 

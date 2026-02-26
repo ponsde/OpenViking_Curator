@@ -159,6 +159,31 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
 
     scored = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
 
+    # Backends without tiered loading (no abstract/overview) skip L0/L1
+    tiered = getattr(backend, "supports_tiered_loading", True)
+    if not tiered:
+        # Direct L2: search results already have abstracts embedded; just read top items
+        blocks = []
+        used_uris = []
+        for item in scored[: max_l2 or 2]:
+            uri = item.get("uri", "")
+            if not uri:
+                continue
+            try:
+                content = backend.read(uri)
+                if content and len(str(content)) > 20:
+                    blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
+                    used_uris.append(uri)
+            except Exception as e:
+                log.debug("direct read failed for %s: %s", uri, e)
+        context_text = "\n\n".join(blocks)
+        log.info(
+            "context 加载: stage=direct_read (no tiered loading), sources=%d, chars=%d",
+            len(used_uris),
+            len(context_text),
+        )
+        return context_text, used_uris, "L2"
+
     # ---------- Stage 1: L0 only ----------
     l0_blocks = []
     l0_uris = []

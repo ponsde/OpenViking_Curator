@@ -257,3 +257,7 @@ class InMemoryBackend(KnowledgeBackend):
     @property
     def supports_llm_search(self) -> bool:
         return False
+
+    @property
+    def supports_tiered_loading(self) -> bool:
+        return True

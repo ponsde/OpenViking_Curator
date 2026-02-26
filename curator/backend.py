@@ -31,13 +31,13 @@ class SearchResult:
         metadata: Arbitrary extra metadata dict.
     """
 
-    uri: str                          # unique identifier for the resource
-    abstract: str = ""                # short summary (~100 tokens)
-    overview: Optional[str] = None    # medium summary (~2k tokens)
-    score: float = 0.0                # relevance score (0~1)
-    context_type: str = ""            # e.g. "resource", "memory", "skill"
-    match_reason: str = ""            # why this matched
-    category: str = ""                # topic category
+    uri: str  # unique identifier for the resource
+    abstract: str = ""  # short summary (~100 tokens)
+    overview: Optional[str] = None  # medium summary (~2k tokens)
+    score: float = 0.0  # relevance score (0~1)
+    context_type: str = ""  # e.g. "resource", "memory", "skill"
+    match_reason: str = ""  # why this matched
+    category: str = ""  # topic category
     relations: list = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
@@ -52,9 +52,9 @@ class SearchResponse:
         query_plan: Backend's query analysis / intent decomposition, if any.
     """
 
-    results: list[SearchResult]       # all matching items
+    results: list[SearchResult]  # all matching items
     total: int = 0
-    query_plan: Optional[dict] = None # backend's query analysis (if any)
+    query_plan: Optional[dict] = None  # backend's query analysis (if any)
 
 
 class KnowledgeBackend(ABC):
@@ -97,8 +97,7 @@ class KnowledgeBackend(ABC):
         ...
 
     @abstractmethod
-    def search(self, query: str, limit: int = 10,
-               session_id: str = None) -> SearchResponse:
+    def search(self, query: str, limit: int = 10, session_id: str = None) -> SearchResponse:
         """Full search with optional LLM intent analysis.
 
         Backends without LLM search can delegate to :meth:`find`.
@@ -113,29 +112,35 @@ class KnowledgeBackend(ABC):
         """
         ...
 
-    @abstractmethod
     def abstract(self, uri: str) -> str:
         """Get short summary (~100 tokens) of a resource.
 
+        Optional — backends without tiered loading may return ``""``.
+        Backends that support tiered loading (see :attr:`supports_tiered_loading`)
+        should override this method.
+
         Args:
             uri: Resource identifier.
 
         Returns:
-            Short plain-text summary.
+            Short plain-text summary, or ``""`` if not supported.
         """
-        ...
+        return ""
 
-    @abstractmethod
     def overview(self, uri: str) -> str:
         """Get medium summary (~2k tokens) of a resource.
 
+        Optional — backends without tiered loading may return ``""``.
+        Backends that support tiered loading (see :attr:`supports_tiered_loading`)
+        should override this method.
+
         Args:
             uri: Resource identifier.
 
         Returns:
-            Medium-length plain-text summary.
+            Medium-length plain-text summary, or ``""`` if not supported.
         """
-        ...
+        return ""
 
     @abstractmethod
     def read(self, uri: str) -> str:
@@ -150,8 +155,7 @@ class KnowledgeBackend(ABC):
         ...
 
     @abstractmethod
-    def ingest(self, content: str, title: str = "",
-               metadata: dict = None) -> str:
+    def ingest(self, content: str, title: str = "", metadata: dict = None) -> str:
         """Store new content. Returns the URI/ID of the stored resource.
 
         Args:
@@ -254,3 +258,16 @@ class KnowledgeBackend(ABC):
     def supports_llm_search(self) -> bool:
         """Whether :meth:`search` uses LLM intent analysis (vs plain vector)."""
         return False
+
+    @property
+    def supports_tiered_loading(self) -> bool:
+        """Whether this backend supports L0/L1/L2 tiered content loading.
+
+        When ``True`` (default), the pipeline uses :meth:`abstract` → :meth:`overview`
+        → :meth:`read` progressively.  When ``False``, the pipeline skips L0/L1
+        and falls back directly to :meth:`search` + :meth:`read`.
+
+        Backends that implement :meth:`abstract` and :meth:`overview` should
+        return ``True`` here.
+        """
+        return True
