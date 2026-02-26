@@ -205,10 +205,22 @@ class TestConflictResolution:
         r = _resolve_conflict({"has_conflict": True, "trust": 8, "freshness": "current"})
         assert r["preferred"] == "external"
 
-    def test_low_trust_local(self):
+    def test_low_trust_no_local_signals_human(self):
         from curator.pipeline_v2 import _resolve_conflict
 
+        # Without local signals, low external trust goes to human_review
+        # (bidirectional: can't blindly prefer local without evidence)
         r = _resolve_conflict({"has_conflict": True, "trust": 2, "freshness": "current"})
+        assert r["preferred"] == "human_review"
+
+    def test_low_trust_strong_local_prefers_local(self):
+        from curator.pipeline_v2 import _resolve_conflict
+
+        # With strong local feedback, low external trust → prefer local
+        r = _resolve_conflict(
+            {"has_conflict": True, "trust": 2, "freshness": "current"},
+            local_signals={"adopt_count": 10, "up_count": 2, "down_count": 0},
+        )
         assert r["preferred"] == "local"
 
     def test_medium_trust_human(self):

@@ -118,11 +118,14 @@ def _do_judge_ingest(
             },
         )
 
+    # Gather local feedback signals for bidirectional conflict resolution
+    local_signals = _aggregate_local_signals(used_uris)
+
     conflict = {
         "has_conflict": judge_result.get("has_conflict", False),
         "summary": judge_result.get("conflict_summary", ""),
         "points": judge_result.get("conflict_points", []),
-        "resolution": _resolve_conflict(judge_result),
+        "resolution": _resolve_conflict(judge_result, local_signals=local_signals),
     }
 
     if judge_result.get("pass") and judge_result.get("markdown"):
@@ -588,19 +591,54 @@ def _verify_ingest(backend: KnowledgeBackend, query: str, new_uri: str, m: Metri
         m.step("ingest_verify", False, {"error": str(e)})
 
 
-def _resolve_conflict(judge_result: dict) -> dict:
-    """Conflict resolution strategy.
+def _aggregate_local_signals(used_uris: list | set) -> dict | None:
+    """Aggregate feedback signals for local URIs used in this run.
 
-    When local and external sources contradict, decide which to trust:
-    - trust > 7 + freshness=current → prefer external
-    - trust < 4 → prefer local
-    - otherwise → flag for human review
+    Returns dict with adopt_count, up_count, down_count summed across
+    all used URIs. Returns None if feedback_store is unavailable.
+    """
+    if not used_uris:
+        return None
+    try:
+        from curator import feedback_store
+
+        data = feedback_store.load()
+        adopt = up = down = 0
+        for uri in used_uris:
+            item = data.get(uri, {})
+            adopt += item.get("adopt", 0)
+            up += item.get("up", 0)
+            down += item.get("down", 0)
+        return {"adopt_count": adopt, "up_count": up, "down_count": down}
+    except Exception:
+        return None
+
+
+def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) -> dict:
+    """Conflict resolution strategy — bidirectional scoring.
+
+    Scores both external and local knowledge to decide which to prefer.
+    External score is based on judge trust + freshness.
+    Local score is based on feedback signals (adopt/up/down).
+
+    When neither side is clearly stronger, defers to human review.
+
+    Args:
+        judge_result: Output from judge_and_ingest (has trust, freshness, etc.)
+        local_signals: Optional dict with ``adopt_count``, ``up_count``,
+            ``down_count`` from feedback_store. ``None`` means no data.
 
     Returns:
-        {"strategy": str, "preferred": "local"|"external"|"human_review", "reason": str}
+        Dict with ``strategy``, ``preferred``, ``reason``, and ``scores``.
     """
+    no_conflict = {
+        "strategy": "no_conflict",
+        "preferred": "none",
+        "reason": "",
+        "scores": {"external": 0, "local": 0},
+    }
     if not judge_result.get("has_conflict"):
-        return {"strategy": "no_conflict", "preferred": "none", "reason": ""}
+        return no_conflict
 
     trust = judge_result.get("trust", 5)
     freshness = judge_result.get("freshness", "unknown")
@@ -608,20 +646,64 @@ def _resolve_conflict(judge_result: dict) -> dict:
     strategy = os.environ.get("CURATOR_CONFLICT_STRATEGY", "auto")
 
     if strategy == "local":
-        return {"strategy": "local_always", "preferred": "local", "reason": "config: always prefer local"}
-    elif strategy == "external":
-        return {"strategy": "external_always", "preferred": "external", "reason": "config: always prefer external"}
-    elif strategy == "human":
-        return {"strategy": "human_always", "preferred": "human_review", "reason": "config: always human review"}
-
-    # Auto strategy: decide based on trust + freshness
-    if trust >= 7 and freshness in ("current", "recent"):
-        return {"strategy": "auto", "preferred": "external", "reason": f"high trust ({trust}/10) + fresh ({freshness})"}
-    elif trust <= 3:
-        return {"strategy": "auto", "preferred": "local", "reason": f"low trust ({trust}/10), prefer local knowledge"}
-    else:
         return {
-            "strategy": "auto",
-            "preferred": "human_review",
-            "reason": f"medium trust ({trust}/10), needs human judgment",
+            "strategy": "local_always",
+            "preferred": "local",
+            "reason": "config: always prefer local",
+            "scores": {"external": 0, "local": 0},
         }
+    elif strategy == "external":
+        return {
+            "strategy": "external_always",
+            "preferred": "external",
+            "reason": "config: always prefer external",
+            "scores": {"external": 0, "local": 0},
+        }
+    elif strategy == "human":
+        return {
+            "strategy": "human_always",
+            "preferred": "human_review",
+            "reason": "config: always human review",
+            "scores": {"external": 0, "local": 0},
+        }
+
+    # ── Score external source ──
+    # trust: 0-10 from judge LLM
+    # freshness bonus: current=+2, recent=+1, stale=-1, outdated=-2
+    freshness_bonus = {"current": 2, "recent": 1, "unknown": 0, "stale": -2, "outdated": -3}
+    ext_score = trust + freshness_bonus.get(freshness, 0)
+
+    # ── Score local knowledge ──
+    # Based on feedback signals: adopt is strongest (used by pipeline),
+    # up/down are explicit user feedback
+    local_score = 5.0  # neutral baseline
+    if local_signals is not None:
+        adopt = local_signals.get("adopt_count", 0)
+        up = local_signals.get("up_count", 0)
+        down = local_signals.get("down_count", 0)
+        # adopt is weighted higher (objective signal from pipeline)
+        local_score = 5.0 + min(adopt * 0.3, 3.0) + min(up * 0.5, 2.0) - min(down * 0.7, 3.0)
+        local_score = max(0, min(12, local_score))
+    else:
+        # No feedback data → local score stays at neutral
+        local_score = 5.0
+
+    scores = {"external": round(ext_score, 2), "local": round(local_score, 2)}
+
+    # ── Decision ──
+    margin = 2.0  # minimum gap to make a confident decision
+    diff = ext_score - local_score
+
+    if diff >= margin:
+        preferred = "external"
+        reason = f"external stronger (ext={ext_score:.1f} vs local={local_score:.1f}, diff={diff:+.1f})"
+    elif diff <= -margin:
+        preferred = "local"
+        reason = f"local stronger (local={local_score:.1f} vs ext={ext_score:.1f}, diff={diff:+.1f})"
+    else:
+        preferred = "human_review"
+        reason = (
+            f"scores too close (ext={ext_score:.1f} vs local={local_score:.1f}, diff={diff:+.1f}), needs human judgment"
+        )
+
+    return {"strategy": "auto", "preferred": preferred, "reason": reason, "scores": scores}
