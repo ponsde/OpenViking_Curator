@@ -1,19 +1,39 @@
+# Before first run — pick ONE mode:
+#
+#   EMBEDDED mode (OV runs in-process):
+#     cp ov.conf.example ov.conf     # then fill in your embedding API keys
+#
+#   HTTP mode (OV runs as a separate service):
+#     cp ov.conf.example ov.conf     # keep as-is — file never read in HTTP mode
+#     echo "OV_BASE_URL=http://your-ov-host:8080" >> .env
+
 services:
   curator:
     build: .
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
+      # ov.conf provides embedding model config for EMBEDDED mode.
+      # HTTP mode: file is mounted but never read (harmless).
+      # Must exist on host — see setup note above (cp ov.conf.example ov.conf).
       - ./ov.conf:/app/ov.conf:ro
+      # Persistent state: OV knowledge base + Curator session/feedback data
       - curator-data:/app/data
     environment:
-      - OPENVIKING_CONFIG_FILE=/app/ov.conf
-      - OV_DATA_PATH=/app/data
-      - CURATOR_DATA_PATH=/app/data
+      CURATOR_DATA_PATH: /app/data
+      OV_DATA_PATH: /app/data/ov
+      CURATOR_CURATED_DIR: /app/data/curated
+      # Embedded mode: OV reads this config for the embedding provider.
+      # HTTP mode: ignored (AsyncOpenViking never instantiated).
+      OPENVIKING_CONFIG_FILE: /app/ov.conf
+      # HTTP mode: uncomment and set OV_BASE_URL in .env instead of here.
+      # OV_BASE_URL: http://your-ov-host:8080
 
-    # Usage:
+    # Quick-start commands:
     #   docker compose run --rm curator curator_query.py --status
     #   docker compose run --rm curator curator_query.py "your question"
-    #   docker compose run --rm curator mcp_server.py
+    #   docker compose run --rm -T curator mcp_server.py   # MCP stdio
 
 volumes:
   curator-data:
