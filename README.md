@@ -4,6 +4,7 @@ English / [中文](README_CN.md)
 
 **Knowledge governance plugin for [OpenViking](https://github.com/volcengine/OpenViking).** Curator sits on top of your OV knowledge base — it decides when local knowledge is enough, when to search externally, reviews what comes back, and ingests the good stuff. Your knowledge base grows with every question.
 
+[![CI](https://github.com/ponsde/OpenViking_Curator/actions/workflows/ci.yml/badge.svg)](https://github.com/ponsde/OpenViking_Curator/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-green.svg)](https://python.org)
 
@@ -13,7 +14,7 @@ English / [中文](README_CN.md)
 flowchart TD
     Q[Query] --> R[Route]
     R --> OV[Retrieve from OV]
-    OV --> L[Load L0→L1→L2]
+    OV --> L[Load L0 → L1 → L2]
     L --> COV{Coverage OK?}
     COV -- yes --> OUT1[Return local context]
     COV -- no --> EXT[External search]
@@ -34,31 +35,33 @@ flowchart TD
 - External search triggered → **1 LLM call** (judge + conflict combined)
 - Need freshness validation → **2 LLM calls** (+ cross-validate)
 
-## What Curator does
+## Features
 
-Curator is the **governance layer** — it decides what goes in and out of your knowledge base.
-
-| What | How | File |
-|------|-----|------|
-| **Route** | Rule-based: domain, keywords, freshness detection. No LLM. | `router.py` |
-| **Retrieve** | Dual-path: `find` (vector) + `search` (LLM intent). Deduplicates by URI. | `retrieval_v2.py` |
-| **Load on demand** | L0 (abstract) → L1 (overview) → L2 (full). Only goes deeper when needed. Saves tokens. | `retrieval_v2.py` |
-| **Assess coverage** | OV scores: top > 0.55 + multiple hits = sufficient. Otherwise → external search. | `retrieval_v2.py` |
-| **External search** | Pluggable providers. Grok recommended. Any OAI-compatible endpoint works. | `search.py` + `search_providers.py` |
-| **Cross-validate** | Only when `need_fresh=true`. Flags risky/outdated claims. | `search.py` |
-| **Judge + conflict** | Single LLM call: trust score 0-10, freshness, pass/fail, contradiction detection. Pydantic validated. | `review.py` |
-| **Conflict resolution** | Configurable: `auto` / `local` / `external` / `human`. Can block ingest. | `pipeline_v2.py` |
-| **Ingest** | Writes to OV with metadata: `source_urls`, `version`, `quality_feedback`, TTL. Local backup in `curated/`. | `review.py` |
-| **Verify ingest** | Searches OV again to confirm new content is retrievable. | `pipeline_v2.py` |
-| **Scan duplicates** | Two-layer: URL hash (exact source match) → Jaccard word similarity (no external deps). Reports only — no auto-delete. | `dedup.py` |
-| **Score freshness** | URI timestamp → decay score (fresh → stale). | `freshness.py` |
-| **Feedback-driven reranking** | `feedback_store` records `up`/`down`/`adopt` per URI. Retrieval results are re-ranked by feedback signals (±0.10 max delta, OV score stays dominant). Pipeline auto-records `adopt` after using OV results. | `retrieval_v2.py` + `feedback_store.py` |
-| **Decision Report** | `format_report(result)` produces a CJK-safe ASCII box summary of every pipeline run: coverage, load stage, external trigger, LLM calls, conflict, duration. Also available as `format_report_short()` for log lines. Included in every `run()` return as `result["decision_report"]`. | `decision_report.py` |
-| **Track sessions** | Records queries + used URIs. Commits to extract long-term memory. | `session_manager.py` |
-| **Log queries** | Every query → `data/query_log.jsonl` with coverage, reasons, LLM calls. | `pipeline_v2.py` |
-| **Analyze weak topics** | Clusters query logs → finds knowledge gaps. | `scripts/analyze_weak.py` |
-| **Strengthen** | Runs pipeline on top N weak topics to fill gaps. | `scripts/strengthen.py` |
-| **Freshness scan** | URL reachability + TTL expiry. `--act` to auto-refresh. | `scripts/freshness_scan.py` |
+| Feature | Description | Module |
+|---------|-------------|--------|
+| **Rule-based routing** | Domain, keywords, freshness detection. No LLM needed. JSON-configurable. | `router.py` |
+| **Dual-path retrieval** | `find` (vector) + `search` (LLM intent). URI dedup. | `retrieval_v2.py` |
+| **On-demand loading** | L0 (abstract) → L1 (overview) → L2 (full). Only deeper when needed. | `retrieval_v2.py` |
+| **Coverage assessment** | Score gap + keyword overlap signals. 0 LLM calls. | `retrieval_v2.py` |
+| **External search** | Pluggable providers: Grok, DuckDuckGo, Tavily. Fallback chain or concurrent. | `search_providers.py` |
+| **Domain filtering** | Whitelist / blacklist external search results by domain. | `domain_filter.py` |
+| **Cross-validation** | When `need_fresh=true`. Flags risky/outdated claims. | `search.py` |
+| **Judge + conflict** | Single LLM call: trust 0-10, freshness, pass/fail, contradiction. Pydantic validated. | `review.py` |
+| **Conflict resolution** | Configurable: `auto` / `local` / `external` / `human`. Bidirectional scoring. | `pipeline_v2.py` |
+| **Ingest** | Writes to OV with metadata (source URLs, version, TTL, quality feedback). | `review.py` |
+| **Async ingest** | Fire-and-forget background thread. Observable via async job tracker. | `pipeline_v2.py` + `async_jobs.py` |
+| **Auto-summarize** | Generates L0/L1 summaries on ingest for new resources. | `pipeline_v2.py` |
+| **Dedup scanning** | URL hash (exact match) + Jaccard word similarity. Reports only. | `dedup.py` |
+| **Freshness scoring** | URI timestamp → decay score. Configurable thresholds. | `freshness.py` |
+| **Usage-based TTL** | Hot / warm / cold tiers. Frequently used → longer TTL. | `usage_ttl.py` |
+| **Feedback reranking** | `up`/`down`/`adopt` per URI. Score-weighted, rank-aware. OV score stays dominant. | `feedback_store.py` |
+| **Decision report** | ASCII box, single-line, JSON, HTML export. Always present in `run()` output. | `decision_report.py` |
+| **Session tracking** | Records queries + used URIs. Commits to extract long-term memory. | `session_manager.py` |
+| **Query logging** | Every query → `query_log.jsonl` with coverage, reasons, LLM calls. | `pipeline_v2.py` |
+| **Circuit breaker** | 3-state breaker wrapping LLM + search calls. Auto-recovery. | `circuit_breaker.py` |
+| **Search cache** | LRU + dual TTL. File-locked JSON persistence. | `search_cache.py` |
+| **Background scheduler** | APScheduler: periodic freshness scan + weak topic strengthening. | `scheduler.py` |
+| **Structured logging** | structlog with JSON mode. Per-run context binding (run_id, query). | `logging_setup.py` |
 
 ### What Curator does NOT do
 
@@ -70,38 +73,45 @@ Curator is the **governance layer** — it decides what goes in and out of your 
 ### Prerequisites
 
 - Python 3.10+
-- A working [OpenViking](https://github.com/volcengine/OpenViking) setup with `ov.conf`
-- An OpenAI-compatible API endpoint (for LLM review and routing)
-- A search API (Grok recommended for real-time web search, or any OAI-compatible endpoint)
+- A working [OpenViking](https://github.com/volcengine/OpenViking) setup (embedded or HTTP mode)
+- An OpenAI-compatible API endpoint (for LLM review)
+- A search API (Grok recommended, or DuckDuckGo/Tavily)
 
 ### Install
 
 ```bash
 git clone https://github.com/ponsde/OpenViking_Curator.git
 cd OpenViking_Curator
+
+# Recommended: uv (fast, reproducible)
+uv sync
+source .venv/bin/activate
+
+# Alternative: pip
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+
+cp .env.example .env   # then fill in your keys
 ```
 
 ### Configure
 
-Edit `.env` with your actual endpoints and keys:
+Edit `.env`:
 
 ```bash
-# Point to your existing OpenViking ov.conf
+# OpenViking config (embedded mode)
 OPENVIKING_CONFIG_FILE=/path/to/your/ov.conf
 
 # LLM for review & routing (any OpenAI-compatible endpoint)
 CURATOR_OAI_BASE=https://your-llm-api.com/v1
 CURATOR_OAI_KEY=sk-your-key
 
-# External search (Grok recommended, or use any OAI-compatible endpoint)
+# External search (Grok recommended)
 CURATOR_GROK_BASE=https://your-grok-endpoint/v1
 CURATOR_GROK_KEY=your-grok-key
 ```
 
-That's it. Three endpoints, three keys.
+Three endpoints, three keys. That's it.
 
 ### Run
 
@@ -109,34 +119,25 @@ That's it. Three endpoints, three keys.
 python3 curator_query.py --status                         # Health check
 python3 curator_query.py "How to deploy Redis in Docker?" # Query
 python3 curator_query.py --review "sensitive topic"       # Review mode (no auto-ingest)
+python3 mcp_server.py                                     # MCP server (stdio JSON-RPC)
 ```
-
-### Troubleshooting
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Missing required env vars` | `.env` not configured | Fill in `CURATOR_OAI_BASE`, `CURATOR_OAI_KEY`, `CURATOR_GROK_KEY` |
-| `OV 不可用` | OpenViking not reachable | Check `OPENVIKING_CONFIG_FILE` path, make sure OV data exists |
-| `401 Unauthorized` | Wrong API key | Check keys in `.env` |
-| `timeout` on search | Search endpoint unreachable | Check endpoint URL and service status |
-| `Non-JSON response` | API returned HTML error | URL should end with `/v1` |
-| Embeddings mismatch | OV embedding model differs from indexed data | Re-index with matching model |
 
 ### Docker
 
 ```bash
-cp .env.example .env   # Fill your config
+# Embedded mode: OV runs in-process
+cp ov.conf.example ov.conf   # fill in your embedding API keys
+cp .env.example .env         # fill in LLM + search keys
+docker compose build
+docker compose run --rm curator curator_query.py --status
+docker compose run --rm curator curator_query.py "your question"
+
+# HTTP mode: OV runs as a separate service
+cp ov.conf.example ov.conf   # keep as-is (not read in HTTP mode)
+echo "OV_BASE_URL=http://your-ov-host:8080" >> .env
 docker compose build
 docker compose run --rm curator curator_query.py --status
 ```
-
-### MCP Server
-
-```bash
-python3 mcp_server.py   # stdio JSON-RPC, works with Claude Desktop / mcporter
-```
-
-Tools: `curator_query`, `curator_ingest`, `curator_status`
 
 ### Python API
 
@@ -149,45 +150,23 @@ print(result["external_text"])        # external (if any)
 print(result["coverage"])             # 0.0 ~ 1.0
 print(result["meta"]["ingested"])     # True if new content stored
 print(result["conflict"])             # conflict detection
+print(result["decision_report"])      # ASCII decision report
 
-# v0.1.0: decision report (always present)
-print(result["decision_report"])      # CJK-safe ASCII box summary
-# ┌─── Curator Decision Report ──────────────────────────┐
-# │ Coverage    : 0.68  (local_sufficient)               │
-# │ Load stage  : L0 (abstract 已足够)                   │
-# │ Used URIs   : 3                                      │
-# │ External    : No                                     │
-# └──────────────────────────────────────────────────────┘
+# Reusable pipeline instance (shares session + backend)
+from curator.pipeline_v2 import CuratorPipeline
+pipeline = CuratorPipeline()
+r1 = pipeline.run("how to deploy?")
+r2 = pipeline.run("what is RAG?")
 
-# v0.1.0: manual feedback (boosts retrieval ranking next time)
-import feedback_store
-feedback_store.apply("viking://resource/doc-id", "up")   # mark helpful
-feedback_store.apply("viking://resource/doc-id", "down") # mark unhelpful
-```
+# Decision report in other formats
+from curator.decision_report import format_report_json, format_report_html
+print(format_report_json(result))
+print(format_report_html(result))
 
-## Output
-
-```json
-{
-  "query": "...",
-  "context_text": "local OV results",
-  "external_text": "external search results (if triggered)",
-  "coverage": 0.68,
-  "conflict": {
-    "has_conflict": false,
-    "summary": "",
-    "points": [],
-    "resolution": {"strategy": "auto", "preferred": "none"}
-  },
-  "meta": {
-    "coverage": 0.68,
-    "external_triggered": true,
-    "external_reason": "low_coverage",
-    "ingested": true,
-    "used_uris": ["viking://resources/..."],
-    "decision_trace": {"load_stage": "L1", "llm_calls": 1}
-  }
-}
+# Feedback (boosts retrieval ranking next time)
+from curator.feedback_store import apply
+apply("viking://resources/doc-id", "up")    # mark helpful
+apply("viking://resources/doc-id", "down")  # mark unhelpful
 ```
 
 ## Configuration
@@ -198,28 +177,30 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 
 | Variable | Description |
 |----------|-------------|
-| `OPENVIKING_CONFIG_FILE` | Path to your existing `ov.conf` |
-| `CURATOR_OAI_BASE` | OpenAI-compatible API base URL (for LLM review + routing) |
+| `OPENVIKING_CONFIG_FILE` | Path to `ov.conf` (embedded mode) |
+| `CURATOR_OAI_BASE` | OpenAI-compatible API base URL |
 | `CURATOR_OAI_KEY` | API key for above |
-| `CURATOR_GROK_KEY` | Grok API key (for external search; not needed if using `oai` provider) |
+| `CURATOR_GROK_KEY` | Grok API key (external search) |
 
-### Optional
+### OV mode
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OV_DATA_PATH` | `./data` | OV data directory |
-| `OV_BASE_URL` | _(empty)_ | Remote OV HTTP serve (empty = embedded mode) |
-| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok endpoint |
-| `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model |
-| `CURATOR_JUDGE_MODELS` | _(config default)_ | Models for review (comma-separated fallback) |
-| `CURATOR_ROUTER_MODELS` | _(config default)_ | Models for LLM routing |
-| `CURATOR_SEARCH_PROVIDER` | `grok` | `grok` / `oai` / custom |
-| `CURATOR_LLM_ROUTE` | `1` | `1` = LLM routing, `0` = rule-only |
-| `CURATOR_VERSION` | `0.7.0` | Version tag in ingest metadata |
-| `CURATOR_CHAT_RETRY_MAX` | `3` | Retry attempts (transient errors only) |
-| `CURATOR_CONFLICT_STRATEGY` | `auto` | Conflict resolution strategy |
+| `OV_BASE_URL` | _(empty)_ | Set to use HTTP mode. Empty = embedded mode. |
+| `OV_DATA_PATH` | `./data` | OV data directory (embedded mode) |
 
-### Coverage thresholds
+### Search
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,duckduckgo,tavily` (fallback chain) |
+| `CURATOR_SEARCH_CONCURRENT` | `0` | `1` = fire all providers in parallel |
+| `CURATOR_SEARCH_TIMEOUT` | `60` | Global search timeout (seconds) |
+| `CURATOR_TAVILY_KEY` | _(empty)_ | Tavily API key (if using tavily provider) |
+| `CURATOR_ALLOWED_DOMAINS` | _(empty)_ | Whitelist (comma-separated) |
+| `CURATOR_BLOCKED_DOMAINS` | _(empty)_ | Blacklist (comma-separated) |
+
+### Thresholds
 
 | Variable | Default | Effect |
 |----------|---------|--------|
@@ -228,117 +209,135 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 | `CURATOR_THRESHOLD_COV_LOW` | `0.35` | Below = definitely search |
 | `CURATOR_THRESHOLD_L0_SUFFICIENT` | `0.62` | L0 score to skip L1 |
 | `CURATOR_THRESHOLD_L1_SUFFICIENT` | `0.50` | L1 score to skip L2 |
+| `CURATOR_MAX_L2_DEPTH` | `2` | Max full-text reads per run |
 
-### Conflict resolution
+### Background scheduler
 
-| Strategy | Behavior |
-|----------|----------|
-| `auto` (default) | Trust ≥ 7 + current → prefer external. Trust ≤ 3 → prefer local. Otherwise → human review. |
-| `local` | Always prefer local |
-| `external` | Always prefer external |
-| `human` | Always flag for review |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURATOR_SCHEDULER_ENABLED` | `0` | `1` to activate background jobs |
+| `CURATOR_FRESHNESS_INTERVAL_HOURS` | `24` | Freshness scan interval |
+| `CURATOR_STRENGTHEN_INTERVAL_HOURS` | `168` | Weak topic strengthening interval (7 days) |
+| `CURATOR_STRENGTHEN_TOP_N` | `3` | Number of weak topics per run |
 
-## Ingest metadata
+### Other
 
-Every ingested document carries traceable metadata:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURATOR_ASYNC_INGEST` | `0` | `1` = fire-and-forget background ingest |
+| `CURATOR_CONFLICT_STRATEGY` | `auto` | `auto` / `local` / `external` / `human` |
+| `CURATOR_CB_ENABLED` | `1` | Circuit breaker (`0` to disable) |
+| `CURATOR_CACHE_ENABLED` | `0` | Search result cache |
+| `CURATOR_FEEDBACK_WEIGHT` | `0.10` | Feedback score adjustment (max delta) |
+| `CURATOR_JSON_LOGGING` | `0` | `1` = JSON structured log output |
+| `CURATOR_CHAT_RETRY_MAX` | `3` | LLM retry attempts |
 
-| Field | Example | Purpose |
-|-------|---------|---------|
-| `freshness` | `current` | `current` / `recent` / `unknown` / `outdated` |
-| `ttl_days` | `180` | current=180, recent=90, unknown=60, outdated=0 |
-| `ingested` | `2026-02-22` | Ingest date |
-| `review_after` | `2026-08-21` | Scheduled re-check date |
-| `version` | `0.7.0` | Curator version that ingested this |
-| `source_urls` | `["https://..."]` | Deduplicated source URLs |
-| `quality_feedback` | `{"judge_trust": 8}` | Judge signals for future quality loops |
-
-## Maintenance scripts
+## Maintenance
 
 ```bash
-python3 scripts/analyze_weak.py --top 10          # Find weak topics
-python3 scripts/strengthen.py --top 5             # Fill gaps
-python3 scripts/freshness_scan.py --limit 50      # URL reachability
-python3 scripts/freshness_scan.py --ttl-scan      # TTL expiry check
-python3 scripts/freshness_scan.py --ttl-scan --act # Auto-refresh expired
+# Weak topic analysis
+python3 scripts/analyze_weak.py --top 10
+
+# Proactive strengthening
+python3 scripts/strengthen.py --top 5
+
+# Freshness scan
+python3 scripts/freshness_scan.py --limit 50       # URL reachability
+python3 scripts/freshness_scan.py --act             # Auto-refresh stale
+
+# TTL rebalance
+python3 scripts/ttl_rebalance.py                    # Report
+python3 scripts/ttl_rebalance.py --json             # JSON export
+
+# Async job management
+python3 scripts/async_job_cli.py list               # Overview
+python3 scripts/async_job_cli.py list --failed      # Failed jobs
+python3 scripts/async_job_cli.py replay <job_id>    # Re-queue a job
 ```
+
+Or enable the background scheduler (`CURATOR_SCHEDULER_ENABLED=1`) to run freshness scans and strengthening automatically.
 
 ## Project structure
 
 ```
 curator/
-  backend.py           # KnowledgeBackend abstract interface
-  backend_ov.py        # OpenViking implementation
+  pipeline_v2.py       # Main pipeline orchestrator
+  config.py            # Config + HTTP client with retry
+  settings.py          # Pydantic Settings v2 (typed, validated)
+  backend.py           # KnowledgeBackend ABC
+  backend_ov.py        # OpenViking backend (embedded + HTTP)
   backend_memory.py    # In-memory backend (testing)
-  pipeline_v2.py       # Main 4-step pipeline
   session_manager.py   # Dual-mode OV client
-  retrieval_v2.py      # L0→L1→L2 + coverage + dedup
+  retrieval_v2.py      # L0→L1→L2 retrieval + coverage
   search.py            # External search + cross-validation
-  review.py            # LLM review + Pydantic + ingest + conflict
-  router.py            # Rule-based routing
-  config.py            # Config + chat with retry
+  search_providers.py  # Pluggable provider registry
+  review.py            # LLM judge + ingest + conflict
+  router.py            # Rule-based routing (JSON config)
   freshness.py         # URI time-decay scoring
+  usage_ttl.py         # Usage-based TTL tiers
   dedup.py             # Duplicate scanning
+  decision_report.py   # ASCII / JSON / HTML reports
+  feedback_store.py    # Up/down/adopt feedback
+  domain_filter.py     # Domain whitelist/blacklist
+  circuit_breaker.py   # 3-state circuit breaker
+  search_cache.py      # LRU + dual-TTL cache
+  async_jobs.py        # Background job tracking
+  scheduler.py         # APScheduler periodic jobs
+  logging_setup.py     # structlog configuration
+  file_lock.py         # Shared flock utilities
   legacy/              # Archived v1
-curator_query.py       # CLI entry
-mcp_server.py          # MCP server (stdio)
-search_providers.py    # Pluggable search registry
+curator_query.py       # CLI entry point
+mcp_server.py          # MCP server (stdio JSON-RPC)
 scripts/               # Maintenance scripts
-tests/                 # Unit tests
+tests/                 # 476 tests
 ```
 
 ## Testing
 
 ```bash
-python -m pytest tests/ -v
+# All tests (uses InMemoryBackend, no OV dependency)
+uv run pytest tests/ -v
+
+# Single file
+uv run pytest tests/test_core.py -v
+
+# Type checking
+uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 ```
 
 ## Troubleshooting
 
-**`OPENVIKING_CONFIG_FILE not found` or OV init fails**
-- Make sure your `ov.conf` path is set correctly in `.env`
-- Run `python3 -c "from openviking import AsyncOpenViking"` to verify the OV install
-
-**Coverage is always `0.0` / OV returns no results**
-- Your OV instance may be empty. Run `ov status` to check resource count.
-- If `CURATOR_THRESHOLD_COV_SUFFICIENT` is too high for your KB size, lower it to `0.45`.
-
-**External search always triggered even for well-known topics**
-- Check that your search provider env vars are correct (`CURATOR_GROK_BASE`, `CURATOR_GROK_KEY`)
-- Coverage thresholds may need tuning — see `.env.example` for guidance
-
-**LLM judge returns low trust / always fails**
-- Verify your `CURATOR_OAI_BASE` and `CURATOR_OAI_KEY` are correct
-- Try a stronger model in `CURATOR_JUDGE_MODELS`
-- If the judge is hallucinating, add `CURATOR_LLM_ROUTE=0` to disable LLM routing
-
-**`ModuleNotFoundError` for `metrics` / `memory_capture` / `feedback_store`**
-- These modules moved into the `curator/` package in v0.1.0
-- Update any direct imports: `import feedback_store` → `from curator import feedback_store`
-
-**`feedback_store` CLI usage**
-```bash
-# v0.1.0+ (moved into curator package)
-python3 -m curator.feedback_store <uri> up|down|adopt
-```
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `Missing required env vars` | `.env` not configured | Fill in `CURATOR_OAI_BASE`, `CURATOR_OAI_KEY`, `CURATOR_GROK_KEY` |
+| `OV not available` | OpenViking not reachable | Check `OPENVIKING_CONFIG_FILE` (embedded) or `OV_BASE_URL` (HTTP) |
+| `401 Unauthorized` | Wrong API key | Check keys in `.env` |
+| Timeout on search | Endpoint unreachable | Check URL and service status |
+| Coverage always 0.0 | OV is empty | Ingest some content first, or lower `CURATOR_THRESHOLD_COV_SUFFICIENT` |
+| External always triggered | Thresholds too high | Lower coverage thresholds in `.env` |
+| Judge returns low trust | Weak LLM model | Try a stronger model in `CURATOR_JUDGE_MODELS` |
 
 ## Roadmap
 
-- [x] KnowledgeBackend abstraction
-- [x] Conflict detection + configurable resolution
-- [x] Review mode (`--review`)
-- [x] Ingest metadata (source_urls, version, quality_feedback)
-- [x] Chat retry with backoff
+- [x] KnowledgeBackend abstraction (OV-agnostic interface)
+- [x] Conflict detection + bidirectional resolution
 - [x] Pydantic-validated judge output
-- [x] Weak topic analysis + proactive strengthening
-- [x] Freshness scanning + TTL management
-- [x] Quality feedback loop (feedback → retrieval ranking) ← v0.1.0
-- [x] Enhanced dedup (URL hash + Jaccard word similarity) ← v0.1.0
-- [x] Decision report (human-readable pipeline trace) ← v0.1.0
-- [ ] Async ingest (fire-and-forget background processing)
-- [ ] Auto-generate L0/L1 summaries on ingest
-- [ ] More search providers (DuckDuckGo, Tavily)
-- [ ] Coverage auto-tuning (dynamic thresholds)
-- [ ] Usage-based TTL (hit → extend, unused → shrink)
+- [x] Quality feedback loop (feedback → retrieval ranking)
+- [x] Enhanced dedup (URL hash + Jaccard)
+- [x] Decision report (ASCII + JSON + HTML)
+- [x] Async ingest with job tracking + recovery CLI
+- [x] Auto-generate L0/L1 summaries on ingest
+- [x] Multi-provider search (Grok + DuckDuckGo + Tavily)
+- [x] Domain filtering (whitelist / blacklist)
+- [x] Usage-based TTL (hot / warm / cold tiers)
+- [x] Circuit breaker + search cache
+- [x] Structured logging (structlog + JSON mode)
+- [x] Background scheduler (freshness + strengthen)
+- [x] Docker support (embedded + HTTP OV modes)
+- [x] mypy + pre-commit (ruff + ruff-format)
+- [x] uv dependency management
+- [ ] Coverage auto-tuning (dynamic thresholds from query log)
+- [ ] Second backend implementation (beyond OpenViking)
 
 ## License
 
