@@ -58,6 +58,9 @@ from .review import (
 )
 from .router import route_scope
 from .search import cross_validate, external_search
+
+# Deprecated: use OpenVikingBackend instead; OVClient/SessionManager will be
+# removed in a future release once all code paths use KnowledgeBackend.
 from .session_manager import OVClient, SessionManager
 
 __all__ = [

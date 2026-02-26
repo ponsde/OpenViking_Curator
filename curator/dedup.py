@@ -180,7 +180,7 @@ def scan_duplicates(backend, uris: list[str], max_checks: int = 0) -> dict:
 
     result = {"checked": 0, "duplicates": []}
 
-    valid_uris = [u for u in uris if u.startswith("viking://") or u.startswith("mem://")]
+    valid_uris = [u for u in uris if u and isinstance(u, str)]
     if len(valid_uris) < 2:
         return result
 
