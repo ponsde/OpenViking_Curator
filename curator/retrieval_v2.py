@@ -20,6 +20,31 @@ from .config import (
     log,
 )
 
+# ── assess_coverage tuning constants ──
+# These are internal signal-weighting parameters, not user-facing thresholds.
+# User-facing thresholds (COV_SUFFICIENT etc.) live in config.py / settings.py.
+
+# Score-gap penalty: if top1 - top2 > this, it looks like an isolated hit
+_GAP_PENALTY_THRESHOLD = 0.25
+_GAP_PENALTY_MULTIPLIER = 0.3  # gap * multiplier = raw penalty
+_GAP_PENALTY_CAP = 0.10  # max penalty applied regardless of gap size
+
+# Keyword-overlap penalty: fraction of query keywords found in local abstracts
+_KW_OVERLAP_LOW = 0.4  # below this → larger penalty
+_KW_OVERLAP_MED = 0.6  # below this (but ≥ low) → smaller penalty
+_KW_PENALTY_LOW = 0.08  # penalty when overlap < _KW_OVERLAP_LOW
+_KW_PENALTY_MED = 0.04  # penalty when _KW_OVERLAP_LOW ≤ overlap < _KW_OVERLAP_MED
+
+# Scale factor: fewer KB results → OV score distribution is less reliable
+_SCALE_FACTOR_BASE = 0.75  # min scale (single result)
+_SCALE_FACTOR_PER_ITEM = 0.03  # added per additional result (saturates at 1.0)
+
+# Coverage calculation adjustments per decision branch
+_COV_BONUS_SUFFICIENT = 0.2  # boost when clearly sufficient (avg_score + bonus)
+_COV_DISCOUNT_MARGINAL = 0.5  # gap_penalty multiplier for marginal branch
+_COV_DISCOUNT_LOW = 0.8  # scale applied when coverage is low
+_COV_DISCOUNT_INSUFFICIENT = 0.5  # scale applied when coverage is insufficient
+
 
 def rerank_with_feedback(items: list) -> list:
     """用 feedback_store 的命中记录微调检索排名。
@@ -388,21 +413,21 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     gap_penalty = 0.0
     if count >= 2:
         gap = scores[0] - scores[1]
-        if gap > 0.25:
-            gap_penalty = min(0.10, gap * 0.3)
+        if gap > _GAP_PENALTY_THRESHOLD:
+            gap_penalty = min(_GAP_PENALTY_CAP, gap * _GAP_PENALTY_MULTIPLIER)
 
     # ── Keyword overlap ──
     kw_overlap = _keyword_overlap(query, scored_items)
     # Low keyword coverage = local results might not actually answer the query
     kw_penalty = 0.0
-    if kw_overlap < 0.4:
-        kw_penalty = 0.08
-    elif kw_overlap < 0.6:
-        kw_penalty = 0.04
+    if kw_overlap < _KW_OVERLAP_LOW:
+        kw_penalty = _KW_PENALTY_LOW
+    elif kw_overlap < _KW_OVERLAP_MED:
+        kw_penalty = _KW_PENALTY_MED
 
     # ── Scale factor ──
     # 规模修正：知识库结果数少时，OV score 分布不可信，适当放宽阈值
-    scale_factor = min(1.0, 0.75 + 0.03 * count)
+    scale_factor = min(1.0, _SCALE_FACTOR_BASE + _SCALE_FACTOR_PER_ITEM * count)
     effective_sufficient = THRESHOLD_COV_SUFFICIENT * scale_factor
     effective_marginal = THRESHOLD_COV_MARGINAL * scale_factor
 
@@ -411,19 +436,19 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
 
     # 基于有效阈值判断
     if adjusted_top > effective_sufficient and count >= 2:
-        coverage = min(1.0, avg_score + 0.2 - gap_penalty)
+        coverage = min(1.0, avg_score + _COV_BONUS_SUFFICIENT - gap_penalty)
         reason = "local_sufficient"
         need_external = False
     elif adjusted_top > effective_marginal and count >= 1:
-        coverage = avg_score - gap_penalty * 0.5
+        coverage = avg_score - gap_penalty * _COV_DISCOUNT_MARGINAL
         reason = "local_marginal"
         need_external = True
     elif adjusted_top > THRESHOLD_COV_LOW and count >= 1:
-        coverage = avg_score * 0.8
+        coverage = avg_score * _COV_DISCOUNT_LOW
         reason = "low_coverage"
         need_external = True
     else:
-        coverage = avg_score * 0.5
+        coverage = avg_score * _COV_DISCOUNT_INSUFFICIENT
         reason = "insufficient"
         need_external = True
 
