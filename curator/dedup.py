@@ -44,8 +44,17 @@ DEDUP_LOG_FILE = os.getenv(
         "dedup_log.json",
     ),
 )
-SIMILARITY_THRESHOLD = float(env("CURATOR_DEDUP_SIMILARITY", "0.55"))
-MAX_SCAN_ITEMS = int(env("CURATOR_DEDUP_MAX_ITEMS", "10"))
+try:
+    SIMILARITY_THRESHOLD = max(0.0, min(1.0, float(env("CURATOR_DEDUP_SIMILARITY", "0.55"))))
+except (ValueError, TypeError):
+    log.warning("invalid CURATOR_DEDUP_SIMILARITY, using default 0.55")
+    SIMILARITY_THRESHOLD = 0.55
+
+try:
+    MAX_SCAN_ITEMS = max(1, int(env("CURATOR_DEDUP_MAX_ITEMS", "10")))
+except (ValueError, TypeError):
+    log.warning("invalid CURATOR_DEDUP_MAX_ITEMS, using default 10")
+    MAX_SCAN_ITEMS = 10
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']{8,}")
 

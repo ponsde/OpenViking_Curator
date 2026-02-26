@@ -339,4 +339,5 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
         reason = "insufficient"
         need_external = True
 
+    coverage = max(0.0, min(1.0, coverage))
     return coverage, need_external, reason

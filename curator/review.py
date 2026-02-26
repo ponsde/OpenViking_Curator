@@ -223,7 +223,7 @@ def judge_and_ingest(
     # Load prompt: external template → built-in fallback
     template = _load_judge_prompt()
     if template:
-        sys_prompt = template.format(today=today, warnings_block=warnings_block)
+        sys_prompt = template.replace("{today}", today).replace("{warnings_block}", warnings_block)
     else:
         sys_prompt = (
             "你是知识库治理助手。你需要同时完成两件事：\n\n"
