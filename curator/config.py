@@ -102,6 +102,11 @@ CHAT_RETRY_BACKOFF_SEC = max(0.0, _settings.chat_retry_backoff_sec)
 
 FAST_ROUTE = _settings.fast_route == "1"
 
+# ── Dedup ──
+DEDUP_SIMILARITY = _settings.dedup_similarity
+DEDUP_MAX_ITEMS = _settings.dedup_max_items
+DEDUP_LOG = _settings.dedup_log  # empty string means auto-derive in dedup.py
+
 
 def validate_config() -> None:
     missing = []

@@ -68,6 +68,11 @@ class CuratorSettings(BaseSettings):
     # ── Retrieval ──
     max_l2_depth: int = Field(default=2, ge=0)
 
+    # ── Dedup ──
+    dedup_similarity: float = Field(default=0.55, ge=0.0, le=1.0)
+    dedup_max_items: int = Field(default=10, ge=1)
+    dedup_log: str = ""  # override dedup log path; empty = auto-derive from data_path
+
     # ── Auto-summarize ──
     auto_summarize: str = "0"
     summarize_models: str = ""

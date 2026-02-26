@@ -30,31 +30,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .config import env, log
+from .config import DATA_PATH, DEDUP_LOG, DEDUP_MAX_ITEMS, DEDUP_SIMILARITY, log
 
 if TYPE_CHECKING:
     from .backend import KnowledgeBackend
 
-DEDUP_LOG_FILE = os.getenv(
-    "CURATOR_DEDUP_LOG",
-    os.path.join(
-        os.environ.get(
-            "CURATOR_DATA_PATH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-        ),
-        "dedup_log.json",
-    ),
-)
-try:
-    SIMILARITY_THRESHOLD = max(0.0, min(1.0, float(env("CURATOR_DEDUP_SIMILARITY", "0.55"))))
-except (ValueError, TypeError):
-    log.warning("invalid CURATOR_DEDUP_SIMILARITY, using default 0.55")
-    SIMILARITY_THRESHOLD = 0.55
-
-try:
-    MAX_SCAN_ITEMS = max(1, int(env("CURATOR_DEDUP_MAX_ITEMS", "10")))
-except (ValueError, TypeError):
-    log.warning("invalid CURATOR_DEDUP_MAX_ITEMS, using default 10")
-    MAX_SCAN_ITEMS = 10
+DEDUP_LOG_FILE = DEDUP_LOG or os.path.join(DATA_PATH, "dedup_log.json")
+SIMILARITY_THRESHOLD = DEDUP_SIMILARITY
+MAX_SCAN_ITEMS = DEDUP_MAX_ITEMS
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']{8,}")
 
