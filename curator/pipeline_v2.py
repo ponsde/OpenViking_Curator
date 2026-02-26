@@ -543,6 +543,7 @@ def _extract_urls(text: str) -> list[str]:
     if not text:
         return []
     raw = re.findall(r"https?://[^\s)\]>\"']+", text)
+    raw = [u.rstrip(".,;:!?)>\"'") for u in raw]
     out: list[str] = []
     seen = set()
     for u in raw:

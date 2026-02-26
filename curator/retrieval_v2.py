@@ -220,7 +220,7 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     if not items:
         return "", [], "none"
 
-    scored = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
+    scored = sorted(items, key=lambda x: float(x.get("score") or 0), reverse=True)
 
     # Backends without tiered loading (no abstract/overview) skip L0/L1
     tiered = getattr(backend, "supports_tiered_loading", True)
@@ -298,7 +298,7 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     # L2 按原始 score 排序取 top N，不限制 used_uris，
     # 这样 L1 阶段因 overview 返回空而被跳过的高分 URI 也有机会被深度加载。
     l2_count = 0
-    for item in scored[:3]:
+    for item in scored[: max(3, max_l2)]:
         if l2_count >= max_l2:
             break
 
