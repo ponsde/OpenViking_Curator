@@ -387,6 +387,15 @@ def _run_impl_inner(
     log.info("STEP 3/4 加载内容...")
     context_text, used_uris, load_stage = load_context(backend, all_items, query, max_l2=MAX_L2_DEPTH)
     coverage, need_external, cov_reason = assess_coverage(retrieval_result, query=query)
+
+    # If tiered loading produced no usable content (all abstracts/reads too short),
+    # scores alone cannot be trusted — force external search regardless of coverage.
+    if not context_text.strip() and not need_external:
+        log.info("load_context returned empty content despite coverage=%.2f; forcing external search", coverage)
+        need_external = True
+        coverage = 0.0
+        cov_reason = "empty_content"
+
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
     log.info(

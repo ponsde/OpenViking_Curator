@@ -760,6 +760,26 @@ class TestCuratorPipeline(unittest.TestCase):
         # load_or_create_session called once (first run), cached for second run (health_ttl)
         self.assertEqual(call_count[0], 1)
 
+    def test_empty_context_forces_external_search(self):
+        """When load_context returns empty content, pipeline must force need_external=True."""
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        patches = self._mock_pipeline_deps()
+        # Simulate: OV scores look fine (coverage=0.7, need_external=False)
+        # but tiered loading produced no usable content (all abstracts too short)
+        patches["assess_coverage"] = MagicMock(return_value=(0.7, False, "local_sufficient"))
+        patches["load_context"] = MagicMock(return_value=("", [], "L2"))
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            pipeline = CuratorPipeline(backend=backend)
+            result = pipeline.run("some query")
+
+        # External should have been triggered due to empty content
+        self.assertTrue(result["meta"]["external_triggered"])
+        self.assertEqual(result["coverage"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
