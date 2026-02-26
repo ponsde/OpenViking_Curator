@@ -448,3 +448,82 @@ class TestSearchResult:
         text = _provider_output_to_text(results)
         assert "**T**" in text
         assert "https://x.com" in text
+
+
+# ─── _parse_search_results_json ────────────────────────────────────────────
+
+
+class TestParseSearchResultsJson:
+    def test_parses_valid_json_array(self):
+        from curator.search_providers import _parse_search_results_json
+
+        text = '[{"title":"T1","url":"https://a.com","date":"2026-01-01","snippet":"S1"}]'
+        results = _parse_search_results_json(text)
+        assert results is not None
+        assert len(results) == 1
+        assert results[0].title == "T1"
+        assert results[0].url == "https://a.com"
+        assert results[0].snippet == "S1"
+
+    def test_extracts_json_from_markdown_block(self):
+        from curator.search_providers import _parse_search_results_json
+
+        text = 'Here are the results:\n```json\n[{"title":"T","url":"https://b.com","snippet":"S"}]\n```'
+        results = _parse_search_results_json(text)
+        assert results is not None
+        assert results[0].url == "https://b.com"
+
+    def test_returns_none_on_no_array(self):
+        from curator.search_providers import _parse_search_results_json
+
+        assert _parse_search_results_json("just plain text, no JSON") is None
+        assert _parse_search_results_json('{"key": "value"}') is None  # object not array
+
+    def test_returns_none_on_invalid_json(self):
+        from curator.search_providers import _parse_search_results_json
+
+        assert _parse_search_results_json("[not valid json}") is None
+
+    def test_skips_items_without_url(self):
+        from curator.search_providers import _parse_search_results_json
+
+        text = '[{"title":"T1","url":"https://a.com","snippet":"S"},{"title":"T2","snippet":"no url"}]'
+        results = _parse_search_results_json(text)
+        assert results is not None
+        assert len(results) == 1  # second item skipped (no url)
+
+    def test_returns_none_on_empty_results(self):
+        from curator.search_providers import _parse_search_results_json
+
+        assert _parse_search_results_json("[]") is None
+
+    def test_grok_returns_structured_when_parseable(self, monkeypatch):
+        """_search_grok returns list[WebSearchResult] when LLM outputs valid JSON."""
+        import curator.search_providers as m
+        from curator.search_providers import WebSearchResult
+
+        json_response = '[{"title":"R1","url":"https://x.com","date":"","snippet":"Snippet"}]'
+        monkeypatch.setattr(m, "chat", lambda *a, **kw: json_response)
+        result = m._search_grok("test query", {})
+        assert isinstance(result, list)
+        assert isinstance(result[0], WebSearchResult)
+        assert result[0].url == "https://x.com"
+
+    def test_grok_falls_back_to_str_when_unparseable(self, monkeypatch):
+        """_search_grok returns raw str when LLM outputs plain text."""
+        import curator.search_providers as m
+
+        monkeypatch.setattr(m, "chat", lambda *a, **kw: "Here are some results in plain text.")
+        result = m._search_grok("test query", {})
+        assert isinstance(result, str)
+        assert "plain text" in result
+
+    def test_parses_snippet_containing_closing_bracket(self):
+        """Snippets with ] must not break parsing (JSONDecoder.raw_decode handles this)."""
+        from curator.search_providers import _parse_search_results_json
+
+        text = '[{"title":"T","url":"https://x.com","snippet":"Array notation: items[0]"}]'
+        results = _parse_search_results_json(text)
+        assert results is not None
+        assert len(results) == 1
+        assert "items[0]" in results[0].snippet

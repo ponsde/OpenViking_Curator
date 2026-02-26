@@ -113,22 +113,71 @@ def _build_search_prompt(query: str, scope: dict) -> tuple[str, str]:
         f"关键词: {scope.get('keywords', [])}\n"
         f"当前日期: {today}\n\n"
         "要求:\n"
-        "1. 返回5条高质量来源，格式：标题+URL+发布/更新日期+关键点\n"
+        "1. 返回5条高质量来源\n"
         "2. 优先最近6个月内的信息，标注每条来源的日期\n"
         "3. 如果引用的项目/文档超过1年未更新，明确标注[可能过时]\n"
         "4. 涉及API、注册流程、认证方式等易变内容时，必须确认当前是否仍然有效\n"
         "5. 不要把旧版本的技术要求当成当前事实（如已取消的验证步骤）\n"
         "6. GitHub项目必须标注：最后commit日期、star数、是否archived\n"
-        "7. 区分[可直接使用]和[仅供参考]——维护中且有文档的才算可用"
+        "7. 区分[可直接使用]和[仅供参考]——维护中且有文档的才算可用\n\n"
+        "请以 JSON 数组格式返回，每条包含 title、url、date（YYYY-MM-DD 或空串）、snippet 字段：\n"
+        '[{"title":"...","url":"...","date":"...","snippet":"..."},...]\n'
+        "如果无法用 JSON 格式，可以用普通文本作为 fallback。"
     )
     return system, user
 
 
+def _parse_search_results_json(text: str) -> list[WebSearchResult] | None:
+    """Try to parse LLM response as a JSON array of search results.
+
+    Returns a list of WebSearchResult on success, None if parsing fails.
+    The caller should fall back to returning the raw text string.
+
+    Uses json.JSONDecoder.raw_decode to correctly handle strings containing
+    brackets (e.g. snippets with ']'), unlike a simple bracket-counter.
+    """
+    import json
+
+    start = text.find("[")
+    if start == -1:
+        return None
+
+    decoder = json.JSONDecoder()
+    try:
+        data, _ = decoder.raw_decode(text, start)
+    except (json.JSONDecodeError, Exception):
+        return None
+
+    if not isinstance(data, list):
+        return None
+
+    results: list[WebSearchResult] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "")).strip()
+        if not url:
+            continue
+        results.append(
+            WebSearchResult(
+                title=str(item.get("title", "")).strip(),
+                url=url,
+                date=str(item.get("date", "")).strip(),
+                snippet=str(item.get("snippet", "")).strip(),
+            )
+        )
+    return results if results else None
+
+
 # ── Provider: Grok ──
-def _search_grok(query: str, scope: dict) -> str:
-    """Search via Grok (OAI-compatible endpoint). Uses config.chat with retry."""
+def _search_grok(query: str, scope: dict) -> list[WebSearchResult] | str:
+    """Search via Grok (OAI-compatible endpoint). Uses config.chat with retry.
+
+    Returns list[WebSearchResult] when the LLM response is parseable as JSON,
+    otherwise falls back to returning the raw text string.
+    """
     system, user = _build_search_prompt(query, scope)
-    return chat(
+    raw = chat(
         GROK_BASE,
         GROK_KEY,
         GROK_MODEL,
@@ -136,20 +185,30 @@ def _search_grok(query: str, scope: dict) -> str:
         timeout=SEARCH_PROVIDER_TIMEOUT,
         temperature=0.3,
     )
+    parsed = _parse_search_results_json(raw)
+    if parsed:
+        log.debug("grok provider: parsed %d structured results", len(parsed))
+        return parsed
+    return raw
 
 
 # Keep legacy name for backward compatibility
 def grok_search(query: str, scope: dict, **kwargs) -> str:
-    """Legacy entry point — delegates to _search_grok."""
-    return _search_grok(query, scope)
+    """Legacy entry point — delegates to _search_grok, returns text."""
+    result = _search_grok(query, scope)
+    return format_results(result) if isinstance(result, list) else result
 
 
 # ── Provider: OAI-compatible ──
-def _search_oai(query: str, scope: dict) -> str:
-    """Search via any OAI-compatible chat endpoint with internet access."""
+def _search_oai(query: str, scope: dict) -> list[WebSearchResult] | str:
+    """Search via any OAI-compatible chat endpoint with internet access.
+
+    Returns list[WebSearchResult] when the LLM response is parseable as JSON,
+    otherwise falls back to returning the raw text string.
+    """
     model = env("CURATOR_SEARCH_OAI_MODEL", "gpt-4o")
     system, user = _build_search_prompt(query, scope)
-    return chat(
+    raw = chat(
         OAI_BASE,
         OAI_KEY,
         model,
@@ -157,11 +216,17 @@ def _search_oai(query: str, scope: dict) -> str:
         timeout=SEARCH_PROVIDER_TIMEOUT,
         temperature=0.3,
     )
+    parsed = _parse_search_results_json(raw)
+    if parsed:
+        log.debug("oai provider: parsed %d structured results", len(parsed))
+        return parsed
+    return raw
 
 
 def oai_search(query: str, scope: dict, **kwargs) -> str:
-    """Legacy entry point — delegates to _search_oai."""
-    return _search_oai(query, scope)
+    """Legacy entry point — delegates to _search_oai, returns text."""
+    result = _search_oai(query, scope)
+    return format_results(result) if isinstance(result, list) else result
 
 
 # ── Provider: DuckDuckGo ──
