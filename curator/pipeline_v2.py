@@ -353,13 +353,24 @@ def _run_impl(query: str, backend: KnowledgeBackend, auto_ingest: bool, init_ses
     trace["external_reason"] = cov_reason
 
     # ── 自动记录 OV 命中（feedback 学习）──
+    # Only adopt URIs with meaningful scores; weight top results higher.
+    _ADOPT_MIN_SCORE = 0.3
     if used_uris:
         try:
             from curator import feedback_store
 
-            for uri in used_uris:
-                feedback_store.apply(uri, "adopt")
-            log.debug("feedback adopt: %d uris", len(used_uris))
+            uri_scores = {it.get("uri", ""): it.get("score", 0) for it in all_items}
+            adopted = 0
+            for rank, uri in enumerate(used_uris):
+                score = uri_scores.get(uri, 0)
+                if score < _ADOPT_MIN_SCORE:
+                    continue
+                # Top result gets double adopt (more reliable signal)
+                repeats = 2 if rank == 0 else 1
+                for _ in range(repeats):
+                    feedback_store.apply(uri, "adopt")
+                adopted += 1
+            log.debug("feedback adopt: %d/%d uris (min_score=%.2f)", adopted, len(used_uris), _ADOPT_MIN_SCORE)
         except Exception as _fb_err:
             log.debug("feedback_store 不可用，跳过: %s", _fb_err)
 
