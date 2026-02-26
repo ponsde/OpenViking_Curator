@@ -428,7 +428,20 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     )
 
     # 写 query 日志
-    _log_query(query, coverage, need_external, cov_reason, used_uris, trace)
+    _log_query(
+        query,
+        coverage,
+        need_external,
+        cov_reason,
+        used_uris,
+        trace,
+        ingested=ingested,
+        async_ingest_pending=async_ingest_pending,
+        need_fresh=scope.get("need_fresh", False),
+        has_conflict=conflict.get("has_conflict", False),
+        external_len=len(external_txt),
+        auto_ingest=auto_ingest,
+    )
 
     return result
 
@@ -468,13 +481,32 @@ def _log_async_failure(query: str, error: Exception) -> None:
         log.warning("failed to write async failure log: %s", e)
 
 
-def _log_query(query: str, coverage: float, need_external: bool, reason: str, used_uris: list, trace: dict) -> None:
-    """写 query 日志到 data/query_log.jsonl（append 模式，失败不影响主流程）。"""
+def _log_query(
+    query: str,
+    coverage: float,
+    need_external: bool,
+    reason: str,
+    used_uris: list,
+    trace: dict,
+    *,
+    ingested: bool = False,
+    async_ingest_pending: bool = False,
+    need_fresh: bool = False,
+    has_conflict: bool = False,
+    external_len: int = 0,
+    auto_ingest: bool = True,
+) -> None:
+    """写 query 日志到 data/query_log.jsonl（append 模式，失败不影响主流程）。
+
+    Schema v2: 增加 ingested/async/need_fresh/conflict/external_len/auto_ingest
+    字段，供 query_log_aggregate.py 分析使用。
+    """
     try:
         log_dir = DATA_PATH
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, "query_log.jsonl")
         entry = {
+            "schema_version": 2,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "query": query,
             "coverage": round(coverage, 4),
@@ -483,6 +515,12 @@ def _log_query(query: str, coverage: float, need_external: bool, reason: str, us
             "used_uris": list(used_uris) if used_uris else [],
             "load_stage": trace.get("load_stage", "unknown"),
             "llm_calls": trace.get("llm_calls", 0),
+            "ingested": ingested,
+            "async_ingest_pending": async_ingest_pending,
+            "need_fresh": need_fresh,
+            "has_conflict": has_conflict,
+            "external_len": external_len,
+            "auto_ingest": auto_ingest,
         }
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
