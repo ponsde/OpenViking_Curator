@@ -177,7 +177,9 @@ class OpenVikingBackend(KnowledgeBackend):
     def session_commit(self, session_id: str) -> dict:
         from .session_manager import _ov_run
 
-        used = list(self._session_used_uris.pop(session_id, []))
+        # Peek first; pop only after successful commit so URIs aren't silently
+        # discarded when the underlying commit call fails.
+        used = list(self._session_used_uris.get(session_id, []))
 
         result: dict = {}
         commit_ok = False
@@ -198,6 +200,9 @@ class OpenVikingBackend(KnowledgeBackend):
                 commit_ok = True
             except Exception as e:
                 log.debug("embedded session_commit failed: %s", e)
+
+        if commit_ok:
+            self._session_used_uris.pop(session_id, None)
 
         # Workaround: OV's native active_count update is broken in some versions.
         # Only run if commit actually succeeded to avoid incrementing on failed commits.

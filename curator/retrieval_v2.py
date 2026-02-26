@@ -377,7 +377,7 @@ def assess_coverage(result: dict, query: str = "") -> tuple:
     if not scored_items:
         return 0.0, True, "no_scores"
 
-    scores = sorted((x.get("score", 0) for x in scored_items), reverse=True)
+    scores = sorted((float(x.get("score") or 0) for x in scored_items), reverse=True)
     avg_score = sum(scores) / len(scores)
     top_score = scores[0]
     count = len(scores)
