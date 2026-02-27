@@ -142,9 +142,9 @@ class InMemoryBackend(KnowledgeBackend):
         """
         safe = title.replace(" ", "_").replace("/", "_") if title else str(uuid.uuid4())[:8]
         uri = f"mem://{safe}"
-        # Handle duplicate URIs by appending suffix
+        # Handle duplicate URIs by appending random suffix
         if uri in self._store:
-            uri = f"{uri}_{int(time.time())}"
+            uri = f"{uri}_{uuid.uuid4().hex[:8]}"
         self._store[uri] = {
             "content": content,
             "title": title,

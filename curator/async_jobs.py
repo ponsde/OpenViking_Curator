@@ -127,4 +127,4 @@ def is_transient_error(error: str) -> bool:
 def get_retryable_jobs(max_retries: int = 3) -> list[dict]:
     """Return failed jobs that are retryable (transient error + under retry limit)."""
     failed = list_failed()
-    return [j for j in failed if is_transient_error(j.get("error", "")) and j.get("retries", 0) <= max_retries]
+    return [j for j in failed if is_transient_error(j.get("error", "")) and j.get("retries", 0) < max_retries]

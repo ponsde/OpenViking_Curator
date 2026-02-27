@@ -269,8 +269,8 @@ def start_scheduler() -> bool:
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
 
-            freshness_h = float(env("CURATOR_FRESHNESS_INTERVAL_HOURS", "24"))
-            strengthen_h = float(env("CURATOR_STRENGTHEN_INTERVAL_HOURS", "168"))
+            freshness_h = max(1.0, float(env("CURATOR_FRESHNESS_INTERVAL_HOURS", "24") or "24"))
+            strengthen_h = max(1.0, float(env("CURATOR_STRENGTHEN_INTERVAL_HOURS", "168") or "168"))
 
             governance_enabled = env("CURATOR_GOVERNANCE_ENABLED", "").lower() in _ENABLED_VALUES
             governance_replaces_strengthen = (
@@ -298,7 +298,7 @@ def start_scheduler() -> bool:
                 )
 
             if governance_enabled:
-                governance_h = float(env("CURATOR_GOVERNANCE_INTERVAL_HOURS", "168"))
+                governance_h = max(1.0, float(env("CURATOR_GOVERNANCE_INTERVAL_HOURS", "168") or "168"))
                 _scheduler.add_job(
                     _run_governance,
                     "interval",
