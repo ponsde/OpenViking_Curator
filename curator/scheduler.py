@@ -49,6 +49,7 @@ from typing import Callable
 
 from .config import DATA_PATH, env, log
 from .freshness import uri_freshness_score
+from .nlp_utils import analyze_weak_topics
 
 _scheduler = None
 _scheduler_lock = threading.Lock()
@@ -153,8 +154,6 @@ def _run_strengthen(
         _fn: Callable = _pipeline_run
     else:
         _fn = _run_fn
-
-    from .nlp_utils import analyze_weak_topics
 
     try:
         weak_topics = analyze_weak_topics(_data_path)

@@ -103,7 +103,9 @@ class TestRunStrengthen:
     """
 
     def _patch_weak(self, monkeypatch, topics: list):
-        monkeypatch.setattr("curator.nlp_utils.analyze_weak_topics", lambda *a, **kw: topics)
+        # Patch at the scheduler module level (where the name is resolved at call time
+        # via a function-local import). This is more robust than patching nlp_utils directly.
+        monkeypatch.setattr("curator.scheduler.analyze_weak_topics", lambda *a, **kw: topics)
 
     def test_no_weak_topics_returns_zeros(self, monkeypatch, tmp_path):
         self._patch_weak(monkeypatch, [])
@@ -152,7 +154,7 @@ class TestRunStrengthen:
         def _raise(*a, **kw):
             raise OSError("disk error")
 
-        monkeypatch.setattr("curator.nlp_utils.analyze_weak_topics", _raise)
+        monkeypatch.setattr("curator.scheduler.analyze_weak_topics", _raise)
         run_fn = _mock_run_fn()
         result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
         assert result == {"strengthened": 0, "skipped": 0}
