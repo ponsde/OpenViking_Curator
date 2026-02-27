@@ -112,6 +112,7 @@ CURATOR_OAI_KEY=sk-your-key
 # ── External search: pick ONE option ──
 
 # Option A: Grok (recommended — best real-time web search)
+# Any OpenAI-compatible endpoint with web access; xAI example shown below
 CURATOR_SEARCH_PROVIDERS=grok
 CURATOR_GROK_BASE=https://api.x.ai/v1
 CURATOR_GROK_KEY=your-grok-key

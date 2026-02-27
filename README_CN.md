@@ -112,6 +112,7 @@ CURATOR_OAI_KEY=sk-your-key
 # ── 外部搜索：三选一 ──
 
 # 方案 A：Grok（推荐——实时联网搜索效果最好）
+# 任何有联网能力的 OpenAI 兼容端点均可；下面以 xAI 为例
 CURATOR_SEARCH_PROVIDERS=grok
 CURATOR_GROK_BASE=https://api.x.ai/v1
 CURATOR_GROK_KEY=your-grok-key
