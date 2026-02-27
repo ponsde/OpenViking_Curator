@@ -265,7 +265,9 @@ def _search_oai(query: str, scope: dict) -> list[WebSearchResult] | str:
     Returns list[WebSearchResult] when the LLM response is parseable as JSON,
     otherwise falls back to returning the raw text string.
     """
-    model = env("CURATOR_SEARCH_OAI_MODEL", "gpt-4o")
+    model = env("CURATOR_SEARCH_OAI_MODEL", "")
+    if not model:
+        raise RuntimeError("CURATOR_SEARCH_OAI_MODEL not configured")
     system, user = _build_search_prompt(query, scope)
     raw = chat(
         OAI_BASE,

@@ -138,6 +138,8 @@ def validate_config() -> None:
             missing.append("CURATOR_GROK_BASE")
         if not GROK_KEY:
             missing.append("CURATOR_GROK_KEY")
+    if first_provider == "oai" and not env("CURATOR_SEARCH_OAI_MODEL", ""):
+        missing.append("CURATOR_SEARCH_OAI_MODEL")
     if first_provider == "tavily" and not TAVILY_KEY:
         missing.append("CURATOR_TAVILY_KEY")
     if missing:

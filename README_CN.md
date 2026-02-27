@@ -119,6 +119,7 @@ CURATOR_GROK_KEY=your-grok-key
 
 # 方案 B：任意 OpenAI 兼容端点（使用 CURATOR_OAI_BASE + CURATOR_OAI_KEY）
 # CURATOR_SEARCH_PROVIDERS=oai
+# CURATOR_SEARCH_OAI_MODEL=your-model-name   # 方案 B 必填
 
 # 方案 C：DuckDuckGo（不需要 API key；需 pip install duckduckgo-search）
 # CURATOR_SEARCH_PROVIDERS=duckduckgo

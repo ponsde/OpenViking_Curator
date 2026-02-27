@@ -119,6 +119,7 @@ CURATOR_GROK_KEY=your-grok-key
 
 # Option B: any OpenAI-compatible endpoint (uses CURATOR_OAI_BASE + CURATOR_OAI_KEY)
 # CURATOR_SEARCH_PROVIDERS=oai
+# CURATOR_SEARCH_OAI_MODEL=your-model-name   # required for Option B
 
 # Option C: DuckDuckGo (no API key needed; pip install duckduckgo-search)
 # CURATOR_SEARCH_PROVIDERS=duckduckgo
