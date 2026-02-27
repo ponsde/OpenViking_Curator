@@ -14,6 +14,17 @@ strengthen
     and re-run the pipeline for the top-N weakest topics.  Runs every
     ``CURATOR_STRENGTHEN_INTERVAL_HOURS`` hours (default 168 = 7 days).
 
+governance
+    Run the full governance cycle (audit, flag, proactive search, report).
+    Runs every ``CURATOR_GOVERNANCE_INTERVAL_HOURS`` hours (default 168 = 7 days).
+    Enable separately with ``CURATOR_GOVERNANCE_ENABLED=1``.
+    Phase 4 (proactive search + replay) runs fully async by default
+    (``CURATOR_GOVERNANCE_SYNC_BUDGET=0``).  Results are harvested by the
+    next cycle.  Set sync_budget > 0 for immediate feedback if needed.
+    When governance is enabled, it subsumes strengthen's functionality.
+    Set ``CURATOR_GOVERNANCE_REPLACES_STRENGTHEN=1`` to skip the standalone
+    strengthen job.
+
 Config env vars
 ---------------
 CURATOR_SCHEDULER_ENABLED=1               required to activate (default off)
@@ -21,6 +32,10 @@ CURATOR_FRESHNESS_INTERVAL_HOURS=24       scan interval in hours
 CURATOR_STRENGTHEN_INTERVAL_HOURS=168     strengthen interval in hours (7 days)
 CURATOR_STRENGTHEN_TOP_N=3                number of weak topics per run
 CURATOR_FRESHNESS_STALE_THRESHOLD=0.4     freshness score below = stale
+CURATOR_GOVERNANCE_ENABLED=0              governance cycle (default off)
+CURATOR_GOVERNANCE_INTERVAL_HOURS=168     governance interval (7 days)
+CURATOR_GOVERNANCE_MODE=normal            "normal" or "team"
+CURATOR_GOVERNANCE_REPLACES_STRENGTHEN=0  skip strengthen when governance is on
 
 APScheduler is a transitive dependency of openviking, so it is always
 available when the package is installed.  An ImportError fallback is kept
@@ -187,6 +202,50 @@ def _run_strengthen(
     return {"strengthened": strengthened, "skipped": len(targets) - strengthened}
 
 
+# ── Governance job ──
+
+
+def _run_governance(
+    *,
+    _run_fn: Callable | None = None,
+    data_path: str | None = None,
+) -> dict:
+    """Run the full governance cycle as a scheduled job.
+
+    Args:
+        _run_fn:    Optional pipeline run override (for testing).
+        data_path:  Override data directory (for testing).
+
+    Returns:
+        Governance report dict.
+    """
+    try:
+        from .backend_ov import OpenVikingBackend
+        from .governance import run_governance_cycle
+
+        mode = env("CURATOR_GOVERNANCE_MODE", "normal")
+        dry_run = env("CURATOR_GOVERNANCE_DRY_RUN", "").lower() in _ENABLED_VALUES
+
+        backend = OpenVikingBackend()
+        report = run_governance_cycle(
+            backend=backend,
+            data_path=data_path,
+            mode=mode,
+            dry_run=dry_run,
+            _run_fn=_run_fn,
+        )
+        log.info(
+            "scheduler.governance: completed cycle=%s flags=%d proactive=%d",
+            report.get("cycle_id", "?"),
+            report.get("flags", {}).get("total", 0),
+            report.get("proactive", {}).get("queries_run", 0),
+        )
+        return report
+    except Exception as e:
+        log.warning("scheduler.governance: job error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
 # ── Lifecycle ──
 
 
@@ -213,6 +272,11 @@ def start_scheduler() -> bool:
             freshness_h = float(env("CURATOR_FRESHNESS_INTERVAL_HOURS", "24"))
             strengthen_h = float(env("CURATOR_STRENGTHEN_INTERVAL_HOURS", "168"))
 
+            governance_enabled = env("CURATOR_GOVERNANCE_ENABLED", "").lower() in _ENABLED_VALUES
+            governance_replaces_strengthen = (
+                governance_enabled and env("CURATOR_GOVERNANCE_REPLACES_STRENGTHEN", "").lower() in _ENABLED_VALUES
+            )
+
             _scheduler = BackgroundScheduler(daemon=True)
             _scheduler.add_job(
                 _run_freshen,
@@ -222,21 +286,36 @@ def start_scheduler() -> bool:
                 max_instances=1,
                 coalesce=True,
             )
-            _scheduler.add_job(
-                _run_strengthen,
-                "interval",
-                hours=strengthen_h,
-                id="strengthen",
-                max_instances=1,
-                coalesce=True,
-            )
+
+            if not governance_replaces_strengthen:
+                _scheduler.add_job(
+                    _run_strengthen,
+                    "interval",
+                    hours=strengthen_h,
+                    id="strengthen",
+                    max_instances=1,
+                    coalesce=True,
+                )
+
+            if governance_enabled:
+                governance_h = float(env("CURATOR_GOVERNANCE_INTERVAL_HOURS", "168"))
+                _scheduler.add_job(
+                    _run_governance,
+                    "interval",
+                    hours=governance_h,
+                    id="governance",
+                    max_instances=1,
+                    coalesce=True,
+                )
+
             _scheduler.start()
 
-            log.info(
-                "scheduler started: freshness=%.0fh strengthen=%.0fh",
-                freshness_h,
-                strengthen_h,
-            )
+            jobs_desc = "freshness=%.0fh" % freshness_h
+            if not governance_replaces_strengthen:
+                jobs_desc += " strengthen=%.0fh" % strengthen_h
+            if governance_enabled:
+                jobs_desc += " governance=%.0fh" % governance_h
+            log.info("scheduler started: %s", jobs_desc)
             return True
         except ImportError:
             log.warning(

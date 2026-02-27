@@ -60,7 +60,9 @@ flowchart TD
 | **查询日志** | 每次查询 → `query_log.jsonl`（覆盖率、原因、LLM 次数） | `pipeline_v2.py` |
 | **熔断器** | 三态熔断包裹 LLM + 搜索调用。自动恢复 | `circuit_breaker.py` |
 | **搜索缓存** | LRU + 双 TTL。文件锁持久化 | `search_cache.py` |
-| **后台调度** | APScheduler：定期时效扫描 + 弱主题补强 | `scheduler.py` |
+| **自动治理** | 周期性治理：审计、标记、主动外搜、生成报告。混合异步。不自动删除 | `governance.py` |
+| **兴趣分析** | 从查询日志 + 反馈提取用户兴趣，生成主动搜索查询 | `interest_analyzer.py` |
+| **后台调度** | APScheduler：定期时效扫描 + 弱主题补强 + 治理周期 | `scheduler.py` |
 | **结构化日志** | structlog + JSON 模式。每次运行绑定 run_id、query 上下文 | `logging_setup.py` |
 
 ### Curator 不做什么
@@ -220,6 +222,19 @@ apply("viking://resources/doc-id", "down")  # 标记无用
 | `CURATOR_STRENGTHEN_INTERVAL_HOURS` | `168` | 弱主题补强间隔（7 天）|
 | `CURATOR_STRENGTHEN_TOP_N` | `3` | 每次补强的弱主题数 |
 
+### 治理
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `CURATOR_GOVERNANCE_ENABLED` | `0` | `1` 启用治理周期 |
+| `CURATOR_GOVERNANCE_INTERVAL_HOURS` | `168` | 治理周期间隔（默认 7 天）|
+| `CURATOR_GOVERNANCE_MODE` | `normal` | `normal` 或 `team`（team 模式含完整审计日志）|
+| `CURATOR_GOVERNANCE_MAX_PROACTIVE` | `5` | 每周期最大主动搜索数 |
+| `CURATOR_GOVERNANCE_SYNC_BUDGET` | `0` | 异步前同步执行数（0 = 全异步）|
+| `CURATOR_GOVERNANCE_LOOKBACK_DAYS` | `30` | 查询日志分析回看天数 |
+| `CURATOR_GOVERNANCE_DRY_RUN` | `0` | `1` 跳过写操作（仅审计）|
+| `CURATOR_GOVERNANCE_REPLACES_STRENGTHEN` | `0` | `1` 治理启用时跳过独立补强任务 |
+
 ### 其他
 
 | 变量 | 默认 | 说明 |
@@ -253,9 +268,24 @@ python3 scripts/ttl_rebalance.py --json             # JSON 导出
 python3 scripts/async_job_cli.py list               # 概览
 python3 scripts/async_job_cli.py list --failed      # 失败的任务
 python3 scripts/async_job_cli.py replay <job_id>    # 重新执行
+
+# 治理（自动化知识库维护）
+python3 -m curator.governance_cli report             # 查看最新报告
+python3 -m curator.governance_cli report --format json
+python3 -m curator.governance_cli report --format html > report.html
+python3 -m curator.governance_cli flags              # 待处理标记
+python3 -m curator.governance_cli flags --all        # 所有标记
+python3 -m curator.governance_cli show <flag_id>     # 标记详情
+python3 -m curator.governance_cli keep <flag_id>     # 保留资源
+python3 -m curator.governance_cli delete <flag_id>   # 批准删除
+python3 -m curator.governance_cli adjust <flag_id>   # 需要调整
+python3 -m curator.governance_cli ignore <flag_id>   # 忽略此标记
+python3 -m curator.governance_cli run                # 触发完整治理周期
+python3 -m curator.governance_cli run --dry          # 试运行（不写入）
+python3 -m curator.governance_cli run --mode team    # Team 模式（完整审计）
 ```
 
-也可以开启后台调度器（`CURATOR_SCHEDULER_ENABLED=1`），自动执行时效扫描和弱主题补强。
+也可以开启后台调度器（`CURATOR_SCHEDULER_ENABLED=1`），自动执行时效扫描和弱主题补强。加 `CURATOR_GOVERNANCE_ENABLED=1` 启用自动治理周期。
 
 ## 项目结构
 
@@ -282,6 +312,11 @@ curator/
   circuit_breaker.py   # 三态熔断器
   search_cache.py      # LRU + 双 TTL 缓存
   async_jobs.py        # 后台任务追踪
+  governance.py        # 自动治理周期（6 阶段）
+  governance_cli.py    # 治理 CLI（报告、标记、运行）
+  governance_report.py # 治理报告（ASCII/JSON/HTML）
+  interest_analyzer.py # 用户兴趣提取 + 主动搜索查询
+  nlp_utils.py         # 主题提取 + 关键词工具
   scheduler.py         # APScheduler 定时任务
   logging_setup.py     # structlog 配置
   file_lock.py         # flock 工具
@@ -289,7 +324,7 @@ curator/
 curator_query.py       # CLI 入口
 mcp_server.py          # MCP Server（stdio JSON-RPC）
 scripts/               # 维护脚本
-tests/                 # 476 个测试
+tests/                 # 554 个测试
 ```
 
 ## 测试
@@ -336,6 +371,9 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] Docker 支持（嵌入 + HTTP 两种 OV 模式）
 - [x] mypy + pre-commit（ruff + ruff-format）
 - [x] uv 依赖管理
+- [x] 自动治理（审计、标记、主动外搜、生成报告）
+- [x] 基于兴趣的主动搜索（query log + 反馈分析）
+- [x] 混合异步治理（sync budget + 后台线程 + trace 收割）
 - [ ] 覆盖率自动调优（基于 query log 动态阈值）
 - [ ] 第二个后端实现（超越 OpenViking）
 

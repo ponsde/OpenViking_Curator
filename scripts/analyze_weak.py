@@ -8,50 +8,16 @@
 import argparse
 import json
 import os
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Ensure curator package is importable when running as a script
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from curator.nlp_utils import extract_keywords, extract_topic  # noqa: E402
+
 # 默认 data 目录
 DEFAULT_DATA_DIR = os.environ.get("CURATOR_DATA_PATH", str(Path(__file__).resolve().parent.parent / "data"))
-
-# 停用词（中英文常见无意义词）
-_STOP_WORDS = {
-    "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一",
-    "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着",
-    "没有", "看", "好", "自己", "这", "他", "她", "它", "们", "那", "些",
-    "什么", "怎么", "如何", "为什么", "哪些", "吗", "呢", "吧", "啊",
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
-    "should", "may", "might", "can", "could", "of", "in", "to", "for",
-    "with", "on", "at", "from", "by", "about", "as", "into", "through",
-    "and", "or", "but", "not", "no", "so", "if", "than", "too", "very",
-    "how", "what", "which", "who", "when", "where", "why", "this", "that",
-    "it", "i", "me", "my", "we", "our", "you", "your", "he", "she",
-}
-
-
-def extract_keywords(query: str) -> list[str]:
-    """从 query 提取关键词（简单分词 + 过滤停用词）。"""
-    # 中英文混合分词：按空格、标点拆分
-    tokens = re.findall(r'[\u4e00-\u9fff]+|[a-zA-Z0-9_\-\.]+', query.lower())
-    # 中文进一步按字拆？不，保留词组更好
-    keywords = []
-    for t in tokens:
-        if t in _STOP_WORDS or len(t) <= 1:
-            continue
-        keywords.append(t)
-    return keywords
-
-
-def extract_topic(query: str) -> str:
-    """从 query 提取 topic（取前 2-3 个关键词组合）。"""
-    kws = extract_keywords(query)
-    if not kws:
-        return query.strip()[:30] or "unknown"
-    # 取最多 3 个关键词作为 topic
-    return " ".join(kws[:3])
 
 
 def analyze(data_dir: str, min_queries: int = 2) -> list[dict]:
@@ -77,12 +43,14 @@ def analyze(data_dir: str, min_queries: int = 2) -> list[dict]:
         return []
 
     # 按 topic 聚类
-    topic_stats: dict[str, dict] = defaultdict(lambda: {
-        "queries": [],
-        "coverages": [],
-        "external_count": 0,
-        "total": 0,
-    })
+    topic_stats: dict[str, dict] = defaultdict(
+        lambda: {
+            "queries": [],
+            "coverages": [],
+            "external_count": 0,
+            "total": 0,
+        }
+    )
 
     for entry in entries:
         topic = extract_topic(entry.get("query", ""))
@@ -137,8 +105,10 @@ def main():
     # 输出报告
     print(f"共发现 {len(weak)} 个弱点 topic（min_queries={args.min_queries}）")
     for t in weak:
-        print(f"  [{t['topic']}] queries={t['query_count']}, "
-              f"avg_cov={t['avg_coverage']:.2f}, ext_rate={t['external_rate']:.0%}")
+        print(
+            f"  [{t['topic']}] queries={t['query_count']}, "
+            f"avg_cov={t['avg_coverage']:.2f}, ext_rate={t['external_rate']:.0%}"
+        )
     print(f"\n已写入: {out_path}")
 
 

@@ -60,7 +60,9 @@ flowchart TD
 | **Query logging** | Every query → `query_log.jsonl` with coverage, reasons, LLM calls. | `pipeline_v2.py` |
 | **Circuit breaker** | 3-state breaker wrapping LLM + search calls. Auto-recovery. | `circuit_breaker.py` |
 | **Search cache** | LRU + dual TTL. File-locked JSON persistence. | `search_cache.py` |
-| **Background scheduler** | APScheduler: periodic freshness scan + weak topic strengthening. | `scheduler.py` |
+| **Automated governance** | Weekly cycle: audit, flag, proactive search, report. Hybrid async. No auto-deletion. | `governance.py` |
+| **Interest analysis** | Extract user interests from query log + feedback. Generate proactive search queries. | `interest_analyzer.py` |
+| **Background scheduler** | APScheduler: periodic freshness scan + weak topic strengthening + governance. | `scheduler.py` |
 | **Structured logging** | structlog with JSON mode. Per-run context binding (run_id, query). | `logging_setup.py` |
 
 ### What Curator does NOT do
@@ -220,6 +222,19 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 | `CURATOR_STRENGTHEN_INTERVAL_HOURS` | `168` | Weak topic strengthening interval (7 days) |
 | `CURATOR_STRENGTHEN_TOP_N` | `3` | Number of weak topics per run |
 
+### Governance
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURATOR_GOVERNANCE_ENABLED` | `0` | `1` to enable governance cycle |
+| `CURATOR_GOVERNANCE_INTERVAL_HOURS` | `168` | Cycle interval (default 7 days) |
+| `CURATOR_GOVERNANCE_MODE` | `normal` | `normal` or `team` (team adds full audit trail) |
+| `CURATOR_GOVERNANCE_MAX_PROACTIVE` | `5` | Max proactive search queries per cycle |
+| `CURATOR_GOVERNANCE_SYNC_BUDGET` | `0` | Sync queries before async (0 = fully async) |
+| `CURATOR_GOVERNANCE_LOOKBACK_DAYS` | `30` | Query log analysis window |
+| `CURATOR_GOVERNANCE_DRY_RUN` | `0` | `1` to skip writes (audit only) |
+| `CURATOR_GOVERNANCE_REPLACES_STRENGTHEN` | `0` | `1` to skip standalone strengthen when governance is on |
+
 ### Other
 
 | Variable | Default | Description |
@@ -253,9 +268,24 @@ python3 scripts/ttl_rebalance.py --json             # JSON export
 python3 scripts/async_job_cli.py list               # Overview
 python3 scripts/async_job_cli.py list --failed      # Failed jobs
 python3 scripts/async_job_cli.py replay <job_id>    # Re-queue a job
+
+# Governance (automated knowledge maintenance)
+python3 -m curator.governance_cli report             # View latest report
+python3 -m curator.governance_cli report --format json
+python3 -m curator.governance_cli report --format html > report.html
+python3 -m curator.governance_cli flags              # Pending flags
+python3 -m curator.governance_cli flags --all        # All flags
+python3 -m curator.governance_cli show <flag_id>     # Flag details
+python3 -m curator.governance_cli keep <flag_id>     # Mark: keep resource
+python3 -m curator.governance_cli delete <flag_id>   # Mark: approve deletion
+python3 -m curator.governance_cli adjust <flag_id>   # Mark: needs adjustment
+python3 -m curator.governance_cli ignore <flag_id>   # Mark: ignore this flag
+python3 -m curator.governance_cli run                # Trigger full cycle
+python3 -m curator.governance_cli run --dry          # Dry run (no writes)
+python3 -m curator.governance_cli run --mode team    # Team mode (full audit)
 ```
 
-Or enable the background scheduler (`CURATOR_SCHEDULER_ENABLED=1`) to run freshness scans and strengthening automatically.
+Or enable the background scheduler (`CURATOR_SCHEDULER_ENABLED=1`) to run freshness scans and strengthening automatically. Add `CURATOR_GOVERNANCE_ENABLED=1` for automated governance cycles.
 
 ## Project structure
 
@@ -282,6 +312,11 @@ curator/
   circuit_breaker.py   # 3-state circuit breaker
   search_cache.py      # LRU + dual-TTL cache
   async_jobs.py        # Background job tracking
+  governance.py        # Automated governance cycle (6 phases)
+  governance_cli.py    # Governance CLI (report, flags, run)
+  governance_report.py # Governance report (ASCII/JSON/HTML)
+  interest_analyzer.py # User interest extraction + proactive queries
+  nlp_utils.py         # Topic extraction + keyword utils
   scheduler.py         # APScheduler periodic jobs
   logging_setup.py     # structlog configuration
   file_lock.py         # Shared flock utilities
@@ -289,7 +324,7 @@ curator/
 curator_query.py       # CLI entry point
 mcp_server.py          # MCP server (stdio JSON-RPC)
 scripts/               # Maintenance scripts
-tests/                 # 476 tests
+tests/                 # 554 tests
 ```
 
 ## Testing
@@ -336,6 +371,9 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] Docker support (embedded + HTTP OV modes)
 - [x] mypy + pre-commit (ruff + ruff-format)
 - [x] uv dependency management
+- [x] Automated governance (audit, flag, proactive search, report)
+- [x] Interest-based proactive search (query log + feedback analysis)
+- [x] Hybrid async governance (sync budget + background thread + trace harvest)
 - [ ] Coverage auto-tuning (dynamic thresholds from query log)
 - [ ] Second backend implementation (beyond OpenViking)
 
