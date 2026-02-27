@@ -275,12 +275,12 @@ class TestValidateConfig(unittest.TestCase):
     def test_valid_config(self):
         import curator.config as cfg
 
-        old = (cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY)
-        cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = "http://x", "k", "g"
+        old = (cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_BASE, cfg.GROK_KEY)
+        cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_BASE, cfg.GROK_KEY = "http://x", "k", "http://g", "g"
         try:
             cfg.validate_config()
         finally:
-            cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_KEY = old
+            cfg.OAI_BASE, cfg.OAI_KEY, cfg.GROK_BASE, cfg.GROK_KEY = old
 
     @patch.dict(os.environ, {"CURATOR_OAI_BASE": "", "CURATOR_OAI_KEY": ""}, clear=False)
     def test_missing_oai_raises(self):

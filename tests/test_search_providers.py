@@ -28,6 +28,13 @@ SCOPE = {"keywords": ["test"]}
 
 
 class TestSearchGrok:
+    @pytest.fixture(autouse=True)
+    def _set_grok_base(self, monkeypatch):
+        """Ensure GROK_BASE is set so the guard in _search_grok passes."""
+        import curator.search_providers as m
+
+        monkeypatch.setattr(m, "GROK_BASE", "http://fake-grok:8000/v1")
+
     def test_returns_result_on_success(self):
         import curator.search_providers as m
 
@@ -58,6 +65,14 @@ class TestSearchGrok:
 
         with patch.object(m, "chat", side_effect=RuntimeError("timeout")):
             with pytest.raises(RuntimeError, match="timeout"):
+                m._search_grok("query", SCOPE)
+
+    def test_empty_grok_base_raises(self):
+        """Empty GROK_BASE should raise immediately without calling chat."""
+        import curator.search_providers as m
+
+        with patch.object(m, "GROK_BASE", ""):
+            with pytest.raises(RuntimeError, match="CURATOR_GROK_BASE not configured"):
                 m._search_grok("query", SCOPE)
 
     def test_time_context_injected_for_time_queries(self):
@@ -503,6 +518,7 @@ class TestParseSearchResultsJson:
         import curator.search_providers as m
         from curator.search_providers import WebSearchResult
 
+        monkeypatch.setattr(m, "GROK_BASE", "http://fake:8000/v1")
         json_response = '[{"title":"R1","url":"https://x.com","date":"","snippet":"Snippet"}]'
         monkeypatch.setattr(m, "chat", lambda *a, **kw: json_response)
         result = m._search_grok("test query", {})
@@ -514,6 +530,7 @@ class TestParseSearchResultsJson:
         """_search_grok returns raw str when LLM outputs plain text."""
         import curator.search_providers as m
 
+        monkeypatch.setattr(m, "GROK_BASE", "http://fake:8000/v1")
         monkeypatch.setattr(m, "chat", lambda *a, **kw: "Here are some results in plain text.")
         result = m._search_grok("test query", {})
         assert isinstance(result, str)
