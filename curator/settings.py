@@ -33,11 +33,11 @@ class CuratorSettings(BaseSettings):
     oai_base: str = ""
     oai_key: str = ""
 
-    router_models: str = "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6"
-    judge_model: str = "gpt-5.3-codex"
-    judge_models: str = "gpt-5.3-codex,【Claude Code】Claude-Sonnet 4-6"
+    router_models: str = "gpt-4o-mini"
+    judge_model: str = ""  # empty → falls back to first of JUDGE_MODELS
+    judge_models: str = ""  # empty → falls back to ROUTER_MODELS
 
-    grok_base: str = "http://127.0.0.1:8000/v1"
+    grok_base: str = ""  # user must configure (any OAI-compatible endpoint)
     grok_key: str = ""
     grok_model: str = "grok-4-fast"
 

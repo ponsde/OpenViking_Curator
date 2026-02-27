@@ -229,6 +229,8 @@ def _search_grok(query: str, scope: dict) -> list[WebSearchResult] | str:
     Returns list[WebSearchResult] when the LLM response is parseable as JSON,
     otherwise falls back to returning the raw text string.
     """
+    if not GROK_BASE:
+        raise RuntimeError("CURATOR_GROK_BASE not configured")
     system, user = _build_search_prompt(query, scope)
     raw = chat(
         GROK_BASE,

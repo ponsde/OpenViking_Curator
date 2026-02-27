@@ -43,7 +43,7 @@ flowchart TD
 | **Dual-path retrieval** | `find` (vector) + `search` (LLM intent). URI dedup. | `retrieval_v2.py` |
 | **On-demand loading** | L0 (abstract) → L1 (overview) → L2 (full). Only deeper when needed. | `retrieval_v2.py` |
 | **Coverage assessment** | Score gap + keyword overlap signals. 0 LLM calls. | `retrieval_v2.py` |
-| **External search** | Pluggable providers: Grok, DuckDuckGo, Tavily. Fallback chain or concurrent. | `search_providers.py` |
+| **External search** | Pluggable providers: Grok, OAI, DuckDuckGo, Tavily. Fallback chain or concurrent. | `search_providers.py` |
 | **Domain filtering** | Whitelist / blacklist external search results by domain. | `domain_filter.py` |
 | **Cross-validation** | When `need_fresh=true`. Flags risky/outdated claims. | `search.py` |
 | **Judge + conflict** | Single LLM call: trust 0-10, freshness, pass/fail, contradiction. Pydantic validated. | `review.py` |
@@ -78,7 +78,7 @@ flowchart TD
 - A working [OpenViking](https://github.com/volcengine/OpenViking) setup (embedded or HTTP mode)
   > **New to OpenViking?** Install it and run it first. For embedded mode, copy `ov.conf.example` to `ov.conf` and fill in your embedding API keys.
 - An OpenAI-compatible API endpoint (for LLM judge/review)
-- A search API: Grok (recommended) or DuckDuckGo (no key required) or Tavily
+- A search API: Grok (recommended), OAI, DuckDuckGo (no key required), or Tavily
 
 ### Install
 
@@ -391,7 +391,7 @@ At least one search provider must be configured (see Search section below). `duc
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `duckduckgo` requires no key. |
-| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok API base URL (required if using `grok` provider) |
+| `CURATOR_GROK_BASE` | _(empty)_ | Grok API base URL (required if using `grok` provider) |
 | `CURATOR_GROK_KEY` | _(empty)_ | Grok API key |
 | `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model name |
 | `CURATOR_SEARCH_CONCURRENT` | `0` | `1` = fire all providers in parallel |
@@ -460,7 +460,7 @@ python3 scripts/analyze_weak.py --min-queries 2
 python3 scripts/strengthen.py --top 5
 
 # Freshness scan
-python3 scripts/freshness_scan.py --limit 50       # URL reachability
+python3 scripts/freshness_scan.py --check-urls      # URL reachability
 python3 scripts/freshness_scan.py --act             # Auto-refresh stale
 
 # TTL rebalance
@@ -547,7 +547,7 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `Missing required env vars` | `.env` not configured | Fill in `CURATOR_OAI_BASE`, `CURATOR_OAI_KEY`, `CURATOR_GROK_KEY` |
+| `Missing required env vars` | `.env` not configured | Fill in `CURATOR_OAI_BASE`, `CURATOR_OAI_KEY`; if using grok: `CURATOR_GROK_BASE` + `CURATOR_GROK_KEY` |
 | `OV not available` | OpenViking not reachable | Check `OPENVIKING_CONFIG_FILE` (embedded) or `OV_BASE_URL` (HTTP) |
 | `401 Unauthorized` | Wrong API key | Check keys in `.env` |
 | Timeout on search | Endpoint unreachable | Check URL and service status |
@@ -565,7 +565,7 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] Decision report (ASCII + JSON + HTML)
 - [x] Async ingest with job tracking + recovery CLI
 - [x] Auto-generate L0/L1 summaries on ingest
-- [x] Multi-provider search (Grok + DuckDuckGo + Tavily)
+- [x] Multi-provider search (Grok + OAI + DuckDuckGo + Tavily)
 - [x] Domain filtering (whitelist / blacklist)
 - [x] Usage-based TTL (hot / warm / cold tiers)
 - [x] Circuit breaker + search cache

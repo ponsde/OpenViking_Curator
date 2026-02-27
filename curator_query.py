@@ -57,15 +57,16 @@ def _llm_should_route(query: str) -> tuple[bool, str]:
 
     # 优先用 Grok（快+免费），fallback 到 OAI
     endpoints = []
-    grok_base = os.getenv("CURATOR_GROK_BASE", "http://127.0.0.1:8000/v1")
+    grok_base = os.getenv("CURATOR_GROK_BASE", "")
     grok_key = os.getenv("CURATOR_GROK_KEY", "")
-    if grok_key:
+    if grok_base and grok_key:
         endpoints.append((grok_base, grok_key, os.getenv("CURATOR_GROK_MODEL", "grok-4-fast")))
 
     oai_base = os.getenv("CURATOR_OAI_BASE", "")
     oai_key = os.getenv("CURATOR_OAI_KEY", "")
-    if oai_key:
-        endpoints.append((oai_base, oai_key, "gemini-3-flash-preview"))
+    if oai_base and oai_key:
+        router_model = os.getenv("CURATOR_ROUTER_MODELS", "gpt-4o-mini").split(",")[0].strip() or "gpt-4o-mini"
+        endpoints.append((oai_base, oai_key, router_model))
 
     for base, key, model in endpoints:
         try:

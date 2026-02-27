@@ -43,7 +43,7 @@ flowchart TD
 | **双路检索** | `find`（向量）+ `search`（LLM 意图）。URI 去重 | `retrieval_v2.py` |
 | **按需加载** | L0（摘要）→ L1（概要）→ L2（全文）。够用就不往深走 | `retrieval_v2.py` |
 | **覆盖率评估** | score gap + 关键词重叠信号。0 次 LLM | `retrieval_v2.py` |
-| **外部搜索** | 插件化 provider：Grok、DuckDuckGo、Tavily。Fallback 链或并发模式 | `search_providers.py` |
+| **外部搜索** | 插件化 provider：Grok、OAI、DuckDuckGo、Tavily。Fallback 链或并发模式 | `search_providers.py` |
 | **域名过滤** | 搜索结果白名单 / 黑名单 | `domain_filter.py` |
 | **交叉验证** | `need_fresh=true` 时执行。标记风险声明 | `search.py` |
 | **审核 + 冲突** | 一次 LLM 调用：信任分 0-10、时效、pass/fail、矛盾检测。Pydantic 校验 | `review.py` |
@@ -78,7 +78,7 @@ flowchart TD
 - 已配好的 [OpenViking](https://github.com/volcengine/OpenViking)（嵌入模式或 HTTP 模式）
   > **第一次用 OpenViking？** 先安装并运行 OV。嵌入模式下，把 `ov.conf.example` 复制为 `ov.conf` 并填入你的 embedding API key。
 - OpenAI 兼容的 LLM API（审核用）
-- 搜索 API：推荐 Grok；也可用 DuckDuckGo（无需 key）或 Tavily
+- 搜索 API：推荐 Grok；也可用 OAI、DuckDuckGo（无需 key）或 Tavily
 
 ### 安装
 
@@ -283,12 +283,71 @@ mcporter call --stdio "python3 /path/to/mcp_server.py" curator_query query="Dock
 mcporter call --stdio "python3 /path/to/mcp_server.py" curator_status
 ```
 
-**原始 JSON-RPC 示例：**
+**通用子进程客户端（如 Python SDK）：**
+
+```python
+import subprocess, json
+
+proc = subprocess.Popen(
+    ["python3", "/path/to/mcp_server.py"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    text=True,
+)
+
+def rpc(method, params=None, req_id=1):
+    msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+    return json.loads(proc.stdout.readline())
+
+# 握手
+rpc("initialize", {"protocolVersion": "2024-11-05", "clientInfo": {"name": "my-client", "version": "1.0"}})
+
+# 列出工具
+tools = rpc("tools/list")
+
+# 调用工具
+result = rpc("tools/call", {"name": "curator_query", "arguments": {"query": "Nginx SSL 怎么配？"}})
+print(result["result"]["content"][0]["text"])
+```
+
+### 原始 JSON-RPC 示例
+
+**初始化握手：**
 
 ```json
 {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "clientInfo": {"name": "my-client", "version": "1.0"}}}
+```
+
+响应：
+
+```json
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "openviking-curator", "version": "0.7.0"}, "capabilities": {"tools": {}}}}
+```
+
+**列出工具：**
+
+```json
 {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+```
+
+**查询知识库：**
+
+```json
 {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "curator_query", "arguments": {"query": "Redis 持久化怎么配？"}}}
+```
+
+**入库文档：**
+
+```json
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "curator_ingest", "arguments": {"title": "Redis AOF 持久化", "content": "## Redis AOF\n\n在 redis.conf 中设置 `appendonly yes`..."}}}
+```
+
+**状态检查：**
+
+```json
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "curator_status", "arguments": {}}}
 ```
 
 ### 环境变量
@@ -325,14 +384,14 @@ MCP 服务与 CLI 使用相同的环境变量。最低要求：
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `OV_BASE_URL` | _(空)_ | 设置后用 HTTP 模式。空 = 嵌入模式 |
-| `OV_DATA_PATH` | `./data` | OV 数据目录（嵌入模式）|
+| `OV_DATA_PATH` | `./data` | OV 数据目录；Curator 用来定位 session 文件——须与 OV 实际 data 路径一致 |
 
 ### 搜索
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `CURATOR_SEARCH_PROVIDERS` | `grok` | 逗号分隔：`grok,oai,duckduckgo,tavily`（按序 fallback）。`duckduckgo` 无需 key |
-| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok API 地址（使用 grok provider 时必填）|
+| `CURATOR_GROK_BASE` | _(空)_ | Grok API 地址（使用 grok provider 时必填）|
 | `CURATOR_GROK_KEY` | _(空)_ | Grok API key |
 | `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok 模型名 |
 | `CURATOR_SEARCH_CONCURRENT` | `0` | `1` = 所有 provider 并发 |
@@ -401,7 +460,7 @@ python3 scripts/analyze_weak.py --min-queries 2
 python3 scripts/strengthen.py --top 5
 
 # 时效扫描
-python3 scripts/freshness_scan.py --limit 50       # URL 可达性
+python3 scripts/freshness_scan.py --check-urls      # URL 可达性
 python3 scripts/freshness_scan.py --act             # 自动刷新过期资源
 
 # TTL 重平衡
@@ -488,7 +547,7 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| `Missing required env vars` | `.env` 未配置 | 填 `CURATOR_OAI_BASE`、`CURATOR_OAI_KEY`、`CURATOR_GROK_KEY` |
+| `Missing required env vars` | `.env` 未配置 | 填 `CURATOR_OAI_BASE`、`CURATOR_OAI_KEY`；用 grok 时加 `CURATOR_GROK_BASE` + `CURATOR_GROK_KEY` |
 | `OV 不可用` | OpenViking 不可达 | 检查 `OPENVIKING_CONFIG_FILE`（嵌入）或 `OV_BASE_URL`（HTTP）|
 | `401 Unauthorized` | API key 错误 | 核实 `.env` 中的 key |
 | 搜索超时 | 端点不通 | 检查端点 URL 和服务状态 |
@@ -506,7 +565,7 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] 决策报告（ASCII + JSON + HTML）
 - [x] 异步入库 + 任务追踪 + 恢复 CLI
 - [x] 入库自动生成 L0/L1 摘要
-- [x] 多 provider 搜索（Grok + DuckDuckGo + Tavily）
+- [x] 多 provider 搜索（Grok + OAI + DuckDuckGo + Tavily）
 - [x] 域名过滤（白名单 / 黑名单）
 - [x] Usage-based TTL（热/温/冷三档）
 - [x] 熔断器 + 搜索缓存

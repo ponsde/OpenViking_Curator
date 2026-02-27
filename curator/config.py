@@ -40,8 +40,8 @@ OAI_KEY = _settings.oai_key
 CURATOR_VERSION = _settings.version or _pkg_version
 
 ROUTER_MODELS = [m.strip() for m in _settings.router_models.split(",") if m.strip()]
-JUDGE_MODEL = _settings.judge_model
-JUDGE_MODELS = [m.strip() for m in _settings.judge_models.split(",") if m.strip()]
+JUDGE_MODELS = [m.strip() for m in _settings.judge_models.split(",") if m.strip()] or ROUTER_MODELS
+JUDGE_MODEL = _settings.judge_model or (JUDGE_MODELS[0] if JUDGE_MODELS else "")
 GROK_BASE = _settings.grok_base
 GROK_KEY = _settings.grok_key
 GROK_MODEL = _settings.grok_model
@@ -130,9 +130,14 @@ def validate_config() -> None:
         missing.append("CURATOR_OAI_BASE")
     if not OAI_KEY:
         missing.append("CURATOR_OAI_KEY")
+    if not ROUTER_MODELS:
+        missing.append("CURATOR_ROUTER_MODELS")
     first_provider = SEARCH_PROVIDERS.split(",")[0].strip()
-    if first_provider in ("grok",) and not GROK_KEY:
-        missing.append("CURATOR_GROK_KEY")
+    if first_provider in ("grok",):
+        if not GROK_BASE:
+            missing.append("CURATOR_GROK_BASE")
+        if not GROK_KEY:
+            missing.append("CURATOR_GROK_KEY")
     if first_provider == "tavily" and not TAVILY_KEY:
         missing.append("CURATOR_TAVILY_KEY")
     if missing:
@@ -153,6 +158,10 @@ def _should_retry_chat_error(err: Exception) -> bool:
 
     if isinstance(err, (requests.Timeout, requests.ConnectionError)):
         return True
+
+    # Permanent config errors (e.g. empty base URL) — do not retry
+    if isinstance(err, (requests.exceptions.MissingSchema, requests.exceptions.InvalidURL)):
+        return False
 
     if isinstance(err, requests.RequestException):
         return True
