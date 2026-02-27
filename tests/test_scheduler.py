@@ -103,8 +103,8 @@ class TestRunStrengthen:
     """
 
     def _patch_weak(self, monkeypatch, topics: list):
-        # Patch at the scheduler module level (where the name is resolved at call time
-        # via a function-local import). This is more robust than patching nlp_utils directly.
+        # Patch at the scheduler module level — analyze_weak_topics is imported at
+        # module top-level, so this is the correct and only reliable patch target.
         monkeypatch.setattr("curator.scheduler.analyze_weak_topics", lambda *a, **kw: topics)
 
     def test_no_weak_topics_returns_zeros(self, monkeypatch, tmp_path):
@@ -147,7 +147,7 @@ class TestRunStrengthen:
 
         result = sched._run_strengthen(_run_fn=_flaky, data_path=str(tmp_path), top_n=2)
         assert result["strengthened"] == 1
-        assert result["skipped"] == 1
+        assert result["skipped"] == 1  # skipped = pipeline execution failures
 
     def test_analyze_error_returns_zeros(self, monkeypatch, tmp_path):
         # If analyze_weak_topics itself raises, strengthen returns zeros gracefully
@@ -160,11 +160,13 @@ class TestRunStrengthen:
         assert result == {"strengthened": 0, "skipped": 0}
 
     def test_non_dict_entries_are_skipped(self, monkeypatch, tmp_path):
-        # analyze_weak_topics should never return non-dicts, but scheduler is defensive
+        # analyze_weak_topics should never return non-dicts, but scheduler is defensive.
+        # Non-dict entries are silently filtered — they do NOT count as skipped (pipeline failures).
         self._patch_weak(monkeypatch, ["plain string", {"topic": "valid topic"}, 42])
         run_fn = _mock_run_fn()
         result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path), top_n=3)
         assert result["strengthened"] == 1
+        assert result["skipped"] == 0  # non-dict entries are filtered, not "failed"
         assert "valid topic" in run_fn.calls[0]
 
     def test_invalid_top_n_env_falls_back_to_default(self, monkeypatch, tmp_path):

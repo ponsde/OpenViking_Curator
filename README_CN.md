@@ -395,7 +395,7 @@ MCP 服务与 CLI 使用相同的环境变量。最低要求：
 
 ```bash
 # 弱主题分析
-python3 scripts/analyze_weak.py --top 10
+python3 scripts/analyze_weak.py --min-queries 2
 
 # 主动补强
 python3 scripts/strengthen.py --top 5
@@ -468,7 +468,7 @@ curator/
 curator_query.py       # CLI 入口
 mcp_server.py          # MCP Server（stdio JSON-RPC）
 scripts/               # 维护脚本
-tests/                 # 601 个测试
+tests/                 # 615 个测试
 ```
 
 ## 测试

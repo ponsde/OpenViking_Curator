@@ -454,7 +454,7 @@ At least one search provider must be configured (see Search section below). `duc
 
 ```bash
 # Weak topic analysis
-python3 scripts/analyze_weak.py --top 10
+python3 scripts/analyze_weak.py --min-queries 2
 
 # Proactive strengthening
 python3 scripts/strengthen.py --top 5
@@ -527,7 +527,7 @@ curator/
 curator_query.py       # CLI entry point
 mcp_server.py          # MCP server (stdio JSON-RPC)
 scripts/               # Maintenance scripts
-tests/                 # 601 tests
+tests/                 # 615 tests
 ```
 
 ## Testing

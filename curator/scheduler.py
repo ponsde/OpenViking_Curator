@@ -168,6 +168,7 @@ def _run_strengthen(
 
     log.info("scheduler.strengthen: strengthening top %d weak topics", len(targets))
     strengthened = 0
+    failed = 0
     for t in targets:
         if not isinstance(t, dict):
             log.debug("scheduler.strengthen: skipping non-dict entry: %r", t)
@@ -181,14 +182,15 @@ def _run_strengthen(
             strengthened += 1
             log.debug("scheduler.strengthen: done topic=%s", topic[:40])
         except Exception as e:
+            failed += 1
             log.debug("scheduler.strengthen: topic=%s error: %s", topic[:40], e)
 
     log.info(
-        "scheduler.strengthen: completed=%d/%d",
+        "scheduler.strengthen: completed=%d failed=%d",
         strengthened,
-        len(targets),
+        failed,
     )
-    return {"strengthened": strengthened, "skipped": len(targets) - strengthened}
+    return {"strengthened": strengthened, "skipped": failed}
 
 
 # ── Governance job ──
