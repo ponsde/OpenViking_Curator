@@ -101,8 +101,8 @@ def format_report(report: dict) -> str:
     lines.append(_row("Fresh", str(health.get("fresh", 0))))
     lines.append(_row("Aging", str(health.get("aging", 0))))
     lines.append(_row("Stale", str(health.get("stale", 0))))
-    cov_mean = health.get("coverage_mean", 0)
-    lines.append(_row("Coverage (mean)", f"{cov_mean:.3f}" if cov_mean else "N/A"))
+    cov_mean = health.get("coverage_mean")
+    lines.append(_row("Coverage (mean)", f"{cov_mean:.3f}" if cov_mean is not None else "N/A"))
 
     # Flags
     lines.append(_section_header("Flags"))

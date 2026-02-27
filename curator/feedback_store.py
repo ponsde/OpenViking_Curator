@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 try:
     import fcntl
@@ -46,8 +49,8 @@ def _locked_rw(fn):
                 fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def load():
-    store = _resolve_store()
+def load(store_path: str | os.PathLike | None = None):
+    store = Path(store_path) if store_path else _resolve_store()
     if store.exists():
         with open(store, "r", encoding="utf-8") as f:
             if _HAS_FCNTL:
@@ -55,6 +58,9 @@ def load():
             try:
                 raw = f.read().strip()
                 return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                log.warning("feedback store corrupted, returning empty: %s", store)
+                return {}
             finally:
                 if _HAS_FCNTL:
                     fcntl.flock(f, fcntl.LOCK_UN)

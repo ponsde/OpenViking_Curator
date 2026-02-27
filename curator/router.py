@@ -132,8 +132,8 @@ _DOMAIN_MAP, _TIME_KEYWORDS = _load_router_config()
 
 
 def get_time_keywords() -> list[str]:
-    """Return the loaded time-sensitive keyword list (from router_config.json)."""
-    return _TIME_KEYWORDS
+    """Return a copy of the loaded time-sensitive keyword list (from router_config.json)."""
+    return list(_TIME_KEYWORDS)
 
 
 def route_scope(query: str) -> dict:

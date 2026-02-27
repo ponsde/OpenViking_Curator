@@ -125,7 +125,10 @@ def extract_interests(
     if not entries:
         return []
 
-    feedback = load_feedback()
+    # Align feedback path with data_path when feedback.json exists there;
+    # otherwise fall back to _resolve_store() (env var / default).
+    _fb_path = os.path.join(_data_path, "feedback.json")
+    feedback = load_feedback(_fb_path if os.path.exists(_fb_path) else None)
     adopt_by_topic = _compute_adopt_by_topic(feedback, entries)
 
     # Group by topic

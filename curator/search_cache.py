@@ -102,11 +102,13 @@ def put(query: str, scope: dict, text: str) -> None:
 
 
 def clear() -> None:
-    """Remove all cached entries."""
+    """Remove all cached entries under the same lock as get/put."""
+    from .file_lock import locked_rw_json
+
     path = _cache_path()
     if os.path.exists(path):
         try:
-            os.remove(path)
+            locked_rw_json(path, lambda d: d.clear())
         except Exception as e:
             log.debug("search_cache clear error: %s", e)
 

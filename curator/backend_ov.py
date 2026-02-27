@@ -63,7 +63,11 @@ class OpenVikingBackend(KnowledgeBackend):
         return self._ov.read(uri)
 
     def ingest(self, content: str, title: str = "", metadata: dict | None = None) -> str:
-        """Write content to a temp .md file, then add_resource to OV."""
+        """Write content to a temp .md file, then add_resource to OV.
+
+        Note: *metadata* is accepted for interface compatibility but currently
+        ignored — OV's ``add_resource`` does not support arbitrary metadata.
+        """
         # Replace non-alnum (except -) with _, then collapse runs.
         # OV normalises spaces→_ in URIs; keeping spaces in filenames
         # causes underscore-space mismatches (OV-5).

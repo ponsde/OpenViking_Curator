@@ -207,9 +207,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     async_thread = report.pop("_async_thread", None)
     if async_thread is not None and async_thread.is_alive():
         n = report.get("proactive", {}).get("async_queued", 0)
-        print(f"\nWaiting for {n} async tasks to complete...")
-        async_thread.join()
-        print("Async tasks completed.")
+        timeout = max(120, n * 60)  # 60s per task, minimum 2 min
+        print(f"\nWaiting for {n} async tasks to complete (timeout {timeout}s)...")
+        async_thread.join(timeout=timeout)
+        if async_thread.is_alive():
+            print("Warning: async tasks did not finish within timeout, exiting.")
+        else:
+            print("Async tasks completed.")
 
     return 0
 
