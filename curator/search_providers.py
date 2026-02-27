@@ -28,6 +28,7 @@ Adding a new provider:
 import asyncio
 import datetime
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +41,7 @@ from .config import (
     GROK_MODEL,
     OAI_BASE,
     OAI_KEY,
+    SEARCH_MAX_INFLIGHT,
     SEARCH_PROVIDER_TIMEOUT,
     SEARCH_TIMEOUT,
     TAVILY_KEY,
@@ -47,6 +49,31 @@ from .config import (
     env,
     log,
 )
+
+# ── Global inflight semaphore ──
+# Limits simultaneous external HTTP calls across all search invocations.
+# None = unlimited (default). Set CURATOR_SEARCH_MAX_INFLIGHT > 0 to enable.
+_inflight_sem: threading.Semaphore | None = None
+_inflight_sem_lock = threading.Lock()
+
+
+def _get_inflight_semaphore() -> threading.Semaphore | None:
+    """Return the module-level inflight semaphore, creating it on first call.
+
+    Returns None when CURATOR_SEARCH_MAX_INFLIGHT=0 (default = unlimited).
+    Tests may reset ``_inflight_sem = None`` and patch ``SEARCH_MAX_INFLIGHT``
+    to change the limit between calls.
+    """
+    global _inflight_sem
+    if _inflight_sem is not None:
+        return _inflight_sem
+    if SEARCH_MAX_INFLIGHT <= 0:
+        return None
+    with _inflight_sem_lock:
+        if _inflight_sem is None:
+            _inflight_sem = threading.Semaphore(SEARCH_MAX_INFLIGHT)
+            log.debug("search: inflight semaphore created (limit=%d)", SEARCH_MAX_INFLIGHT)
+    return _inflight_sem
 
 
 # Time-sensitive keywords — built from router_config.json so both modules stay in sync.
@@ -345,8 +372,8 @@ PROVIDERS = {
 
 
 def _call_provider(pname: str, query: str, scope: dict) -> str | list[WebSearchResult]:
-    """
-    Resolve and call the provider function by name.
+    """Resolve and call the provider function by name, honouring the global
+    inflight semaphore (CURATOR_SEARCH_MAX_INFLIGHT).
 
     Uses getattr on the current module so that unittest.mock.patch.object()
     patches applied to the module's function attributes are honoured.
@@ -358,6 +385,14 @@ def _call_provider(pname: str, query: str, scope: dict) -> str | list[WebSearchR
     if fn_attr is None:
         raise ValueError(f"Unknown provider {pname!r}")
     fn = getattr(mod, fn_attr)
+
+    sem = _get_inflight_semaphore()
+    if sem is not None:
+        sem.acquire()
+        try:
+            return fn(query, scope)
+        finally:
+            sem.release()
     return fn(query, scope)
 
 
@@ -459,11 +494,24 @@ async def _async_search_provider(name: str, query: str, scope: dict) -> tuple[st
         return name, ""
 
 
-async def _gather_search(query: str, scope: dict, providers: list, timeout: float) -> str:
+async def _gather_search(
+    query: str,
+    scope: dict,
+    providers: list,
+    timeout: float,
+    cancel_event: threading.Event | None = None,
+) -> str:
     """Fire all providers concurrently; return the first non-empty result.
 
     Uses asyncio.as_completed so we take the fastest winner and cancel the rest.
     On timeout, returns the best result seen so far (or "").
+
+    cancel_event: optional threading.Event set by the calling thread when it has
+    given up waiting (e.g. after t.join() timeout).  _gather_search checks it
+    between each completed provider so it can abort early without waiting for
+    remaining slow providers.  Note: this cannot interrupt an in-progress HTTP
+    call — the underlying provider timeout (SEARCH_PROVIDER_TIMEOUT) is the
+    final safeguard for that.
     """
     if not providers:
         return ""
@@ -475,6 +523,10 @@ async def _gather_search(query: str, scope: dict, providers: list, timeout: floa
 
     try:
         for coro in asyncio.as_completed(tasks, timeout=timeout):
+            # Check external cancellation signal between each completed provider
+            if cancel_event is not None and cancel_event.is_set():
+                log.debug("concurrent search: cancel_event received, aborting gather early")
+                break
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 break
@@ -519,15 +571,15 @@ def search_concurrent(
     Falls back to "" if all providers fail or timeout expires.
 
     If an event loop is already running (e.g. called from an async pipeline),
-    the coroutine is scheduled via run_coroutine_threadsafe in a new thread loop.
-    Otherwise asyncio.run() is used.
+    the coroutine is run in a new thread with its own event loop (thread-bridge
+    pattern).  A cancel_event is passed to _gather_search so that if the main
+    thread gives up waiting, the background coroutine can abort between provider
+    completions rather than running until all provider timeouts expire.
     """
     if providers is None:
         providers = _get_provider_chain()
     if timeout is None:
         timeout = SEARCH_TIMEOUT
-
-    coro = _gather_search(query, scope, providers, timeout)
 
     try:
         loop = asyncio.get_running_loop()
@@ -535,21 +587,31 @@ def search_concurrent(
         loop = None
 
     if loop is not None and loop.is_running():
-        import threading
-
-        result_holder = {}
+        result_holder: dict = {}
+        cancel_event = threading.Event()
 
         def _run_in_thread():
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
             try:
-                result_holder["result"] = new_loop.run_until_complete(_gather_search(query, scope, providers, timeout))
+                result_holder["result"] = new_loop.run_until_complete(
+                    _gather_search(query, scope, providers, timeout, cancel_event)
+                )
             finally:
                 new_loop.close()
 
         t = threading.Thread(target=_run_in_thread, daemon=True)
         t.start()
         t.join(timeout + 1)
+
+        if t.is_alive():
+            # Main thread gave up; signal the background coroutine to abort early
+            cancel_event.set()
+            log.warning(
+                "search_concurrent: thread did not finish in %.1fs, cancel signal sent",
+                timeout + 1,
+            )
+
         return result_holder.get("result", "")
     else:
-        return asyncio.run(coro)
+        return asyncio.run(_gather_search(query, scope, providers, timeout))

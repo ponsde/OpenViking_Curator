@@ -50,6 +50,7 @@ class CuratorSettings(BaseSettings):
     search_concurrent: str = "0"
     search_timeout: float = Field(default=60.0, ge=1.0)
     search_provider_timeout: float = Field(default=55.0, ge=1.0)
+    search_max_inflight: int = Field(default=0, ge=0)  # 0 = unlimited
 
     # ── Async ingest ──
     async_ingest: str = "0"

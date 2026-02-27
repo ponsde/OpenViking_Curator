@@ -59,6 +59,7 @@ DOMAIN_FILTER_STRICT = _settings.domain_filter_strict in ("1", "true", "yes")
 SEARCH_CONCURRENT = _settings.search_concurrent == "1"
 SEARCH_TIMEOUT = _settings.search_timeout
 SEARCH_PROVIDER_TIMEOUT = _settings.search_provider_timeout
+SEARCH_MAX_INFLIGHT = _settings.search_max_inflight
 
 # ── Async ingest ──
 ASYNC_INGEST = _settings.async_ingest == "1"
