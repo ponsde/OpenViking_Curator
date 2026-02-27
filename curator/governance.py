@@ -160,31 +160,32 @@ def update_flag_status(
 ) -> bool:
     """Update a flag's status in the JSONL file.  Returns True if found.
 
-    Uses fcntl exclusive lock for the entire read-modify-write cycle
-    to prevent concurrent append races.
+    Uses the same sidecar lock (``path + ".lock"``) as ``create_flag`` /
+    ``locked_append`` so that concurrent flag writes and updates are
+    mutually exclusive.
     """
     if new_status not in FLAG_STATUSES:
         raise ValueError(f"Invalid status: {new_status!r} (expected one of {sorted(FLAG_STATUSES)})")
 
-    try:
-        import fcntl
-
-        _has_fcntl = True
-    except ImportError:
-        _has_fcntl = False
+    from .file_lock import _HAS_FCNTL
 
     _data = data_path or DATA_PATH
     path = _flags_path(_data)
     if not os.path.exists(path):
         return False
 
-    # Atomic read-modify-write under exclusive lock
-    with open(path, "r+", encoding="utf-8") as f:
-        if _has_fcntl:
-            fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            lines: list[str] = []
-            found = False
+    # Use sidecar lock — same domain as locked_append / create_flag
+    lock_path = path + ".lock"
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        lines: list[str] = []
+        found = False
+        with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped:
@@ -198,14 +199,16 @@ def update_flag_status(
                 except json.JSONDecodeError:
                     lines.append(line)
 
-            if found:
-                f.seek(0)
-                f.truncate()
+        if found:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write("".join(lines))
-            return found
-        finally:
-            if _has_fcntl:
-                fcntl.flock(f, fcntl.LOCK_UN)
+        return found
+    finally:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def _traces_path(data_path: str) -> str:
@@ -354,7 +357,7 @@ def _analyze_weak_topics(data_path: str, min_queries: int = 2) -> list[dict]:
     for entry in entries:
         topic = extract_topic(entry.get("query", ""))
         stats = topic_stats[topic]
-        stats["coverages"].append(entry.get("coverage", 0.0))
+        stats["coverages"].append(float(entry.get("coverage") or 0.0))
         if entry.get("external_triggered", False):
             stats["external_count"] += 1
         stats["total"] += 1
