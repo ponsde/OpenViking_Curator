@@ -65,6 +65,13 @@ class CuratorSettings(BaseSettings):
 
     # ── Feedback ──
     feedback_weight: float = Field(default=0.10, ge=0.0, le=1.0)
+    # Time-decay settings (prevent high-adopt content from dominating permanently)
+    feedback_decay_enabled: str = "1"  # "1" to enable decay, "0" to keep legacy behaviour
+    feedback_half_life_days: float = Field(default=14.0, ge=1.0)  # decay half-life in days
+    feedback_adopt_coef: float = Field(default=1.5, ge=0.0)  # adopt weight multiplier
+    feedback_down_coef: float = Field(default=1.2, ge=0.0)  # down weight multiplier
+    feedback_explore_bonus: float = Field(default=0.05, ge=0.0)  # exploration boost for new content
+    feedback_smooth: float = Field(default=1.0, ge=0.0)  # smoothing denominator term
 
     # ── Retrieval ──
     max_l2_depth: int = Field(default=2, ge=0)

@@ -78,6 +78,12 @@ THRESHOLD_COV_LOW = _settings.threshold_cov_low
 
 # feedback reranking
 FEEDBACK_WEIGHT = _settings.feedback_weight
+FEEDBACK_DECAY_ENABLED = _settings.feedback_decay_enabled in ("1", "true", "yes")
+FEEDBACK_HALF_LIFE_DAYS = _settings.feedback_half_life_days
+FEEDBACK_ADOPT_COEF = _settings.feedback_adopt_coef
+FEEDBACK_DOWN_COEF = _settings.feedback_down_coef
+FEEDBACK_EXPLORE_BONUS = _settings.feedback_explore_bonus
+FEEDBACK_SMOOTH = _settings.feedback_smooth
 
 # L2 full-read depth
 MAX_L2_DEPTH = _settings.max_l2_depth

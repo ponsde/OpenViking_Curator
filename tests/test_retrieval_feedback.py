@@ -166,3 +166,204 @@ class TestRerankWithFeedback:
             result = rerank_with_feedback(items)
         assert result[0]["score"] is not None  # None → 0.0 + delta
         assert result[0]["_feedback_delta"] > 0
+
+
+class TestRerankWithFeedbackDecay:
+    """Tests for stats_v2 time-decayed reranking path."""
+
+    def _make_stats_v2(self, up_w=0.0, down_w=0.0, adopt_w=0.0, seen_w=1.0, last_decay_at=None):
+        from datetime import datetime, timezone
+
+        return {
+            "up_w": up_w,
+            "down_w": down_w,
+            "adopt_w": adopt_w,
+            "seen_w": max(seen_w, 1.0),
+            "last_decay_at": last_decay_at or datetime.now(timezone.utc).isoformat(),
+            "last_event_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": 2,
+        }
+
+    def test_stats_v2_adopt_boosts_score(self):
+        """stats_v2 路径下 adopt_w 应产生正 delta。"""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        stats = self._make_stats_v2(adopt_w=5.0, seen_w=6.0)
+        fb = {"b": {"up": 0, "down": 0, "adopt": 5, "stats_v2": stats}}
+        with _patch_fb(fb):
+            with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", True):
+                items = _make_items(("a", 0.80), ("b", 0.75))
+                result = rerank_with_feedback(items)
+
+        uris = [r["uri"] for r in result]
+        assert uris[0] == "b", f"期望 b 因 adopt_w 排第一, 实际: {uris}"
+        assert result[0]["_feedback_delta"] > 0
+
+    def test_stats_v2_down_penalizes_score(self):
+        """stats_v2 路径下 down_w 应产生负 delta。"""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        stats = self._make_stats_v2(down_w=8.0, seen_w=9.0)
+        fb = {"a": {"up": 0, "down": 8, "adopt": 0, "stats_v2": stats}}
+        with _patch_fb(fb):
+            with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", True):
+                items = _make_items(("a", 0.80), ("b", 0.78))
+                result = rerank_with_feedback(items)
+
+        uris = [r["uri"] for r in result]
+        assert uris[0] == "b", f"期望 b 因 a 被降权后排第一, 实际: {uris}"
+
+    def test_explore_bonus_for_new_content(self):
+        """低曝光内容 (seen_w 小) 应获得探索加成，delta > 纯计分结果。"""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        # seen_w=1: 新内容，explore_bonus 最大
+        stats_new = self._make_stats_v2(up_w=1.0, seen_w=1.0)
+        # seen_w=100: 老内容，explore_bonus ≈ 0
+        stats_old = self._make_stats_v2(up_w=1.0, seen_w=100.0)
+
+        with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", True):
+            with patch("curator.retrieval_v2.FEEDBACK_EXPLORE_BONUS", 0.05):
+                fb_new = {"x": {"up": 1, "down": 0, "adopt": 0, "stats_v2": stats_new}}
+                with _patch_fb(fb_new):
+                    result_new = rerank_with_feedback(_make_items(("x", 0.5)))
+
+                fb_old = {"x": {"up": 1, "down": 0, "adopt": 0, "stats_v2": stats_old}}
+                with _patch_fb(fb_old):
+                    result_old = rerank_with_feedback(_make_items(("x", 0.5)))
+
+        delta_new = result_new[0]["_feedback_delta"]
+        delta_old = result_old[0]["_feedback_delta"]
+        assert delta_new > delta_old, f"新内容 delta ({delta_new}) 应 > 旧内容 delta ({delta_old})"
+
+    def test_delta_bounded_with_stats_v2(self):
+        """使用 stats_v2 时 delta 仍不超出 FEEDBACK_WEIGHT。"""
+        from curator.config import FEEDBACK_WEIGHT
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        # Extreme positive: huge adopt, low seen
+        stats = self._make_stats_v2(adopt_w=9999.0, seen_w=1.0)
+        fb = {"a": {"up": 0, "down": 0, "adopt": 9999, "stats_v2": stats}}
+        with _patch_fb(fb):
+            with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", True):
+                result = rerank_with_feedback(_make_items(("a", 0.5)))
+
+        assert result[0]["_feedback_delta"] <= FEEDBACK_WEIGHT + 1e-6
+
+    def test_legacy_fallback_without_stats_v2(self):
+        """无 stats_v2 字段时即使 decay enabled 也走旧路径，结果一致。"""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        fb = {"x": {"up": 3, "down": 1, "adopt": 2}}  # no stats_v2
+        with _patch_fb(fb):
+            with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", True):
+                result_decay = rerank_with_feedback(_make_items(("x", 0.6)))
+            with patch("curator.retrieval_v2.FEEDBACK_DECAY_ENABLED", False):
+                result_legacy = rerank_with_feedback(_make_items(("x", 0.6)))
+
+        # Both should take the legacy path → identical delta
+        assert result_decay[0]["_feedback_delta"] == result_legacy[0]["_feedback_delta"]
+
+
+class TestFeedbackStoreDecay:
+    """Tests for stats_v2 write path in feedback_store.apply()."""
+
+    def test_apply_writes_stats_v2_when_decay_enabled(self, tmp_path, monkeypatch):
+        """apply() should populate stats_v2 when decay is enabled."""
+        store = tmp_path / "fb.json"
+        monkeypatch.setenv("CURATOR_FEEDBACK_FILE", str(store))
+
+        from curator import feedback_store
+
+        with patch("curator.config.FEEDBACK_DECAY_ENABLED", True):
+            feedback_store.apply("viking://test", "adopt")
+
+        data = feedback_store.load(store)
+        rec = data.get("viking://test", {})
+        assert "stats_v2" in rec, "stats_v2 should be created when decay is enabled"
+        assert rec["stats_v2"]["adopt_w"] == 1.0
+        assert rec["stats_v2"]["seen_w"] == 1.0  # migration seeds seen_w from legacy sum
+
+    def test_apply_no_stats_v2_when_decay_disabled(self, tmp_path, monkeypatch):
+        """apply() should NOT write stats_v2 when decay is disabled."""
+        store = tmp_path / "fb.json"
+        monkeypatch.setenv("CURATOR_FEEDBACK_FILE", str(store))
+
+        from curator import feedback_store
+
+        with patch("curator.config.FEEDBACK_DECAY_ENABLED", False):
+            feedback_store.apply("viking://test", "up")
+
+        data = feedback_store.load(store)
+        rec = data.get("viking://test", {})
+        assert "stats_v2" not in rec, "stats_v2 should not be created when decay is disabled"
+        assert rec["up"] == 1
+
+    def test_apply_increments_existing_stats_v2(self, tmp_path, monkeypatch):
+        """Second apply() (stats_v2_existed=True path) should decay then increment weights."""
+        store = tmp_path / "fb.json"
+        monkeypatch.setenv("CURATOR_FEEDBACK_FILE", str(store))
+
+        from curator import feedback_store
+
+        with patch("curator.config.FEEDBACK_DECAY_ENABLED", True):
+            feedback_store.apply("viking://test", "adopt")  # first: creates stats_v2
+            feedback_store.apply("viking://test", "adopt")  # second: stats_v2_existed=True
+
+        data = feedback_store.load(store)
+        rec = data["viking://test"]
+        assert rec["adopt"] == 2
+        assert rec["stats_v2"]["adopt_w"] == 2.0
+        assert rec["stats_v2"]["seen_w"] == 2.0
+
+    def test_decay_factor_computation(self):
+        """_decay_factor should return < 1.0 for past timestamps."""
+        from datetime import datetime, timedelta, timezone
+
+        from curator.feedback_store import _decay_factor
+
+        past = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+        factor = _decay_factor(past, half_life_days=14.0)
+        # 14 days at half_life=14 → factor ≈ 0.5
+        assert 0.45 < factor < 0.55, f"14-day decay factor should be ~0.5, got {factor}"
+
+    def test_decay_factor_recent_returns_near_one(self):
+        """_decay_factor should return ≈ 1.0 for very recent timestamps."""
+        from datetime import datetime, timezone
+
+        from curator.feedback_store import _decay_factor
+
+        now = datetime.now(timezone.utc).isoformat()
+        factor = _decay_factor(now, half_life_days=14.0)
+        assert factor >= 0.9999
+
+    def test_ensure_stats_v2_migration(self):
+        """_ensure_stats_v2 should migrate legacy counters."""
+        from curator.feedback_store import _ensure_stats_v2
+
+        rec = {"up": 3, "down": 1, "adopt": 2}
+        _ensure_stats_v2(rec)
+
+        s = rec["stats_v2"]
+        assert s["up_w"] == 3.0
+        assert s["down_w"] == 1.0
+        assert s["adopt_w"] == 2.0
+        assert s["seen_w"] == 6.0  # 3+1+2
+
+    def test_ensure_stats_v2_idempotent(self):
+        """_ensure_stats_v2 should not overwrite existing stats_v2."""
+        from curator.feedback_store import _ensure_stats_v2
+
+        existing = {
+            "up_w": 99.0,
+            "down_w": 0.0,
+            "adopt_w": 0.0,
+            "seen_w": 100.0,
+            "last_decay_at": "2026-01-01T00:00:00+00:00",
+            "last_event_at": "2026-01-01T00:00:00+00:00",
+            "schema_version": 2,
+        }
+        rec = {"up": 99, "down": 0, "adopt": 0, "stats_v2": existing}
+        _ensure_stats_v2(rec)
+
+        assert rec["stats_v2"]["up_w"] == 99.0  # unchanged

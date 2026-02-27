@@ -10,7 +10,15 @@
 
 from __future__ import annotations
 
+import math
+
 from .config import (
+    FEEDBACK_ADOPT_COEF,
+    FEEDBACK_DECAY_ENABLED,
+    FEEDBACK_DOWN_COEF,
+    FEEDBACK_EXPLORE_BONUS,
+    FEEDBACK_HALF_LIFE_DAYS,
+    FEEDBACK_SMOOTH,
     FEEDBACK_WEIGHT,
     THRESHOLD_COV_LOW,
     THRESHOLD_COV_MARGINAL,
@@ -99,28 +107,27 @@ _COV_DISCOUNT_INSUFFICIENT = 0.5  # scale applied when coverage is insufficient
 def rerank_with_feedback(items: list) -> list:
     """用 feedback_store 的命中记录微调检索排名。
 
-    调整公式（保守，OV 原始 score 仍主导）：
-        raw_boost   = min(1.0, (up + adopt*2) / (total + 1))
-        raw_penalty = min(1.0, down           / (total + 1))
-        delta       = (raw_boost - raw_penalty) * FEEDBACK_WEIGHT
+    当 FEEDBACK_DECAY_ENABLED=1 且记录含 stats_v2 时，使用时间衰减权重：
+        boost   = min(1.0, (up_w + adopt_w * ADOPT_COEF)  / (seen_w + smooth))
+        penalty = min(1.0, (down_w * DOWN_COEF)           / (seen_w + smooth))
+        explore = EXPLORE_BONUS / sqrt(seen_w + 1)   # 低曝光内容探索加成
+        delta   = clamp(boost - penalty + explore, -1, 1) * FEEDBACK_WEIGHT
 
-    delta 范围：(-FEEDBACK_WEIGHT, +FEEDBACK_WEIGHT)，即默认 (-0.10, +0.10)。
-    clamp 到 1.0 后再乘权重，保证 OV 原始分始终主导排名。
+    否则降级到旧公式（整数计数器，系数与 decay 路径一致避免迁移跳变）：
+        boost   = min(1.0, (up + adopt * ADOPT_COEF) / (total + 1))
+        penalty = min(1.0, (down * DOWN_COEF)        / (total + 1))
+        delta   = (boost - penalty) * FEEDBACK_WEIGHT
 
-    up    = 显式「有用」标记
-    down  = 显式「没用」标记
-    adopt = OV 结果被 pipeline 实际采用（自动记录）
-
-    adopt 权重 ×2，因为它是 pipeline 根据实际效果自动记录的客观信号，
-    比手动标记更可靠——但乘以 FEEDBACK_WEIGHT 后仍受上限约束。
+    delta 范围始终限制在 [-FEEDBACK_WEIGHT, +FEEDBACK_WEIGHT]，
+    OV 原始分仍是排名主导因素。
     """
     if not items:
         return items
 
     try:
-        from curator import feedback_store
+        from curator import feedback_store as _fs
 
-        fb = feedback_store.load()
+        fb = _fs.load()
     except Exception as e:
         log.debug("feedback_store load failed: %s", e)
         return items  # feedback_store 不可用时静默跳过，不影响检索
@@ -136,15 +143,36 @@ def rerank_with_feedback(items: list) -> list:
             adjusted.append(item)
             continue
 
-        up = rec.get("up", 0)
-        down = rec.get("down", 0)
-        adopt = rec.get("adopt", 0)
-        total = up + down + adopt
+        stats = rec.get("stats_v2")
+        if stats and FEEDBACK_DECAY_ENABLED:
+            # Lazy decay at read time — clone to avoid mutating cached data
+            stats_copy = dict(stats)
+            _fs._apply_decay_to_stats(stats_copy, FEEDBACK_HALF_LIFE_DAYS)
 
-        # clamp 信号到 [0, 1] 再乘权重，确保 delta ∈ (-WEIGHT, +WEIGHT)
-        boost_signal = min(1.0, (up + adopt * 2) / (total + 1))
-        penalty_signal = min(1.0, down / (total + 1))
-        delta = round((boost_signal - penalty_signal) * FEEDBACK_WEIGHT, 4)
+            smooth = FEEDBACK_SMOOTH
+            up_w = stats_copy.get("up_w", 0.0)
+            down_w = stats_copy.get("down_w", 0.0)
+            adopt_w = stats_copy.get("adopt_w", 0.0)
+            seen_w = max(stats_copy.get("seen_w", 1.0), 1.0)
+
+            boost_signal = min(1.0, (up_w + adopt_w * FEEDBACK_ADOPT_COEF) / (seen_w + smooth))
+            penalty_signal = min(1.0, (down_w * FEEDBACK_DOWN_COEF) / (seen_w + smooth))
+            explore_bonus = FEEDBACK_EXPLORE_BONUS / math.sqrt(seen_w + 1)
+            # Clamp net signal to [-1, 1] so delta stays within FEEDBACK_WEIGHT bound
+            net_signal = max(-1.0, min(1.0, boost_signal - penalty_signal + explore_bonus))
+            delta = round(net_signal * FEEDBACK_WEIGHT, 4)
+        else:
+            # Legacy: raw integer counters — no stats_v2 yet or decay disabled.
+            # Use the same coefficients as the decay path to avoid a ranking
+            # discontinuity when a record transitions from legacy to stats_v2.
+            up = rec.get("up", 0)
+            down = rec.get("down", 0)
+            adopt = rec.get("adopt", 0)
+            total = up + down + adopt
+
+            boost_signal = min(1.0, (up + adopt * FEEDBACK_ADOPT_COEF) / (total + 1))
+            penalty_signal = min(1.0, (down * FEEDBACK_DOWN_COEF) / (total + 1))
+            delta = round((boost_signal - penalty_signal) * FEEDBACK_WEIGHT, 4)
 
         new_item = dict(item)
         original = float(item.get("score", 0) or 0)
@@ -152,7 +180,7 @@ def rerank_with_feedback(items: list) -> list:
         new_item["_feedback_delta"] = delta
         adjusted.append(new_item)
         if delta:
-            log.debug("feedback rerank: uri=%s delta=%+.4f (up=%d down=%d adopt=%d)", uri, delta, up, down, adopt)
+            log.debug("feedback rerank: uri=%s delta=%+.4f", uri, delta)
 
     # 重新按 score 降序排列
     adjusted.sort(key=lambda x: x.get("score", 0), reverse=True)
