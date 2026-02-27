@@ -191,7 +191,17 @@ def ov_retrieve(session_mgr_or_backend, query: str, limit: int = 10) -> dict:
 
     New code should call ``backend_retrieve(backend, query, session_id)``
     directly.
+
+    .. deprecated::
+        Use :func:`backend_retrieve` instead.
     """
+    import warnings
+
+    warnings.warn(
+        "ov_retrieve() is deprecated, use backend_retrieve() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from .backend import KnowledgeBackend
 
     if isinstance(session_mgr_or_backend, KnowledgeBackend):

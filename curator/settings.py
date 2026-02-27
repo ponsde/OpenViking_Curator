@@ -67,6 +67,8 @@ class CuratorSettings(BaseSettings):
 
     # ── Retrieval ──
     max_l2_depth: int = Field(default=2, ge=0)
+    retrieve_limit: int = Field(default=10, ge=1, le=100)
+    adopt_min_score: float = Field(default=0.3, ge=0.0, le=1.0)
 
     # ── Dedup ──
     dedup_similarity: float = Field(default=0.55, ge=0.0, le=1.0)
@@ -96,6 +98,10 @@ class CuratorSettings(BaseSettings):
     fast_route: str = "1"
     version: str = ""
     debug: str = ""
+
+    # ── Log rotation ──
+    log_rotate_mb: float = Field(default=5.0, ge=0.0)  # 0 = disable
+    log_rotate_keep: int = Field(default=3, ge=1, le=20)
 
     # ── Logging ──
     json_logging: str = "0"

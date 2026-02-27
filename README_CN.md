@@ -375,7 +375,6 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] 基于兴趣的主动搜索（query log + 反馈分析）
 - [x] 混合异步治理（sync budget + 后台线程 + trace 收割）
 - [ ] 覆盖率自动调优（基于 query log 动态阈值）
-- [ ] 第二个后端实现（超越 OpenViking）
 
 ## License
 

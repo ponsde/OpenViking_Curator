@@ -25,17 +25,37 @@ def locked_append(path: str | os.PathLike, line: str) -> None:
 
     Creates parent directories if needed.  The trailing newline is the
     caller's responsibility (most callers pass ``json.dumps(...) + "\\n"``).
+
+    Automatically rotates the file if it exceeds the configured size limit
+    (``CURATOR_LOG_ROTATE_MB``, default 5 MB).  Rotation and append share
+    a single sidecar lock to prevent race conditions.
     """
     path = str(path)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
+
+    # Use sidecar lock to serialise rotate + append as one critical section
+    lock_path = path + ".lock"
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
         if _HAS_FCNTL:
-            fcntl.flock(f, fcntl.LOCK_EX)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        # Rotate if needed (under the same lock)
         try:
+            from .config import LOG_ROTATE_KEEP, LOG_ROTATE_MB
+            from .log_rotation import maybe_rotate
+
+            maybe_rotate(path, max_mb=LOG_ROTATE_MB, keep=LOG_ROTATE_KEEP, _locked=True)
+        except Exception:
+            pass  # rotation failure must not block the append
+
+        # Append under the same lock
+        with open(path, "a", encoding="utf-8") as f:
             f.write(line)
-        finally:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_UN)
+    finally:
+        if _HAS_FCNTL:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def locked_write(path: str | os.PathLike, content: str) -> None:

@@ -39,7 +39,7 @@ except ImportError:
         pass
 
 
-from .config import ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, log, validate_config
+from .config import ADOPT_MIN_SCORE, ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, RETRIEVE_LIMIT, log, validate_config
 from .decision_report import format_report
 from .memory_capture import capture_case
 from .metrics import Metrics
@@ -368,7 +368,7 @@ def _run_impl_inner(
 
     # ── Step 2: 检索 ──
     log.info("STEP 2/4 检索...")
-    retrieval_result = backend_retrieve(backend, query, session_id=session_id, limit=10)
+    retrieval_result = backend_retrieve(backend, query, session_id=session_id, limit=RETRIEVE_LIMIT)
     all_items = retrieval_result["all_items"]
     m.step(
         "retrieve",
@@ -407,7 +407,6 @@ def _run_impl_inner(
 
     # ── 自动记录 OV 命中（feedback 学习）──
     # Only adopt URIs with meaningful scores; weight top results higher.
-    _ADOPT_MIN_SCORE = 0.3
     if used_uris:
         try:
             from curator import feedback_store
@@ -416,14 +415,14 @@ def _run_impl_inner(
             adopted = 0
             for rank, uri in enumerate(used_uris):
                 score = uri_scores.get(uri, 0)
-                if score < _ADOPT_MIN_SCORE:
+                if score < ADOPT_MIN_SCORE:
                     continue
                 # Top result gets double adopt (more reliable signal)
                 repeats = 2 if rank == 0 else 1
                 for _ in range(repeats):
                     feedback_store.apply(uri, "adopt")
                 adopted += 1
-            log.debug("feedback adopt: %d/%d uris (min_score=%.2f)", adopted, len(used_uris), _ADOPT_MIN_SCORE)
+            log.debug("feedback adopt: %d/%d uris (min_score=%.2f)", adopted, len(used_uris), ADOPT_MIN_SCORE)
         except Exception as _fb_err:
             log.debug("feedback_store 不可用，跳过: %s", _fb_err)
 

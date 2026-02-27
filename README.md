@@ -375,7 +375,6 @@ uv run mypy curator/ --ignore-missing-imports --exclude curator/legacy/
 - [x] Interest-based proactive search (query log + feedback analysis)
 - [x] Hybrid async governance (sync budget + background thread + trace harvest)
 - [ ] Coverage auto-tuning (dynamic thresholds from query log)
-- [ ] Second backend implementation (beyond OpenViking)
 
 ## License
 

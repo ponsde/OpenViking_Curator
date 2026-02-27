@@ -81,6 +81,10 @@ FEEDBACK_WEIGHT = _settings.feedback_weight
 # L2 full-read depth
 MAX_L2_DEPTH = _settings.max_l2_depth
 
+# Retrieval limit and feedback adopt threshold
+RETRIEVE_LIMIT = _settings.retrieve_limit
+ADOPT_MIN_SCORE = _settings.adopt_min_score
+
 # L0/L1 auto-summarization on ingest
 AUTO_SUMMARIZE = _settings.auto_summarize == "1"
 SUMMARIZE_MODELS = [m.strip() for m in (_settings.summarize_models or _settings.router_models).split(",") if m.strip()]
@@ -101,6 +105,10 @@ CHAT_RETRY_MAX = max(1, _settings.chat_retry_max)
 CHAT_RETRY_BACKOFF_SEC = max(0.0, _settings.chat_retry_backoff_sec)
 
 FAST_ROUTE = _settings.fast_route == "1"
+
+# ── Log rotation ──
+LOG_ROTATE_MB = _settings.log_rotate_mb
+LOG_ROTATE_KEEP = _settings.log_rotate_keep
 
 # ── Dedup ──
 DEDUP_SIMILARITY = _settings.dedup_similarity

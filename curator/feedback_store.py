@@ -65,11 +65,13 @@ def save(data):
     store = _resolve_store()
     store.parent.mkdir(parents=True, exist_ok=True)
     with open(store, "w", encoding="utf-8") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        if _HAS_FCNTL:
+            fcntl.flock(f, fcntl.LOCK_EX)
         try:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            if _HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def apply(uri: str, action: str):

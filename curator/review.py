@@ -156,6 +156,27 @@ from .config import (
 )
 
 
+def _is_transient_error(err: Exception) -> bool:
+    """Return True for transient errors worth retrying (timeout, 429, 5xx).
+
+    Permanent errors (4xx auth/validation) should not be retried.
+    Mirrors the classification in config._should_retry_chat_error.
+    """
+    import requests
+
+    if isinstance(err, requests.HTTPError):
+        resp = getattr(err, "response", None)
+        if resp is None:
+            return True
+        code = getattr(resp, "status_code", 0) or 0
+        return code == 429 or code >= 500
+    if isinstance(err, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(err, requests.RequestException):
+        return True
+    return False  # unknown exceptions (programming errors etc.) are not retried
+
+
 def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> JudgeResult:
     """Parse LLM output into a validated JudgeResult.
 
@@ -231,7 +252,10 @@ def judge_and_ingest(
             "   - 内容准确性、时效性、入库价值\n"
             "   - 超过1年未更新的标注[可能过时]\n"
             "   - 已取消/变更的功能当作当前事实 → pass=false\n\n"
-            "2. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
+            "2. **安全检查**：拒绝含以下内容的结果（pass=false）\n"
+            "   - PII：邮箱、电话、身份证号、家庭地址等个人信息\n"
+            "   - 有害内容：歧视、仇恨、暴力、非法活动指导\n\n"
+            "3. **冲突检测**：比较本地知识与外搜结果是否有结论冲突\n"
             "   - 细节差异不算冲突，结论矛盾才算\n\n"
             f"当前日期: {today}"
             f"{warnings_block}\n\n"
@@ -268,6 +292,10 @@ def judge_and_ingest(
             break
         except Exception as e:
             last_err = e
+            if not _is_transient_error(e):
+                log.warning("judge: permanent error on model=%s: %s", jm, e)
+                break
+            log.debug("judge: transient error on model=%s, trying next: %s", jm, e)
             continue
 
     result = _parse_judge_output(out, fallback_reason=f"judge_fail:{last_err}")
@@ -302,6 +330,10 @@ def judge_and_pack(query: str, external_text: str):
             break
         except Exception as e:
             last_err = e
+            if not _is_transient_error(e):
+                log.warning("judge_and_pack: permanent error on model=%s: %s", jm, e)
+                break
+            log.debug("judge_and_pack: transient error on model=%s, trying next: %s", jm, e)
             continue
 
     if out is None:

@@ -48,7 +48,7 @@ from .domain_filter import (
 )
 from .freshness import uri_freshness_score
 from .pipeline_v2 import run
-from .retrieval_v2 import assess_coverage, load_context, ov_retrieve
+from .retrieval_v2 import assess_coverage, backend_retrieve, load_context, ov_retrieve
 from .review import (
     JudgeResult,
     detect_conflict,
@@ -74,7 +74,7 @@ __all__ = [
     "InMemoryBackend",
     # v2 pipeline
     "run",
-    "ov_retrieve",
+    "backend_retrieve",
     "load_context",
     "assess_coverage",
     "OVClient",
