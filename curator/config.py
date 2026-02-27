@@ -53,6 +53,7 @@ TAVILY_KEY = _settings.tavily_key
 # Domain filtering for external search results.
 ALLOWED_DOMAINS = [d.strip().lower() for d in _settings.allowed_domains.split(",") if d.strip()]
 BLOCKED_DOMAINS = [d.strip().lower() for d in _settings.blocked_domains.split(",") if d.strip()]
+DOMAIN_FILTER_STRICT = _settings.domain_filter_strict in ("1", "true", "yes")
 
 # Concurrent search mode
 SEARCH_CONCURRENT = _settings.search_concurrent == "1"

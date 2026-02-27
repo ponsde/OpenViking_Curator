@@ -23,6 +23,56 @@ from .config import (
 # ── assess_coverage tuning constants ──
 # These are internal signal-weighting parameters, not user-facing thresholds.
 # User-facing thresholds (COV_SUFFICIENT etc.) live in config.py / settings.py.
+#
+# Tuning guide
+# ────────────
+# Score-gap penalty
+#   Rationale: a single strong hit with no runners-up is likely a false match
+#   (OV may have indexed a loosely related document).  The gap between top-1
+#   and top-2 scores signals this "isolated hit" scenario.
+#   _GAP_PENALTY_THRESHOLD = 0.25  — gap must be large before we penalise;
+#       smaller values trip the penalty too easily on legitimate single-doc queries.
+#   _GAP_PENALTY_MULTIPLIER = 0.3  — raw_penalty = gap * multiplier; 0.3 gives
+#       roughly 0.075 penalty for a gap of 0.25, i.e. a ~8% coverage reduction.
+#   _GAP_PENALTY_CAP = 0.10  — hard ceiling prevents extreme gaps (gap=0.9)
+#       from penalising coverage to zero on genuinely good single-hit matches.
+#   To make the penalty stricter:  lower threshold or raise multiplier.
+#   To soften it:                  raise threshold or lower multiplier / cap.
+
+# Keyword-overlap penalty
+#   Rationale: OV's embedding search may return semantically similar documents
+#   that do not actually mention the user's exact technical terms (e.g. "redis
+#   sentinel" query matches a generic "high-availability" doc).  Keyword overlap
+#   provides a lexical cross-check.
+#   _KW_OVERLAP_LOW = 0.4   — below 40% keyword coverage → big penalty
+#   _KW_OVERLAP_MED = 0.6   — 40–60% keyword coverage → small penalty
+#   _KW_PENALTY_LOW = 0.08  — 8% coverage reduction for poor keyword match.
+#       Chosen to be smaller than the gap cap (0.10) so both can compound
+#       without wiping out a legitimately matching document.
+#   _KW_PENALTY_MED = 0.04  — 4% reduction for partial match.
+#   To increase lexical strictness: raise _KW_OVERLAP_MED and penalties.
+#   To reduce: lower thresholds or set penalties to 0.
+
+# Scale factor (result-count reliability discount)
+#   Rationale: with only 1–3 results the OV score distribution is statistically
+#   unreliable; scale < 1.0 prevents over-confidence on thin result sets.
+#   _SCALE_FACTOR_BASE = 0.75  — 75% confidence floor with a single result.
+#   _SCALE_FACTOR_PER_ITEM = 0.03  — adds 3% per additional result, saturating
+#       at 1.0 around 9 results.  Increase if a 3-result return should already
+#       be considered reliable; decrease to be more conservative.
+
+# Per-branch coverage adjustments
+#   Rationale: these fine-tune the final coverage score for each decision branch
+#   so that the transitions between "sufficient / marginal / low / insufficient"
+#   are gradual rather than hard step-functions.
+#   _COV_BONUS_SUFFICIENT = 0.2   — adds 0.20 when the top score clears the
+#       "clearly sufficient" bar; rewards high-quality matches.
+#   _COV_DISCOUNT_MARGINAL = 0.5  — multiplies gap_penalty in the marginal
+#       branch; at 0.5 the gap contributes less, softening the boundary.
+#   _COV_DISCOUNT_LOW = 0.8       — 80% scale on a coverage-low result;
+#       acknowledges that something was found, just not great.
+#   _COV_DISCOUNT_INSUFFICIENT = 0.5 — 50% scale when below the low threshold;
+#       signals that external search is likely needed.
 
 # Score-gap penalty: if top1 - top2 > this, it looks like an isolated hit
 _GAP_PENALTY_THRESHOLD = 0.25

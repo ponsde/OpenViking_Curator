@@ -34,7 +34,8 @@ class TestSearchGrok:
         with patch.object(m, "chat", return_value="grok answer") as mock_chat:
             result = m._search_grok("what is openviking?", SCOPE)
 
-        assert result == "grok answer"
+        # Raw text fallback gets unverified notice prepended
+        assert "grok answer" in result
         mock_chat.assert_called_once()
 
     def test_prompt_contains_query(self):
@@ -527,3 +528,31 @@ class TestParseSearchResultsJson:
         assert results is not None
         assert len(results) == 1
         assert "items[0]" in results[0].snippet
+
+
+class TestLLMGeneratedAnnotation:
+    """Verify LLM-generated search results are correctly annotated."""
+
+    def test_format_results_shows_unverified_for_llm_generated(self):
+        from curator.search_providers import WebSearchResult, format_results
+
+        results = [
+            WebSearchResult(title="T", url="https://x.com", source_type="llm_generated"),
+        ]
+        text = format_results(results)
+        assert "Unverified" in text or "unverified" in text.lower()
+
+    def test_format_results_no_notice_for_web(self):
+        from curator.search_providers import WebSearchResult, format_results
+
+        results = [
+            WebSearchResult(title="T", url="https://x.com", source_type="web"),
+        ]
+        text = format_results(results)
+        assert "Unverified" not in text
+
+    def test_web_search_result_default_source_type(self):
+        from curator.search_providers import WebSearchResult
+
+        r = WebSearchResult(title="T", url="https://x.com")
+        assert r.source_type == "web"

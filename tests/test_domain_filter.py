@@ -176,3 +176,42 @@ class TestBuildDomainPromptHint:
         hint = build_domain_prompt_hint(["trusted.com"], ["spam.com"])
         assert "trusted.com" in hint
         assert "spam.com" in hint
+
+
+class TestStrictMode:
+    """Verify strict=True drops no-URL items/lines in allowlist mode."""
+
+    def test_filter_results_strict_drops_no_url(self):
+        from curator.domain_filter import filter_results_by_domain
+
+        results = [
+            {"url": "https://trusted.com/page"},
+            {"url": ""},  # empty URL
+            {"other_key": "data"},  # no url key at all
+        ]
+        out = filter_results_by_domain(results, "url", allowed=["trusted.com"], blocked=[], strict=True)
+        assert len(out) == 1
+        assert out[0]["url"] == "https://trusted.com/page"
+
+    def test_filter_results_nonstrict_keeps_no_url(self):
+        from curator.domain_filter import filter_results_by_domain
+
+        results = [{"url": "https://trusted.com/page"}, {"other_key": "data"}]
+        out = filter_results_by_domain(results, "url", allowed=["trusted.com"], blocked=[], strict=False)
+        assert len(out) == 2
+
+    def test_filter_text_strict_drops_no_url_lines(self):
+        from curator.domain_filter import filter_text_by_domain
+
+        text = "Good line https://trusted.com/doc\nNo URL here\nBad https://evil.com/x\n"
+        out = filter_text_by_domain(text, allowed=["trusted.com"], blocked=[], strict=True)
+        assert "Good line" in out
+        assert "No URL here" not in out  # strict: no URL → dropped
+        assert "evil.com" not in out
+
+    def test_filter_text_nonstrict_keeps_no_url_lines(self):
+        from curator.domain_filter import filter_text_by_domain
+
+        text = "Good line https://trusted.com/doc\nNo URL here\n"
+        out = filter_text_by_domain(text, allowed=["trusted.com"], blocked=[], strict=False)
+        assert "No URL here" in out

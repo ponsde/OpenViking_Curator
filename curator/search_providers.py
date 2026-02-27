@@ -34,6 +34,7 @@ from typing import Any
 from .config import (
     ALLOWED_DOMAINS,
     BLOCKED_DOMAINS,
+    DOMAIN_FILTER_STRICT,
     GROK_BASE,
     GROK_KEY,
     GROK_MODEL,
@@ -66,23 +67,45 @@ _TIME_KEYWORDS = _build_time_keywords_pattern()
 
 @dataclass
 class WebSearchResult:
-    """External web search result (distinct from backend.SearchResult for KB retrieval)."""
+    """External web search result (distinct from backend.SearchResult for KB retrieval).
+
+    Attributes:
+        source_type: ``"web"`` for real crawled results (DuckDuckGo / Tavily),
+            ``"llm_generated"`` for Grok / OAI providers whose output is an LLM
+            synthesis rather than a verified web page.  Downstream code and the
+            judge prompt should treat ``llm_generated`` results as unverified.
+    """
 
     title: str
     url: str
     date: str = ""
     snippet: str = ""
+    source_type: str = "web"  # "web" | "llm_generated"
 
 
 # Backward-compatible alias — remove in next major version
 SearchResult = WebSearchResult
 
+_LLM_GENERATED_NOTICE = (
+    "> ⚠️ **Unverified (LLM-generated)**: "
+    "The following results were synthesised by an LLM, not retrieved from live web pages. "
+    "Treat URLs and facts as unverified until confirmed.\n"
+)
+
 
 def format_results(results: list[WebSearchResult]) -> str:
-    """Format structured search results to markdown text (backward compatible)."""
+    """Format structured search results to markdown text (backward compatible).
+
+    LLM-generated results (source_type='llm_generated') are prefixed with an
+    unverified notice so downstream consumers and the judge can apply appropriate
+    scepticism.
+    """
     if not results:
         return ""
     parts = []
+    has_llm = any(getattr(r, "source_type", "web") == "llm_generated" for r in results)
+    if has_llm:
+        parts.append(_LLM_GENERATED_NOTICE)
     for r in results:
         parts.append(f"**{r.title}**\n{r.url}\n{r.snippet}")
     return "\n\n".join(parts)
@@ -187,9 +210,13 @@ def _search_grok(query: str, scope: dict) -> list[WebSearchResult] | str:
     )
     parsed = _parse_search_results_json(raw)
     if parsed:
-        log.debug("grok provider: parsed %d structured results", len(parsed))
+        # Mark as LLM-generated: Grok synthesises results, not live web crawl
+        for r in parsed:
+            r.source_type = "llm_generated"
+        log.debug("grok provider: parsed %d structured results (llm_generated)", len(parsed))
         return parsed
-    return raw
+    # Raw text fallback: still LLM-generated, prepend unverified notice
+    return _LLM_GENERATED_NOTICE + raw if raw else raw
 
 
 # Keep legacy name for backward compatibility
@@ -218,9 +245,13 @@ def _search_oai(query: str, scope: dict) -> list[WebSearchResult] | str:
     )
     parsed = _parse_search_results_json(raw)
     if parsed:
-        log.debug("oai provider: parsed %d structured results", len(parsed))
+        # Mark as LLM-generated: OAI synthesises results, not live web crawl
+        for r in parsed:
+            r.source_type = "llm_generated"
+        log.debug("oai provider: parsed %d structured results (llm_generated)", len(parsed))
         return parsed
-    return raw
+    # Raw text fallback: still LLM-generated, prepend unverified notice
+    return _LLM_GENERATED_NOTICE + raw if raw else raw
 
 
 def oai_search(query: str, scope: dict, **kwargs) -> str:
@@ -243,7 +274,7 @@ def _search_duckduckgo(query: str, scope: dict) -> list[WebSearchResult]:
     if not results:
         return []
 
-    results = filter_results_by_domain(results, "href", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
+    results = filter_results_by_domain(results, "href", ALLOWED_DOMAINS, BLOCKED_DOMAINS, strict=DOMAIN_FILTER_STRICT)
     if not results:
         return []
 
@@ -279,7 +310,7 @@ def _search_tavily(query: str, scope: dict) -> list[WebSearchResult]:
     if not results:
         return []
 
-    results = filter_results_by_domain(results, "url", ALLOWED_DOMAINS, BLOCKED_DOMAINS)
+    results = filter_results_by_domain(results, "url", ALLOWED_DOMAINS, BLOCKED_DOMAINS, strict=DOMAIN_FILTER_STRICT)
     if not results:
         return []
 

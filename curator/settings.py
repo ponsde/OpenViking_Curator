@@ -46,6 +46,7 @@ class CuratorSettings(BaseSettings):
     tavily_key: str = Field(default="", validation_alias="CURATOR_TAVILY_KEY")
     allowed_domains: str = ""
     blocked_domains: str = ""
+    domain_filter_strict: str = "0"  # "1" → drop no-URL results in allowlist mode
     search_concurrent: str = "0"
     search_timeout: float = Field(default=60.0, ge=1.0)
     search_provider_timeout: float = Field(default=55.0, ge=1.0)

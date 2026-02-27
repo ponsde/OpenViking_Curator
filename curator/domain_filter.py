@@ -94,6 +94,7 @@ def filter_results_by_domain(
     url_key: str,
     allowed: list,
     blocked: list,
+    strict: bool = False,
 ) -> list:
     """Filter a list of result dicts by domain rules.
 
@@ -102,10 +103,14 @@ def filter_results_by_domain(
         url_key:  Key inside each dict that holds the URL ("href" for DDG,
                   "url" for Tavily).
         allowed:  Whitelist. If non-empty, only results whose URL matches are
-                  kept — PLUS results that have no URL key (can't determine,
-                  kept by default).
+                  kept.  In non-strict mode results without a URL are kept by
+                  default; in strict mode they are dropped.
         blocked:  Blacklist. Results matching any blocked domain are removed.
                   Takes precedence over *allowed*.
+        strict:   When ``True`` and *allowed* is non-empty, results that have
+                  no URL are dropped instead of kept.  Enable via
+                  ``CURATOR_DOMAIN_FILTER_STRICT=1`` to enforce a hard
+                  allowlist (unverifiable sources are discarded).
 
     Returns a new list; input is not modified.
     """
@@ -119,7 +124,9 @@ def filter_results_by_domain(
         url = item.get(url_key, "")
 
         if not url:
-            # No URL to check — keep by default (can't determine domain).
+            # No URL: keep by default unless strict allowlist mode is active.
+            if allowed and strict:
+                continue  # strict: can't verify domain → drop
             out.append(item)
             continue
 
@@ -139,18 +146,19 @@ def filter_results_by_domain(
 _URL_RE = re.compile(r"https?://[^\s\)\]\"'>]+", re.IGNORECASE)
 
 
-def filter_text_by_domain(text: str, allowed: list, blocked: list) -> str:
+def filter_text_by_domain(text: str, allowed: list, blocked: list, strict: bool = False) -> str:
     """Filter free-form text by removing lines that reference blocked/non-allowed domains.
 
-    Lines that contain NO URL are always preserved (they carry context).
-    Lines that contain at least one URL are checked:
-      - If any URL in the line matches a blocked domain → line dropped.
-      - If allowed is set and NO URL in the line matches an allowed domain → line dropped.
+    Lines that contain at least one URL are checked against *blocked* and
+    *allowed* lists.  Lines that contain NO URL are kept by default; in
+    strict mode they are also dropped when an allowlist is active.
 
     Args:
         text:    Free-form multi-line string (e.g. Grok/OAI search result).
         allowed: Whitelist. If empty, no whitelist filtering.
         blocked: Blacklist. If empty, no blacklist filtering.
+        strict:  When ``True`` and *allowed* is non-empty, lines that contain
+                 no URL are dropped (unverifiable source → discard).
 
     Returns the filtered text with the same line endings.
     """
@@ -163,7 +171,8 @@ def filter_text_by_domain(text: str, allowed: list, blocked: list) -> str:
     for line in text.splitlines(keepends=True):
         urls = _URL_RE.findall(line)
         if not urls:
-            # No URL → always keep.
+            if allowed and strict:
+                continue  # strict: no URL → can't verify domain → drop
             out_lines.append(line)
             continue
 
