@@ -77,20 +77,24 @@ class TestAsyncIngest(unittest.TestCase):
         backend = InMemoryBackend()
         judge_started = threading.Event()
         judge_proceed = threading.Event()
+        judge_done = threading.Event()
 
         def slow_judge(*a, **kw):
             judge_started.set()
             judge_proceed.wait(timeout=5)  # block until test signals
-            return {
-                "pass": True,
-                "trust": 8,
-                "freshness": "current",
-                "reason": "ok",
-                "markdown": "# Async Test",
-                "has_conflict": False,
-                "conflict_summary": "",
-                "conflict_points": [],
-            }
+            try:
+                return {
+                    "pass": True,
+                    "trust": 8,
+                    "freshness": "current",
+                    "reason": "ok",
+                    "markdown": "# Async Test",
+                    "has_conflict": False,
+                    "conflict_summary": "",
+                    "conflict_points": [],
+                }
+            finally:
+                judge_done.set()
 
         patches = self._mock_pipeline_deps()
         patches["judge_and_ingest"] = MagicMock(side_effect=slow_judge)
@@ -109,9 +113,9 @@ class TestAsyncIngest(unittest.TestCase):
                 # Verify the background thread actually started
                 self.assertTrue(judge_started.wait(timeout=3), "background judge thread did not start")
 
-                # Let the background judge finish inside patch scope
+                # Let the background judge finish; wait for completion instead of sleeping
                 judge_proceed.set()
-                time.sleep(0.3)
+                self.assertTrue(judge_done.wait(timeout=3), "background judge thread did not complete")
 
     def test_async_on_still_returns_external_text(self):
         """Async mode should include external_text in the result."""
@@ -146,9 +150,13 @@ class TestAsyncIngest(unittest.TestCase):
         from curator.backend_memory import InMemoryBackend
 
         backend = InMemoryBackend()
+        judge_done = threading.Event()
 
         def failing_judge(*a, **kw):
-            raise RuntimeError("LLM unavailable")
+            try:
+                raise RuntimeError("LLM unavailable")
+            finally:
+                judge_done.set()
 
         patches = self._mock_pipeline_deps()
         patches["judge_and_ingest"] = MagicMock(side_effect=failing_judge)
@@ -160,8 +168,8 @@ class TestAsyncIngest(unittest.TestCase):
                 # Should not raise
                 result = run("test query", backend=backend, auto_ingest=True)
                 self.assertTrue(result["meta"].get("async_ingest_pending", False))
-                # Wait for background thread to complete inside patch scope
-                time.sleep(0.5)
+                # Wait for background thread to complete instead of sleeping
+                self.assertTrue(judge_done.wait(timeout=3), "background thread did not complete")
 
     def test_async_off_when_no_external(self):
         """When coverage is sufficient, no external search, no async needed."""
