@@ -111,15 +111,15 @@ CURATOR_OAI_KEY=sk-your-key
 
 # ── External search: pick ONE option ──
 
-# Option A: reuse your OAI endpoint for search (easiest — no extra key)
-CURATOR_SEARCH_PROVIDERS=oai
+# Option A: Grok (recommended — best real-time web search)
+CURATOR_SEARCH_PROVIDERS=grok
+CURATOR_GROK_BASE=https://api.x.ai/v1
+CURATOR_GROK_KEY=your-grok-key
 
-# Option B: Grok (recommended for best real-time web search)
-# CURATOR_SEARCH_PROVIDERS=grok
-# CURATOR_GROK_BASE=https://api.x.ai/v1
-# CURATOR_GROK_KEY=your-grok-key
+# Option B: any OpenAI-compatible endpoint (uses CURATOR_OAI_BASE + CURATOR_OAI_KEY)
+# CURATOR_SEARCH_PROVIDERS=oai
 
-# Option C: DuckDuckGo (no key needed; pip install duckduckgo-search)
+# Option C: DuckDuckGo (no API key needed; pip install duckduckgo-search)
 # CURATOR_SEARCH_PROVIDERS=duckduckgo
 ```
 
@@ -399,7 +399,7 @@ At least one search provider must be configured (see Search section below). `duc
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CURATOR_SEARCH_PROVIDERS` | `oai` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `oai` reuses your LLM key; `duckduckgo` requires no key. |
+| `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `oai` reuses your LLM key; `duckduckgo` requires no key. No Grok key? Set to `oai`. |
 | `CURATOR_GROK_BASE` | _(empty)_ | Grok API base URL (required if using `grok` provider) |
 | `CURATOR_GROK_KEY` | _(empty)_ | Grok API key |
 | `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model name |

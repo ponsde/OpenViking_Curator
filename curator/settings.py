@@ -42,7 +42,7 @@ class CuratorSettings(BaseSettings):
     grok_model: str = "grok-4-fast"
 
     # ── Search ──
-    search_providers: str = "oai"
+    search_providers: str = "grok"
     tavily_key: str = Field(default="", validation_alias="CURATOR_TAVILY_KEY")
     allowed_domains: str = ""
     blocked_domains: str = ""

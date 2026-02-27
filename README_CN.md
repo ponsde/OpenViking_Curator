@@ -111,15 +111,15 @@ CURATOR_OAI_KEY=sk-your-key
 
 # ── 外部搜索：三选一 ──
 
-# 方案 A：直接复用上面的 OAI 端点搜索（最简单——不用额外 key）
-CURATOR_SEARCH_PROVIDERS=oai
+# 方案 A：Grok（推荐——实时联网搜索效果最好）
+CURATOR_SEARCH_PROVIDERS=grok
+CURATOR_GROK_BASE=https://api.x.ai/v1
+CURATOR_GROK_KEY=your-grok-key
 
-# 方案 B：Grok（推荐，实时联网搜索效果最好）
-# CURATOR_SEARCH_PROVIDERS=grok
-# CURATOR_GROK_BASE=https://api.x.ai/v1
-# CURATOR_GROK_KEY=your-grok-key
+# 方案 B：任意 OpenAI 兼容端点（使用 CURATOR_OAI_BASE + CURATOR_OAI_KEY）
+# CURATOR_SEARCH_PROVIDERS=oai
 
-# 方案 C：DuckDuckGo（不需要 key；需 pip install duckduckgo-search）
+# 方案 C：DuckDuckGo（不需要 API key；需 pip install duckduckgo-search）
 # CURATOR_SEARCH_PROVIDERS=duckduckgo
 ```
 
@@ -399,7 +399,7 @@ MCP 服务与 CLI 使用相同的环境变量。最低要求：
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `CURATOR_SEARCH_PROVIDERS` | `oai` | 逗号分隔：`grok,oai,duckduckgo,tavily`（按序 fallback）。`oai` 复用 LLM key；`duckduckgo` 无需 key |
+| `CURATOR_SEARCH_PROVIDERS` | `grok` | 逗号分隔：`grok,oai,duckduckgo,tavily`（按序 fallback）。`oai` 复用 LLM key；`duckduckgo` 无需 key。没有 Grok key？设为 `oai` |
 | `CURATOR_GROK_BASE` | _(空)_ | Grok API 地址（使用 grok provider 时必填）|
 | `CURATOR_GROK_KEY` | _(空)_ | Grok API key |
 | `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok 模型名 |
