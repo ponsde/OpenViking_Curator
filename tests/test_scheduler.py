@@ -314,3 +314,38 @@ class TestSchedulerStatus:
         assert len(status["jobs"]) == 1
         assert status["jobs"][0]["id"] == "freshness_scan"
         assert "2026-01-01" in status["jobs"][0]["next_run"]
+
+
+class TestSchedulerIntervalValidation:
+    """Verify scheduler interval clamping for edge-case values."""
+
+    def test_zero_interval_clamped_to_one(self, monkeypatch):
+        """CURATOR_FRESHNESS_INTERVAL_HOURS=0 should be clamped to 1h, not crash."""
+        monkeypatch.setattr(sched, "_scheduler", None)
+        monkeypatch.setenv("CURATOR_SCHEDULER_ENABLED", "1")
+        monkeypatch.setenv("CURATOR_FRESHNESS_INTERVAL_HOURS", "0")
+        monkeypatch.setenv("CURATOR_STRENGTHEN_INTERVAL_HOURS", "-5")
+
+        mock_sched = MagicMock()
+        with patch("apscheduler.schedulers.background.BackgroundScheduler", return_value=mock_sched):
+            result = sched.start_scheduler()
+
+        assert result is True
+        # Both add_job calls should use clamped hours (>= 1.0)
+        for call in mock_sched.add_job.call_args_list:
+            assert call.kwargs.get("hours", call[1].get("hours", 1)) >= 1.0
+        sched.stop_scheduler()
+
+    def test_non_numeric_interval_raises(self, monkeypatch):
+        """Non-numeric interval should cause start_scheduler to return False (caught)."""
+        monkeypatch.setattr(sched, "_scheduler", None)
+        monkeypatch.setenv("CURATOR_SCHEDULER_ENABLED", "1")
+        monkeypatch.setenv("CURATOR_FRESHNESS_INTERVAL_HOURS", "not-a-number")
+
+        mock_sched = MagicMock()
+        with patch("apscheduler.schedulers.background.BackgroundScheduler", return_value=mock_sched):
+            result = sched.start_scheduler()
+
+        # Should fail gracefully (ValueError caught in the try block)
+        assert result is False
+        sched.stop_scheduler()

@@ -252,15 +252,15 @@ class TestJudgeResult:
         assert jr.conflict_points == []
 
     def test_trust_bounds(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             JudgeResult(trust=11)
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             JudgeResult(trust=-1)
 
     def test_freshness_validation(self):
         jr = JudgeResult(freshness="current")
         assert jr.freshness == "current"
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             JudgeResult(freshness="invalid")
 
     def test_to_pipeline_dict(self):

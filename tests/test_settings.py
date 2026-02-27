@@ -67,19 +67,19 @@ class TestCuratorSettingsValidation:
     def test_threshold_rejects_out_of_range(self):
         from curator.settings import CuratorSettings
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             CuratorSettings(threshold_cov_sufficient=1.5)
 
     def test_threshold_rejects_negative(self):
         from curator.settings import CuratorSettings
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             CuratorSettings(feedback_weight=-0.1)
 
     def test_cb_threshold_rejects_zero(self):
         from curator.settings import CuratorSettings
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             CuratorSettings(cb_threshold=0)
 
     def test_provider_timeout_clamped(self):
