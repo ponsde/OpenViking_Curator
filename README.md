@@ -76,8 +76,9 @@ flowchart TD
 
 - Python 3.10+
 - A working [OpenViking](https://github.com/volcengine/OpenViking) setup (embedded or HTTP mode)
-- An OpenAI-compatible API endpoint (for LLM review)
-- A search API (Grok recommended, or DuckDuckGo/Tavily)
+  > **New to OpenViking?** Install it and run it first. For embedded mode, copy `ov.conf.example` to `ov.conf` and fill in your embedding API keys.
+- An OpenAI-compatible API endpoint (for LLM judge/review)
+- A search API: Grok (recommended) or DuckDuckGo (no key required) or Tavily
 
 ### Install
 
@@ -113,12 +114,12 @@ CURATOR_GROK_BASE=https://your-grok-endpoint/v1
 CURATOR_GROK_KEY=your-grok-key
 ```
 
-Three endpoints, three keys. That's it.
+OV config, one LLM endpoint, one search endpoint. That's the minimum to get started.
 
 ### Run
 
 ```bash
-python3 curator_query.py --status                         # Health check
+python3 curator_query.py --status                         # Health check — look for "✅ connected" under openviking
 python3 curator_query.py "How to deploy Redis in Docker?" # Query
 python3 curator_query.py --review "sensitive topic"       # Review mode (no auto-ingest)
 python3 mcp_server.py                                     # MCP server (stdio JSON-RPC)
@@ -259,6 +260,7 @@ Add the following block to your Claude Desktop config file:
         "OPENVIKING_CONFIG_FILE": "/absolute/path/to/your/ov.conf",
         "CURATOR_OAI_BASE": "https://your-llm-api.com/v1",
         "CURATOR_OAI_KEY": "sk-your-key",
+        "CURATOR_GROK_BASE": "https://api.x.ai/v1",
         "CURATOR_GROK_KEY": "your-grok-key"
       }
     }
@@ -358,7 +360,8 @@ The MCP server relies on the same environment variables as the CLI. Ensure at mi
 | `OV_BASE_URL` | Yes (HTTP mode) | OV HTTP server URL (e.g. `http://127.0.0.1:9100`) |
 | `CURATOR_OAI_BASE` | Yes | OpenAI-compatible LLM base URL |
 | `CURATOR_OAI_KEY` | Yes | LLM API key |
-| `CURATOR_GROK_KEY` | Recommended | Grok API key for external search |
+| `CURATOR_GROK_BASE` | Recommended (if grok) | Grok API base URL (e.g. `https://api.x.ai/v1`) |
+| `CURATOR_GROK_KEY` | Recommended (if grok) | Grok API key for external search |
 
 See `.env.example` for the full list of optional tuning variables (thresholds, search providers, conflict strategy, etc.).
 
@@ -370,23 +373,27 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 
 | Variable | Description |
 |----------|-------------|
-| `OPENVIKING_CONFIG_FILE` | Path to `ov.conf` (embedded mode) |
-| `CURATOR_OAI_BASE` | OpenAI-compatible API base URL |
-| `CURATOR_OAI_KEY` | API key for above |
-| `CURATOR_GROK_KEY` | Grok API key (external search) |
+| `OPENVIKING_CONFIG_FILE` | Path to `ov.conf` (embedded mode; copy from `ov.conf.example`) |
+| `CURATOR_OAI_BASE` | OpenAI-compatible LLM base URL |
+| `CURATOR_OAI_KEY` | API key for the LLM |
+
+At least one search provider must be configured (see Search section below). `duckduckgo` requires no key.
 
 ### OV mode
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OV_BASE_URL` | _(empty)_ | Set to use HTTP mode. Empty = embedded mode. |
-| `OV_DATA_PATH` | `./data` | OV data directory (embedded mode) |
+| `OV_DATA_PATH` | `./data` | OV data directory; Curator uses this to locate session files — must match OV's actual data path |
 
 ### Search
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,duckduckgo,tavily` (fallback chain) |
+| `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `duckduckgo` requires no key. |
+| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok API base URL (required if using `grok` provider) |
+| `CURATOR_GROK_KEY` | _(empty)_ | Grok API key |
+| `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model name |
 | `CURATOR_SEARCH_CONCURRENT` | `0` | `1` = fire all providers in parallel |
 | `CURATOR_SEARCH_TIMEOUT` | `60` | Global search timeout (seconds) |
 | `CURATOR_TAVILY_KEY` | _(empty)_ | Tavily API key (if using tavily provider) |
@@ -430,8 +437,11 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CURATOR_JUDGE_MODELS` | _(from ROUTER_MODELS)_ | Comma-separated judge model fallback chain (strong model recommended) |
+| `CURATOR_ROUTER_MODELS` | `gpt-4o-mini` | Comma-separated router model fallback chain |
 | `CURATOR_ASYNC_INGEST` | `0` | `1` = fire-and-forget background ingest |
 | `CURATOR_CONFLICT_STRATEGY` | `auto` | `auto` / `local` / `external` / `human` |
+| `CURATOR_AUTO_SUMMARIZE` | `0` | `1` = generate L0/L1 summaries on ingest (one extra LLM call per ingest) |
 | `CURATOR_CB_ENABLED` | `1` | Circuit breaker (`0` to disable) |
 | `CURATOR_CACHE_ENABLED` | `0` | Search result cache |
 | `CURATOR_FEEDBACK_WEIGHT` | `0.10` | Feedback score adjustment (max delta) |
@@ -439,6 +449,8 @@ All via `.env` (git-ignored). See `.env.example` for a full template.
 | `CURATOR_CHAT_RETRY_MAX` | `3` | LLM retry attempts |
 
 ## Maintenance
+
+> All commands require the virtual environment to be active: `source .venv/bin/activate`
 
 ```bash
 # Weak topic analysis

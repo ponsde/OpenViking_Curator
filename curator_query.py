@@ -168,7 +168,7 @@ def run_status() -> dict:
         val = os.getenv(key, "")
         result["config"][key] = "✅ set" if val else "❌ missing"
 
-    result["config"]["CURATOR_SEARCH_PROVIDER"] = os.getenv("CURATOR_SEARCH_PROVIDER", "grok (default)")
+    result["config"]["CURATOR_SEARCH_PROVIDERS"] = os.getenv("CURATOR_SEARCH_PROVIDERS", "grok (default)")
 
     # OpenViking check
     try:
