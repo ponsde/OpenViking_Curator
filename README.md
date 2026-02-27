@@ -171,6 +171,193 @@ apply("viking://resources/doc-id", "up")    # mark helpful
 apply("viking://resources/doc-id", "down")  # mark unhelpful
 ```
 
+## MCP Server
+
+Curator ships a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes the full query/ingest/status pipeline as callable tools over stdio JSON-RPC, letting any MCP-compatible client (Claude Desktop, Cursor, mcporter, custom agents, etc.) talk to your knowledge base without writing any glue code.
+
+### Start the server
+
+```bash
+# Stdio mode — the MCP client starts this process and speaks JSON-RPC over stdin/stdout
+python3 mcp_server.py
+```
+
+The server loads `.env` automatically on startup (same directory as `mcp_server.py`). No network port is opened; all communication is via stdio.
+
+### Available tools
+
+#### `curator_query`
+
+Query the knowledge base. Runs the full pipeline: routing check, L0/L1/L2 retrieval, external search (if needed), judge + conflict detection, and optional ingest.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | yes | The question to answer. Accepts Chinese or English. |
+
+Returns a JSON object with fields:
+
+| Field | Description |
+|-------|-------------|
+| `routed` | `false` if the router decided no KB lookup is needed (question answered directly) |
+| `reason` | Routing decision reason (when `routed=false`) |
+| `context_text` | Retrieved local context |
+| `external_text` | External search result (if triggered) |
+| `coverage` | Local coverage score (0.0 to 1.0) |
+| `conflict` | Conflict detection summary |
+| `decision_report` | ASCII decision report |
+| `meta` | Pipeline metadata (`ingested`, `llm_calls`, `run_id`, etc.) |
+
+#### `curator_ingest`
+
+Manually add a Markdown document to the knowledge base.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `title` | string | yes | Document title (truncated to 60 chars) |
+| `content` | string | yes | Document body in Markdown format |
+
+Returns:
+
+| Field | Description |
+|-------|-------------|
+| `success` | `true` on success |
+| `uri` | Assigned `viking://` URI of the ingested resource |
+| `error` | Error message (only present on failure) |
+
+#### `curator_status`
+
+Check knowledge base health and resource count. Takes no parameters.
+
+Returns:
+
+| Field | Description |
+|-------|-------------|
+| `health` | OV health status string (e.g. `"ok"`) |
+| `resource_count` | Number of resources in `viking://resources/` |
+| `base_url` | OV base URL that was queried |
+| `error` | Error message (only present on failure) |
+
+### Connect Claude Desktop
+
+Add the following block to your Claude Desktop config file:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "openviking-curator": {
+      "command": "/absolute/path/to/.venv/bin/python3",
+      "args": ["/absolute/path/to/OpenViking_Curator/mcp_server.py"],
+      "env": {
+        "OPENVIKING_CONFIG_FILE": "/absolute/path/to/your/ov.conf",
+        "CURATOR_OAI_BASE": "https://your-llm-api.com/v1",
+        "CURATOR_OAI_KEY": "sk-your-key",
+        "CURATOR_GROK_KEY": "your-grok-key"
+      }
+    }
+  }
+}
+```
+
+Replace the paths and keys with your actual values. Alternatively, put all keys in `.env` (next to `mcp_server.py`) and omit the `env` block — the server loads `.env` automatically.
+
+After saving, restart Claude Desktop. The tools `curator_query`, `curator_ingest`, and `curator_status` will appear in Claude's tool list.
+
+### Connect other MCP clients
+
+Any client that can launch a subprocess and communicate via stdio JSON-RPC works. The server implements MCP protocol version `2024-11-05`.
+
+**mcporter:**
+
+```bash
+mcporter call --stdio "python3 /path/to/mcp_server.py" curator_query query="How to deploy Redis?"
+mcporter call --stdio "python3 /path/to/mcp_server.py" curator_status
+```
+
+**Generic subprocess client (e.g. Python SDK):**
+
+```python
+import subprocess, json
+
+proc = subprocess.Popen(
+    ["python3", "/path/to/mcp_server.py"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    text=True,
+)
+
+def rpc(method, params=None, req_id=1):
+    msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+    return json.loads(proc.stdout.readline())
+
+# Handshake
+rpc("initialize", {"protocolVersion": "2024-11-05", "clientInfo": {"name": "my-client", "version": "1.0"}})
+
+# List tools
+tools = rpc("tools/list")
+
+# Call a tool
+result = rpc("tools/call", {"name": "curator_query", "arguments": {"query": "Nginx SSL setup"}})
+print(result["result"]["content"][0]["text"])
+```
+
+### Raw JSON-RPC examples
+
+**Initialization handshake:**
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "clientInfo": {"name": "my-client", "version": "1.0"}}}
+```
+
+Response:
+
+```json
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "openviking-curator", "version": "0.7.0"}, "capabilities": {"tools": {}}}}
+```
+
+**List available tools:**
+
+```json
+{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+```
+
+**Query the knowledge base:**
+
+```json
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "curator_query", "arguments": {"query": "How to set up Redis persistence?"}}}
+```
+
+**Ingest a document:**
+
+```json
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "curator_ingest", "arguments": {"title": "Redis AOF persistence", "content": "## Redis AOF\n\nEnable with `appendonly yes` in redis.conf..."}}}
+```
+
+**Check status:**
+
+```json
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "curator_status", "arguments": {}}}
+```
+
+### Environment variables
+
+The MCP server relies on the same environment variables as the CLI. Ensure at minimum the following are set (either in `.env` or passed via the client's `env` config block):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENVIKING_CONFIG_FILE` | Yes (embedded mode) | Path to `ov.conf` |
+| `OV_BASE_URL` | Yes (HTTP mode) | OV HTTP server URL (e.g. `http://127.0.0.1:9100`) |
+| `CURATOR_OAI_BASE` | Yes | OpenAI-compatible LLM base URL |
+| `CURATOR_OAI_KEY` | Yes | LLM API key |
+| `CURATOR_GROK_KEY` | Recommended | Grok API key for external search |
+
+See `.env.example` for the full list of optional tuning variables (thresholds, search providers, conflict strategy, etc.).
+
 ## Configuration
 
 All via `.env` (git-ignored). See `.env.example` for a full template.

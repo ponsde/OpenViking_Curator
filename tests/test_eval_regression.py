@@ -381,5 +381,101 @@ class TestEvalRegression(unittest.TestCase):
                 )
 
 
+class TestEvalNetworkMock(unittest.TestCase):
+    """Lightweight integration: only search HTTP calls and judge mocked.
+
+    Real routing (route_scope), coverage assessment (assess_coverage),
+    retrieval (backend_retrieve → backend.search, load_context), and
+    feedback reranking all run against InMemoryBackend.  External search
+    providers and judge_and_ingest are replaced with deterministic stubs
+    so there is no network dependency while the core pipeline logic is
+    exercised end-to-end.
+
+    Key difference from TestEvalRegression: backend_retrieve is NOT mocked
+    here — the real L0→L1→L2 retrieval stack runs against InMemoryBackend.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from curator.backend_memory import InMemoryBackend
+
+        cls.backend = InMemoryBackend()
+        for seed in SEED_KNOWLEDGE:
+            cls.backend.ingest(seed["content"], title=seed["title"], metadata=seed["metadata"])
+
+    def _run_pipeline(self, query: str, **kwargs) -> dict:
+        """Run pipeline with search providers and judge mocked; retrieval real."""
+        patches = {
+            "judge_and_ingest": MagicMock(side_effect=_mock_judge),
+            "capture_case": MagicMock(return_value=None),
+            "validate_config": MagicMock(),
+        }
+        with patch("curator.search_providers.search", return_value="External mock content"):
+            with patch("curator.search_providers.search_concurrent", return_value="External mock content"):
+                with patch.multiple("curator.pipeline_v2", **patches):
+                    from curator.pipeline_v2 import run
+
+                    return run(query, backend=self.backend, **kwargs)
+
+    def test_coverage_in_range(self):
+        """Coverage score must be in [0.0, 1.0] for every eval query."""
+        for eq in EVAL_QUERIES:
+            result = self._run_pipeline(eq["query"])
+            cov = result.get("coverage", -1)
+            self.assertGreaterEqual(cov, 0.0, f"{eq['id']}: coverage {cov} < 0")
+            self.assertLessEqual(cov, 1.0, f"{eq['id']}: coverage {cov} > 1")
+
+    def test_in_domain_higher_coverage(self):
+        """In-domain queries score higher than completely out-of-domain ones."""
+        in_domain = self._run_pipeline("grok2api 怎么部署")
+        out_domain = self._run_pipeline("量子计算在密码学中的最新进展")
+        self.assertGreater(
+            in_domain["coverage"],
+            out_domain["coverage"],
+            "In-domain coverage should exceed out-of-domain",
+        )
+
+    def test_no_pipeline_errors(self):
+        """All eval queries complete without errors in meta."""
+        for eq in EVAL_QUERIES:
+            result = self._run_pipeline(eq["query"])
+            error = result.get("meta", {}).get("error")
+            self.assertIsNone(error, f"{eq['id']}: pipeline error: {error}")
+
+    def test_decision_report_generated(self):
+        """Every run produces a non-empty decision report."""
+        result = self._run_pipeline("grok2api 怎么部署")
+        self.assertGreater(len(result.get("decision_report", "")), 0)
+
+    def test_real_retrieval_returns_seeded_content(self):
+        """Real backend_retrieve should surface seeded documents for in-domain queries."""
+        result = self._run_pipeline("grok2api 怎么部署")
+        resources = result.get("ov_results", {}).get("resources", [])
+        # At least one resource should come back from real retrieval
+        self.assertGreater(len(resources), 0, "Real retrieval should return at least one resource")
+
+    def test_sufficient_coverage_skips_external_search(self):
+        """When coverage is sufficient, external search should not be triggered."""
+        patches = {
+            "judge_and_ingest": MagicMock(side_effect=_mock_judge),
+            "capture_case": MagicMock(return_value=None),
+            "validate_config": MagicMock(),
+        }
+        mock_search = MagicMock(return_value="External mock content")
+        with patch("curator.search_providers.search", mock_search):
+            with patch("curator.search_providers.search_concurrent", mock_search):
+                # Force high coverage so external search is skipped
+                with patch("curator.pipeline_v2.assess_coverage", return_value=(0.9, False, "sufficient")):
+                    with patch.multiple("curator.pipeline_v2", **patches):
+                        from curator.pipeline_v2 import run
+
+                        result = run("grok2api 怎么部署", backend=self.backend)
+
+        # External was not triggered
+        self.assertFalse(result.get("meta", {}).get("external_triggered", False))
+        # Search providers should not have been called
+        mock_search.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
