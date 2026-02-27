@@ -228,6 +228,8 @@ Returns:
 
 Check knowledge base health and resource count. Takes no parameters.
 
+> **Note:** requires OV to be accessible via HTTP (`OV_BASE_URL`, default `http://127.0.0.1:9100`). In pure embedded mode without an HTTP listener this tool returns `{"error": "..."}` rather than health data.
+
 Returns:
 
 | Field | Description |
@@ -511,7 +513,7 @@ curator/
 curator_query.py       # CLI entry point
 mcp_server.py          # MCP server (stdio JSON-RPC)
 scripts/               # Maintenance scripts
-tests/                 # 554 tests
+tests/                 # 601 tests
 ```
 
 ## Testing

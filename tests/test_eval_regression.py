@@ -407,6 +407,9 @@ class TestEvalNetworkMock(unittest.TestCase):
         """Run pipeline with search providers and judge mocked; retrieval real."""
         patches = {
             "judge_and_ingest": MagicMock(side_effect=_mock_judge),
+            # cross_validate calls config.chat; mock it so need_fresh=True routes
+            # don't require real LLM credentials
+            "cross_validate": MagicMock(return_value={"validated": "mock", "warnings": []}),
             "capture_case": MagicMock(return_value=None),
             "validate_config": MagicMock(),
         }

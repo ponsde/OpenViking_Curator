@@ -261,10 +261,11 @@ def test_myprovider_returns_results(monkeypatch):
 
 def test_myprovider_missing_key(monkeypatch):
     """Missing API key should raise RuntimeError."""
+    # monkeypatch.setenv works here because _search_myprovider calls env() at
+    # call-time (os.getenv).  This is different from Pydantic Settings constants
+    # like ASYNC_INGEST which are fixed at import time and require patch.multiple.
     monkeypatch.setenv("CURATOR_MYPROVIDER_KEY", "")
     import curator.search_providers as sp
-    import importlib
-    importlib.reload(sp)  # reload so env var is picked up
     with pytest.raises(RuntimeError, match="not configured"):
         sp._search_myprovider("query", {})
 ```

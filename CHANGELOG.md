@@ -17,7 +17,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Feedback adopt time decay** — anti-Matthew effect: old `adopt` signals decay over
   time so stale highly-adopted resources do not crowd out fresh ones
-  (`feedback_store.py`, configurable via `CURATOR_FEEDBACK_DECAY_DAYS`)
+  (`feedback_store.py`, configurable via `CURATOR_FEEDBACK_HALF_LIFE_DAYS`)
 - **Concurrent search inflight limit** — `CURATOR_SEARCH_MAX_INFLIGHT` semaphore caps
   simultaneous outgoing HTTP calls; zombie-thread starvation prevented by bounded
   `sem.acquire(timeout=...)` fallback
@@ -79,8 +79,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Tests
 
-437 passed, 4 subtests. New: `test_interest_analyzer.py`, `test_governance.py`,
-`test_governance_report.py`.
+601 passed, 4 subtests. New: `test_interest_analyzer.py`, `test_governance.py`,
+`test_governance_report.py`, `TestEvalNetworkMock` (integration tests with real retrieval stack).
 
 ---
 
@@ -279,5 +279,10 @@ Initial development iterations (not released to PyPI).
 ---
 
 [Unreleased]: https://github.com/ponsde/OpenViking_Curator/compare/v0.7.0...HEAD
-[0.7.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.1.0...v0.7.0
+[0.7.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ponsde/OpenViking_Curator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ponsde/OpenViking_Curator/releases/tag/v0.1.0
