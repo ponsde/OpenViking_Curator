@@ -252,6 +252,7 @@ def run_curator(query: str, auto_ingest: bool = True) -> dict:
         "external_text": external,
         "coverage": result.get("coverage", 0),
         "conflict": result.get("conflict", {}),
+        "decision_report": result.get("decision_report", ""),
         "meta": {
             "duration": result.get("metrics", {}).get("duration_sec"),
             "external_triggered": result.get("meta", {}).get("external_triggered"),

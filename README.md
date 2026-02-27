@@ -199,13 +199,15 @@ Returns a JSON object with fields:
 | Field | Description |
 |-------|-------------|
 | `routed` | `false` if the router decided no KB lookup is needed (question answered directly) |
-| `reason` | Routing decision reason (when `routed=false`) |
-| `context_text` | Retrieved local context |
-| `external_text` | External search result (if triggered) |
+| `reason` | Routing decision reason (only present when `routed=false`) |
+| `query` | Echoed query string |
+| `context` | Combined context (local + external); primary field for the caller's LLM |
+| `context_text` | Local context only |
+| `external_text` | External search result (if triggered; empty string otherwise) |
 | `coverage` | Local coverage score (0.0 to 1.0) |
 | `conflict` | Conflict detection summary |
 | `decision_report` | ASCII decision report |
-| `meta` | Pipeline metadata (`ingested`, `llm_calls`, `run_id`, etc.) |
+| `meta` | Pipeline metadata (`ingested`, `external_triggered`, `external_reason`, `has_conflict`, `coverage`, `used_uris`, `duration`, etc.) |
 
 #### `curator_ingest`
 

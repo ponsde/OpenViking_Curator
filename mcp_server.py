@@ -124,15 +124,14 @@ def _tool_curator_ingest(args: dict) -> dict:
     if not title or not content:
         return {"error": "title and content are required"}
 
+    from curator.backend_ov import OpenVikingBackend
     from curator.review import ingest_markdown_v2
-    from curator.session_manager import OVClient
-
-    ov = OVClient()
-    if not ov.health():
-        return {"error": "OV serve not available"}
 
     try:
-        ing = ingest_markdown_v2(ov, title[:60], content)
+        backend = OpenVikingBackend()
+        if not backend.health():
+            return {"error": "OV not available"}
+        ing = ingest_markdown_v2(backend, title[:60], content)
         return {"success": True, "uri": ing.get("root_uri", "")}
     except Exception as e:
         return {"error": str(e)}
