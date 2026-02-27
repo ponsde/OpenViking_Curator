@@ -76,8 +76,9 @@ flowchart TD
 
 - Python 3.10+
 - 已配好的 [OpenViking](https://github.com/volcengine/OpenViking)（嵌入模式或 HTTP 模式）
+  > **第一次用 OpenViking？** 先安装并运行 OV。嵌入模式下，把 `ov.conf.example` 复制为 `ov.conf` 并填入你的 embedding API key。
 - OpenAI 兼容的 LLM API（审核用）
-- 搜索 API（推荐 Grok，也可用 DuckDuckGo/Tavily）
+- 搜索 API：推荐 Grok；也可用 DuckDuckGo（无需 key）或 Tavily
 
 ### 安装
 
@@ -113,12 +114,12 @@ CURATOR_GROK_BASE=https://your-grok-endpoint/v1
 CURATOR_GROK_KEY=your-grok-key
 ```
 
-三个端点，三个 key，搞定。
+OV 配置、一个 LLM 端点、一个搜索端点，这就是最小配置。
 
 ### 使用
 
 ```bash
-python3 curator_query.py --status                         # 健康检查
+python3 curator_query.py --status                         # 健康检查 — 看到 "✅ connected" 即为正常
 python3 curator_query.py "Docker 部署 Redis 怎么配？"      # 查询
 python3 curator_query.py --review "敏感话题"               # 审核模式（不自动入库）
 python3 mcp_server.py                                     # MCP 服务（stdio JSON-RPC）
@@ -171,6 +172,140 @@ apply("viking://resources/doc-id", "up")    # 标记有用
 apply("viking://resources/doc-id", "down")  # 标记无用
 ```
 
+## MCP Server
+
+Curator 自带 [Model Context Protocol](https://modelcontextprotocol.io/)（MCP）服务端，通过 stdio JSON-RPC 将完整的查询/入库/状态流程暴露为可调用工具。任何 MCP 兼容客户端（Claude Desktop、Cursor、mcporter、自定义 agent 等）都可以直接连接你的知识库，无需写胶水代码。
+
+### 启动服务
+
+```bash
+# stdio 模式 — MCP 客户端启动此进程，通过 stdin/stdout 通信
+python3 mcp_server.py
+```
+
+服务启动时自动加载 `.env`（与 `mcp_server.py` 同目录）。不占用网络端口，全程 stdio 通信。
+
+### 可用工具
+
+#### `curator_query`
+
+查询知识库。完整流程：路由判断、L0/L1/L2 检索、外部搜索（如需）、审核+冲突检测、可选入库。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `query` | string | 是 | 问题（中英文均可）|
+
+返回字段：
+
+| 字段 | 说明 |
+|------|------|
+| `routed` | `false` = 路由判断不需要查知识库 |
+| `reason` | 路由原因（仅 `routed=false` 时出现）|
+| `query` | 原始问题 |
+| `context` | 合并上下文（本地 + 外搜），调用方 LLM 直接使用 |
+| `context_text` | 仅本地上下文 |
+| `external_text` | 外搜结果（未触发则为空字符串）|
+| `coverage` | 本地覆盖率（0.0 ~ 1.0）|
+| `conflict` | 冲突检测摘要 |
+| `decision_report` | ASCII 决策报告 |
+| `meta` | 管线元数据（`ingested`、`external_triggered`、`external_reason`、`has_conflict`、`coverage`、`used_uris`、`duration` 等）|
+
+#### `curator_ingest`
+
+手动向知识库添加一篇 Markdown 文档。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `title` | string | 是 | 文档标题（截断至 60 字符）|
+| `content` | string | 是 | Markdown 内容 |
+
+返回：
+
+| 字段 | 说明 |
+|------|------|
+| `success` | `true` 表示成功 |
+| `uri` | 已入库资源的 `viking://` URI |
+| `error` | 错误信息（失败时出现）|
+
+#### `curator_status`
+
+查看知识库健康状态和资源数量。无参数。
+
+> **注意：** 需要 OV 通过 HTTP 可访问（`OV_BASE_URL`，默认 `http://127.0.0.1:9100`）。纯嵌入模式（无 HTTP 监听）下此工具返回 `{"error": "..."}` 而非健康数据。
+
+返回：
+
+| 字段 | 说明 |
+|------|------|
+| `health` | OV 健康状态字符串（如 `"ok"`）|
+| `resource_count` | `viking://resources/` 下的资源数 |
+| `base_url` | 查询的 OV 地址 |
+| `error` | 错误信息（失败时出现）|
+
+### 接入 Claude Desktop
+
+将以下配置添加到 Claude Desktop 配置文件：
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "openviking-curator": {
+      "command": "/绝对路径/.venv/bin/python3",
+      "args": ["/绝对路径/OpenViking_Curator/mcp_server.py"],
+      "env": {
+        "OPENVIKING_CONFIG_FILE": "/绝对路径/ov.conf",
+        "CURATOR_OAI_BASE": "https://your-llm-api.com/v1",
+        "CURATOR_OAI_KEY": "sk-your-key",
+        "CURATOR_GROK_BASE": "https://api.x.ai/v1",
+        "CURATOR_GROK_KEY": "your-grok-key"
+      }
+    }
+  }
+}
+```
+
+替换路径和 key。也可以把所有 key 放在 `.env`（`mcp_server.py` 同目录），去掉 `env` 块——服务启动时会自动加载 `.env`。
+
+保存后重启 Claude Desktop，`curator_query`、`curator_ingest`、`curator_status` 三个工具会出现在工具列表中。
+
+### 接入其他 MCP 客户端
+
+任何能启动子进程并通过 stdio JSON-RPC 通信的客户端都可以接入。服务实现的 MCP 协议版本为 `2024-11-05`。
+
+**mcporter：**
+
+```bash
+mcporter call --stdio "python3 /path/to/mcp_server.py" curator_query query="Docker 怎么部署 Redis？"
+mcporter call --stdio "python3 /path/to/mcp_server.py" curator_status
+```
+
+**原始 JSON-RPC 示例：**
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "clientInfo": {"name": "my-client", "version": "1.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "curator_query", "arguments": {"query": "Redis 持久化怎么配？"}}}
+```
+
+### 环境变量
+
+MCP 服务与 CLI 使用相同的环境变量。最低要求：
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `OPENVIKING_CONFIG_FILE` | 是（嵌入模式）| `ov.conf` 路径 |
+| `OV_BASE_URL` | 是（HTTP 模式）| OV HTTP 服务地址（如 `http://127.0.0.1:9100`）|
+| `CURATOR_OAI_BASE` | 是 | LLM API 地址 |
+| `CURATOR_OAI_KEY` | 是 | LLM API key |
+| `CURATOR_GROK_BASE` | 推荐（用 grok 时）| Grok API 地址（如 `https://api.x.ai/v1`）|
+| `CURATOR_GROK_KEY` | 推荐（用 grok 时）| Grok API key |
+
+完整可选配置见 `.env.example`。
+
 ## 配置
 
 全部通过 `.env`（已 git-ignore），详见 `.env.example`。
@@ -179,10 +314,11 @@ apply("viking://resources/doc-id", "down")  # 标记无用
 
 | 变量 | 说明 |
 |------|------|
-| `OPENVIKING_CONFIG_FILE` | `ov.conf` 路径（嵌入模式）|
-| `CURATOR_OAI_BASE` | OpenAI 兼容 API 地址 |
-| `CURATOR_OAI_KEY` | API key |
-| `CURATOR_GROK_KEY` | Grok key（外部搜索）|
+| `OPENVIKING_CONFIG_FILE` | `ov.conf` 路径（嵌入模式；从 `ov.conf.example` 复制）|
+| `CURATOR_OAI_BASE` | OpenAI 兼容 LLM 地址 |
+| `CURATOR_OAI_KEY` | LLM API key |
+
+至少需要配置一个搜索 provider（见下方搜索配置）。`duckduckgo` 无需 key。
 
 ### OV 模式
 
@@ -195,10 +331,13 @@ apply("viking://resources/doc-id", "down")  # 标记无用
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `CURATOR_SEARCH_PROVIDERS` | `grok` | 逗号分隔：`grok,duckduckgo,tavily`（按序 fallback）|
+| `CURATOR_SEARCH_PROVIDERS` | `grok` | 逗号分隔：`grok,oai,duckduckgo,tavily`（按序 fallback）。`duckduckgo` 无需 key |
+| `CURATOR_GROK_BASE` | `http://127.0.0.1:8000/v1` | Grok API 地址（使用 grok provider 时必填）|
+| `CURATOR_GROK_KEY` | _(空)_ | Grok API key |
+| `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok 模型名 |
 | `CURATOR_SEARCH_CONCURRENT` | `0` | `1` = 所有 provider 并发 |
 | `CURATOR_SEARCH_TIMEOUT` | `60` | 搜索超时（秒）|
-| `CURATOR_TAVILY_KEY` | _(空)_ | Tavily API key |
+| `CURATOR_TAVILY_KEY` | _(空)_ | Tavily API key（使用 tavily 时填）|
 | `CURATOR_ALLOWED_DOMAINS` | _(空)_ | 白名单（逗号分隔）|
 | `CURATOR_BLOCKED_DOMAINS` | _(空)_ | 黑名单（逗号分隔）|
 
@@ -239,8 +378,11 @@ apply("viking://resources/doc-id", "down")  # 标记无用
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
+| `CURATOR_JUDGE_MODELS` | _(来自 ROUTER_MODELS)_ | 逗号分隔的 judge 模型 fallback 链（建议用强模型）|
+| `CURATOR_ROUTER_MODELS` | `gpt-4o-mini` | 逗号分隔的路由模型 fallback 链 |
 | `CURATOR_ASYNC_INGEST` | `0` | `1` = 后台异步入库 |
 | `CURATOR_CONFLICT_STRATEGY` | `auto` | `auto` / `local` / `external` / `human` |
+| `CURATOR_AUTO_SUMMARIZE` | `0` | `1` = 入库时自动生成 L0/L1 摘要（额外一次 LLM 调用）|
 | `CURATOR_CB_ENABLED` | `1` | 熔断器（`0` 关闭）|
 | `CURATOR_CACHE_ENABLED` | `0` | 搜索结果缓存 |
 | `CURATOR_FEEDBACK_WEIGHT` | `0.10` | 反馈分数调整幅度 |
@@ -248,6 +390,8 @@ apply("viking://resources/doc-id", "down")  # 标记无用
 | `CURATOR_CHAT_RETRY_MAX` | `3` | LLM 重试次数 |
 
 ## 维护
+
+> 以下命令均需先激活虚拟环境：`source .venv/bin/activate`
 
 ```bash
 # 弱主题分析
@@ -324,7 +468,7 @@ curator/
 curator_query.py       # CLI 入口
 mcp_server.py          # MCP Server（stdio JSON-RPC）
 scripts/               # 维护脚本
-tests/                 # 554 个测试
+tests/                 # 601 个测试
 ```
 
 ## 测试
