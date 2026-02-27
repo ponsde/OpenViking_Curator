@@ -96,64 +96,46 @@ class TestRunFreshen:
 
 
 class TestRunStrengthen:
-    def test_missing_weak_topics_file_returns_zeros(self, tmp_path):
+    """Scheduler strengthen job tests.
+
+    analyze_weak_topics() is monkeypatched so tests focus on the scheduler
+    orchestration logic, not the NLP analysis (covered in test_nlp_utils.py).
+    """
+
+    def _patch_weak(self, monkeypatch, topics: list):
+        monkeypatch.setattr("curator.nlp_utils.analyze_weak_topics", lambda *a, **kw: topics)
+
+    def test_no_weak_topics_returns_zeros(self, monkeypatch, tmp_path):
+        self._patch_weak(monkeypatch, [])
         run_fn = _mock_run_fn()
-        result = sched._run_strengthen(
-            _run_fn=run_fn,
-            data_path=str(tmp_path),
-        )
+        result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
         assert result == {"strengthened": 0, "skipped": 0}
         assert run_fn.calls == []
 
-    def test_empty_weak_topics_returns_zeros(self, tmp_path):
-        (tmp_path / "weak_topics.json").write_text("[]", encoding="utf-8")
-        run_fn = _mock_run_fn()
-        result = sched._run_strengthen(
-            _run_fn=run_fn,
-            data_path=str(tmp_path),
-        )
-        assert result == {"strengthened": 0, "skipped": 0}
-
-    def test_strengthens_top_n_topics(self, tmp_path):
+    def test_strengthens_top_n_topics(self, monkeypatch, tmp_path):
         topics = [
             {"topic": "Redis deployment", "avg_coverage": 0.2},
             {"topic": "Python async", "avg_coverage": 0.25},
             {"topic": "Docker networking", "avg_coverage": 0.3},
             {"topic": "Kubernetes", "avg_coverage": 0.35},
         ]
-        (tmp_path / "weak_topics.json").write_text(json.dumps(topics), encoding="utf-8")
+        self._patch_weak(monkeypatch, topics)
         run_fn = _mock_run_fn()
-        result = sched._run_strengthen(
-            _run_fn=run_fn,
-            data_path=str(tmp_path),
-            top_n=2,
-        )
+        result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path), top_n=2)
         assert result["strengthened"] == 2
         assert result["skipped"] == 0
         assert len(run_fn.calls) == 2
         assert "Redis deployment" in run_fn.calls[0]
         assert "Python async" in run_fn.calls[1]
 
-    def test_query_contains_topic(self, tmp_path):
-        (tmp_path / "weak_topics.json").write_text(
-            json.dumps([{"topic": "database indexing"}]),
-            encoding="utf-8",
-        )
+    def test_query_contains_topic(self, monkeypatch, tmp_path):
+        self._patch_weak(monkeypatch, [{"topic": "database indexing"}])
         run_fn = _mock_run_fn()
-        sched._run_strengthen(
-            _run_fn=run_fn,
-            data_path=str(tmp_path),
-            top_n=1,
-        )
+        sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path), top_n=1)
         assert "database indexing" in run_fn.calls[0]
 
-    def test_run_error_does_not_abort_remaining(self, tmp_path):
-        topics = [
-            {"topic": "topic_a"},
-            {"topic": "topic_b"},
-        ]
-        (tmp_path / "weak_topics.json").write_text(json.dumps(topics), encoding="utf-8")
-
+    def test_run_error_does_not_abort_remaining(self, monkeypatch, tmp_path):
+        self._patch_weak(monkeypatch, [{"topic": "topic_a"}, {"topic": "topic_b"}])
         call_count = [0]
 
         def _flaky(query, **kwargs):
@@ -161,42 +143,31 @@ class TestRunStrengthen:
             if call_count[0] == 1:
                 raise RuntimeError("first fails")
 
-        result = sched._run_strengthen(
-            _run_fn=_flaky,
-            data_path=str(tmp_path),
-            top_n=2,
-        )
+        result = sched._run_strengthen(_run_fn=_flaky, data_path=str(tmp_path), top_n=2)
         assert result["strengthened"] == 1
         assert result["skipped"] == 1
 
-    def test_invalid_json_returns_zeros(self, tmp_path):
-        (tmp_path / "weak_topics.json").write_text("not-json", encoding="utf-8")
+    def test_analyze_error_returns_zeros(self, monkeypatch, tmp_path):
+        # If analyze_weak_topics itself raises, strengthen returns zeros gracefully
+        def _raise(*a, **kw):
+            raise OSError("disk error")
+
+        monkeypatch.setattr("curator.nlp_utils.analyze_weak_topics", _raise)
         run_fn = _mock_run_fn()
         result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
         assert result == {"strengthened": 0, "skipped": 0}
 
-    def test_non_dict_entries_are_skipped(self, tmp_path):
-        # weak_topics.json sometimes has string entries from old analyze_weak versions
-        topics = ["plain string", {"topic": "valid topic"}, 42]
-        (tmp_path / "weak_topics.json").write_text(json.dumps(topics), encoding="utf-8")
+    def test_non_dict_entries_are_skipped(self, monkeypatch, tmp_path):
+        # analyze_weak_topics should never return non-dicts, but scheduler is defensive
+        self._patch_weak(monkeypatch, ["plain string", {"topic": "valid topic"}, 42])
         run_fn = _mock_run_fn()
         result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path), top_n=3)
-        assert result["strengthened"] == 1  # only the dict entry
+        assert result["strengthened"] == 1
         assert "valid topic" in run_fn.calls[0]
-
-    def test_non_list_json_returns_zeros(self, tmp_path):
-        # Edge case: weak_topics.json is a dict instead of a list
-        (tmp_path / "weak_topics.json").write_text('{"topic": "oops"}', encoding="utf-8")
-        run_fn = _mock_run_fn()
-        result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
-        assert result == {"strengthened": 0, "skipped": 0}
-        assert run_fn.calls == []
 
     def test_invalid_top_n_env_falls_back_to_default(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CURATOR_STRENGTHEN_TOP_N", "not-a-number")
-        (tmp_path / "weak_topics.json").write_text(
-            json.dumps([{"topic": "topic_a"}, {"topic": "topic_b"}]), encoding="utf-8"
-        )
+        self._patch_weak(monkeypatch, [{"topic": "topic_a"}, {"topic": "topic_b"}])
         run_fn = _mock_run_fn()
         result = sched._run_strengthen(_run_fn=run_fn, data_path=str(tmp_path))
         # Falls back to top_n=3, processes all 2 topics

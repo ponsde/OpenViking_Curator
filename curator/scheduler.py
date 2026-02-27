@@ -10,8 +10,8 @@ freshness
     (default 24).
 
 strengthen
-    Read ``data/weak_topics.json`` (written by ``scripts/analyze_weak.py``)
-    and re-run the pipeline for the top-N weakest topics.  Runs every
+    Analyse query_log.jsonl directly to find weak topics (high external_rate),
+    then re-run the pipeline for the top-N weakest topics.  Runs every
     ``CURATOR_STRENGTHEN_INTERVAL_HOURS`` hours (default 168 = 7 days).
 
 governance
@@ -127,7 +127,7 @@ def _run_strengthen(
     data_path: str | None = None,
     top_n: int | None = None,
 ) -> dict:
-    """Read weak_topics.json and re-search the top-N weakest topics.
+    """Analyse query_log.jsonl and re-search the top-N weakest topics.
 
     Args:
         _run_fn:    Optional pipeline run override (for testing).
@@ -154,22 +154,12 @@ def _run_strengthen(
     else:
         _fn = _run_fn
 
-    weak_path = os.path.join(_data_path, "weak_topics.json")
-    if not os.path.exists(weak_path):
-        log.info("scheduler.strengthen: %s not found, skipping", weak_path)
-        return {"strengthened": 0, "skipped": 0}
+    from .nlp_utils import analyze_weak_topics
 
     try:
-        with open(weak_path, encoding="utf-8") as f:
-            weak_topics = json.load(f)
+        weak_topics = analyze_weak_topics(_data_path)
     except Exception as e:
-        log.warning("scheduler.strengthen: failed to read weak_topics.json: %s", e)
-        return {"strengthened": 0, "skipped": 0}
-
-    if not isinstance(weak_topics, list):
-        log.warning(
-            "scheduler.strengthen: weak_topics.json is not a list (got %s), skipping", type(weak_topics).__name__
-        )
+        log.warning("scheduler.strengthen: failed to analyze weak topics: %s", e)
         return {"strengthened": 0, "skipped": 0}
 
     targets = weak_topics[:_top_n]

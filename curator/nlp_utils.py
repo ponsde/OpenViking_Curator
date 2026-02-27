@@ -4,10 +4,13 @@ Used by:
 - ``interest_analyzer.py`` (topic grouping for governance)
 - ``scripts/analyze_weak.py`` (weak topic detection)
 - ``governance.py`` (phase 1 data collection)
+- ``scheduler.py`` (strengthen job — inline weak topic analysis)
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
 
 # Stopwords (Chinese + English common function words)
@@ -155,3 +158,68 @@ def extract_topic_coarse(query: str) -> str:
     if not kws:
         return query.strip()[:30] or "unknown"
     return " ".join(kws[:2])
+
+
+def analyze_weak_topics(data_path: str, min_queries: int = 2) -> list[dict]:
+    """Analyse query_log.jsonl and return weak topics sorted by severity.
+
+    A topic is "weak" when its external_rate > 0.5 (more than half of queries
+    needed external search) and it has been queried at least *min_queries* times.
+
+    Args:
+        data_path:   Directory containing ``query_log.jsonl``.
+        min_queries: Minimum query count to be considered (filters noise).
+
+    Returns:
+        List of dicts sorted by ``(-external_rate, -query_count)``:
+        ``{"topic", "query_count", "avg_coverage", "external_rate"}``
+    """
+    from collections import defaultdict
+
+    log_path = os.path.join(data_path, "query_log.jsonl")
+    if not os.path.exists(log_path):
+        return []
+
+    entries: list[dict] = []
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+
+    if not entries:
+        return []
+
+    topic_stats: dict[str, dict] = defaultdict(lambda: {"coverages": [], "external_count": 0, "total": 0})
+    for entry in entries:
+        topic = extract_topic(entry.get("query", ""))
+        stats = topic_stats[topic]
+        stats["coverages"].append(float(entry.get("coverage") or 0.0))
+        if entry.get("external_triggered", False):
+            stats["external_count"] += 1
+        stats["total"] += 1
+
+    weak: list[dict] = []
+    for topic, stats in topic_stats.items():
+        count = stats["total"]
+        avg_cov = sum(stats["coverages"]) / count if count else 0.0
+        ext_rate = stats["external_count"] / count if count else 0.0
+        if ext_rate > 0.5 and count >= min_queries:
+            weak.append(
+                {
+                    "topic": topic,
+                    "query_count": count,
+                    "avg_coverage": round(avg_cov, 4),
+                    "external_rate": round(ext_rate, 4),
+                }
+            )
+
+    weak.sort(key=lambda x: (-x["external_rate"], -x["query_count"]))
+    return weak

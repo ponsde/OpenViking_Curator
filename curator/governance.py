@@ -326,59 +326,10 @@ def load_audit_log(data_path: str | None = None, cycle_id: str | None = None) ->
 
 
 def _analyze_weak_topics(data_path: str, min_queries: int = 2) -> list[dict]:
-    """Inline weak-topic analysis (same logic as scripts/analyze_weak.py).
+    """Delegate to the shared nlp_utils implementation."""
+    from .nlp_utils import analyze_weak_topics
 
-    Reads query_log.jsonl, groups by topic, identifies weak topics
-    (external_rate > 0.5 and count >= min_queries).
-    """
-    from collections import defaultdict
-
-    from .nlp_utils import extract_topic
-
-    log_path = os.path.join(data_path, "query_log.jsonl")
-    if not os.path.exists(log_path):
-        return []
-
-    entries: list[dict] = []
-    with open(log_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-
-    if not entries:
-        return []
-
-    topic_stats: dict[str, dict] = defaultdict(lambda: {"coverages": [], "external_count": 0, "total": 0})
-    for entry in entries:
-        topic = extract_topic(entry.get("query", ""))
-        stats = topic_stats[topic]
-        stats["coverages"].append(float(entry.get("coverage") or 0.0))
-        if entry.get("external_triggered", False):
-            stats["external_count"] += 1
-        stats["total"] += 1
-
-    weak: list[dict] = []
-    for topic, stats in topic_stats.items():
-        count = stats["total"]
-        avg_cov = sum(stats["coverages"]) / count if count else 0
-        ext_rate = stats["external_count"] / count if count else 0
-        if ext_rate > 0.5 and count >= min_queries:
-            weak.append(
-                {
-                    "topic": topic,
-                    "query_count": count,
-                    "avg_coverage": round(avg_cov, 4),
-                    "external_rate": round(ext_rate, 4),
-                }
-            )
-
-    weak.sort(key=lambda x: (-x["external_rate"], -x["query_count"]))
-    return weak
+    return analyze_weak_topics(data_path, min_queries=min_queries)
 
 
 def _aggregate_query_metrics(data_path: str) -> dict:
