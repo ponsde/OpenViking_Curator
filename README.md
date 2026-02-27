@@ -106,15 +106,24 @@ Edit `.env`:
 OPENVIKING_CONFIG_FILE=/path/to/your/ov.conf
 
 # LLM for review & routing (any OpenAI-compatible endpoint)
-CURATOR_OAI_BASE=https://your-llm-api.com/v1
+CURATOR_OAI_BASE=https://api.openai.com/v1
 CURATOR_OAI_KEY=sk-your-key
 
-# External search (Grok recommended)
-CURATOR_GROK_BASE=https://your-grok-endpoint/v1
-CURATOR_GROK_KEY=your-grok-key
+# ── External search: pick ONE option ──
+
+# Option A: reuse your OAI endpoint for search (easiest — no extra key)
+CURATOR_SEARCH_PROVIDERS=oai
+
+# Option B: Grok (recommended for best real-time web search)
+# CURATOR_SEARCH_PROVIDERS=grok
+# CURATOR_GROK_BASE=https://api.x.ai/v1
+# CURATOR_GROK_KEY=your-grok-key
+
+# Option C: DuckDuckGo (no key needed; pip install duckduckgo-search)
+# CURATOR_SEARCH_PROVIDERS=duckduckgo
 ```
 
-OV config, one LLM endpoint, one search endpoint. That's the minimum to get started.
+OV config + one LLM endpoint + one search provider. That's it.
 
 ### Run
 
@@ -390,7 +399,7 @@ At least one search provider must be configured (see Search section below). `duc
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CURATOR_SEARCH_PROVIDERS` | `grok` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `duckduckgo` requires no key. |
+| `CURATOR_SEARCH_PROVIDERS` | `oai` | Comma-separated: `grok,oai,duckduckgo,tavily` (fallback chain). `oai` reuses your LLM key; `duckduckgo` requires no key. |
 | `CURATOR_GROK_BASE` | _(empty)_ | Grok API base URL (required if using `grok` provider) |
 | `CURATOR_GROK_KEY` | _(empty)_ | Grok API key |
 | `CURATOR_GROK_MODEL` | `grok-4-fast` | Grok model name |

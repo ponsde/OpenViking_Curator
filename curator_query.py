@@ -164,12 +164,24 @@ def run_status() -> dict:
 
     result = {"config": {}, "openviking": {}, "local_index": {}, "feedback": {}, "cases": 0}
 
-    # Config check
-    for key in ["CURATOR_OAI_BASE", "CURATOR_OAI_KEY", "CURATOR_GROK_KEY"]:
+    # Config check — core LLM keys
+    for key in ["CURATOR_OAI_BASE", "CURATOR_OAI_KEY"]:
         val = os.getenv(key, "")
         result["config"][key] = "✅ set" if val else "❌ missing"
 
-    result["config"]["CURATOR_SEARCH_PROVIDERS"] = os.getenv("CURATOR_SEARCH_PROVIDERS", "grok (default)")
+    # Search provider + its required keys
+    providers = os.getenv("CURATOR_SEARCH_PROVIDERS", "grok")
+    first_provider = providers.split(",")[0].strip()
+    result["config"]["CURATOR_SEARCH_PROVIDERS"] = providers + (
+        " (default)" if not os.getenv("CURATOR_SEARCH_PROVIDERS") else ""
+    )
+    if first_provider == "grok":
+        for key in ["CURATOR_GROK_BASE", "CURATOR_GROK_KEY"]:
+            val = os.getenv(key, "")
+            result["config"][key] = "✅ set" if val else "❌ missing"
+    elif first_provider == "tavily":
+        val = os.getenv("CURATOR_TAVILY_KEY", "")
+        result["config"]["CURATOR_TAVILY_KEY"] = "✅ set" if val else "❌ missing"
 
     # OpenViking check
     try:
@@ -277,7 +289,7 @@ Usage:
 
 Environment:
   Configure via .env file (see .env.example) or env vars.
-  Key settings: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_GROK_KEY
+  Key settings: CURATOR_OAI_BASE, CURATOR_OAI_KEY, CURATOR_SEARCH_PROVIDERS
 
   CURATOR_CONFLICT_STRATEGY=auto|local|external|human
     auto (default): decide based on trust score + freshness
