@@ -406,11 +406,26 @@ def search(query: str, scope: dict, provider: str | None = None, **kwargs) -> st
 
 
 async def _async_search_provider(name: str, query: str, scope: dict) -> tuple[str, str]:
-    """Single-provider async wrapper. Returns (provider_name, result_text)."""
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _call_provider, name, query, scope)
-    result = _provider_output_to_text(raw)
-    return name, result
+    """Single-provider async wrapper with circuit breaker. Returns (provider_name, result_text)."""
+    from .circuit_breaker import CircuitOpenError, get_breaker
+
+    breaker = get_breaker(f"search:{name}")
+    if not breaker.allow_request():
+        log.debug("concurrent search: provider %r circuit open, skipping", name)
+        return name, ""
+    try:
+        loop = asyncio.get_event_loop()
+        raw = await loop.run_in_executor(None, _call_provider, name, query, scope)
+        result = _provider_output_to_text(raw)
+        if result.strip():
+            breaker.record_success()
+        return name, result
+    except CircuitOpenError:
+        return name, ""
+    except Exception as e:
+        breaker.record_failure()
+        log.debug("concurrent search: provider %r failed: %s", name, e)
+        return name, ""
 
 
 async def _gather_search(query: str, scope: dict, providers: list, timeout: float) -> str:

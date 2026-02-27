@@ -389,6 +389,26 @@ def detect_conflict(query: str, local_ctx: str, external_ctx: str):
         return {"has_conflict": False, "summary": "", "points": []}
 
 
+_UNSAFE_HTML_RE = re.compile(
+    r"<\s*(?:script|iframe|embed|object|applet|form|input|button)[^>]*>.*?</\s*(?:script|iframe|embed|object|applet|form|input|button)\s*>"
+    r"|<\s*(?:script|iframe|embed|object|applet|form|input|button)[^>]*/?\s*>"
+    r"|<\s*img\s+[^>]*(?:width|height)\s*=\s*[\"']?[01]\s*[\"']?[^>]*/?>"  # tracking pixels (0x0 or 1x1)
+    r"|<\s*link\s+[^>]*rel\s*=\s*[\"']?(?:prefetch|preload|dns-prefetch)[\"']?[^>]*/?>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _sanitize_markdown(text: str) -> str:
+    """Strip unsafe HTML tags and tracking elements from markdown content.
+
+    Removes: <script>, <iframe>, <embed>, <object>, <applet>, <form>,
+    <input>, <button>, tracking pixels (0/1px images), prefetch links.
+    """
+    if not text:
+        return text
+    return _UNSAFE_HTML_RE.sub("", text)
+
+
 def _auto_summarize(content: str, title: str) -> dict:
     """生成 L0 abstract + L1 overview（一次 LLM call，可选功能）。
 
@@ -476,6 +496,9 @@ def ingest_markdown_v2(
     from .usage_ttl import compute_usage_ttl_for_ingest
 
     ttl_days, usage_tier_label = compute_usage_ttl_for_ingest(base_ttl, uri_hints or [])
+
+    # Sanitize markdown: strip unsafe HTML (script, iframe, tracking pixels)
+    markdown = _sanitize_markdown(markdown)
 
     # L0/L1 自动摘要（opt-in，失败不影响入库）
     summary = _auto_summarize(markdown, title) if AUTO_SUMMARIZE else {}

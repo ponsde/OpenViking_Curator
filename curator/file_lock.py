@@ -86,7 +86,8 @@ def locked_rw_json(path: str | os.PathLike, fn):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     # Ensure the file exists before opening r+
     if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("{}")
     with open(path, "r+", encoding="utf-8") as f:
         if _HAS_FCNTL:
