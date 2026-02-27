@@ -397,16 +397,29 @@ _UNSAFE_HTML_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Matches on* event handler attributes (onerror, onclick, onload, …)
+_ON_EVENT_RE = re.compile(r"""\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)""", re.IGNORECASE)
+
+# Matches dangerous URI schemes in href/src/action attributes
+_DANGEROUS_PROTO_RE = re.compile(
+    r"""((?:href|src|action)\s*=\s*)(["']?)\s*(?:javascript|data|vbscript)\s*:""",
+    re.IGNORECASE,
+)
+
 
 def _sanitize_markdown(text: str) -> str:
-    """Strip unsafe HTML tags and tracking elements from markdown content.
+    """Strip unsafe HTML tags, event handlers, and dangerous URIs from markdown.
 
     Removes: <script>, <iframe>, <embed>, <object>, <applet>, <form>,
-    <input>, <button>, tracking pixels (0/1px images), prefetch links.
+    <input>, <button>, tracking pixels (0/1px images), prefetch links,
+    on* event handler attributes, javascript:/data:/vbscript: URIs.
     """
     if not text:
         return text
-    return _UNSAFE_HTML_RE.sub("", text)
+    text = _UNSAFE_HTML_RE.sub("", text)
+    text = _ON_EVENT_RE.sub("", text)
+    text = _DANGEROUS_PROTO_RE.sub(r"\1\2#sanitized:", text)
+    return text
 
 
 def _auto_summarize(content: str, title: str) -> dict:

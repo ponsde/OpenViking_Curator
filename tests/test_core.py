@@ -781,5 +781,46 @@ class TestCuratorPipeline(unittest.TestCase):
         self.assertEqual(result["coverage"], 0.0)
 
 
+class TestSanitizeMarkdown(unittest.TestCase):
+    """Tests for _sanitize_markdown HTML/XSS cleaning."""
+
+    def _sanitize(self, text):
+        from curator.review import _sanitize_markdown
+
+        return _sanitize_markdown(text)
+
+    def test_removes_script_tag(self):
+        self.assertEqual(self._sanitize("<script>alert(1)</script>"), "")
+
+    def test_removes_iframe(self):
+        self.assertEqual(self._sanitize('<iframe src="x"></iframe>'), "")
+
+    def test_removes_on_event_handlers(self):
+        result = self._sanitize('<img src="ok.png" onerror="alert(1)">')
+        self.assertNotIn("onerror", result)
+        self.assertIn("ok.png", result)
+
+    def test_removes_onclick(self):
+        result = self._sanitize('<a href="#" onclick="steal()">link</a>')
+        self.assertNotIn("onclick", result)
+
+    def test_neutralizes_javascript_uri(self):
+        result = self._sanitize('<a href="javascript:alert(1)">click</a>')
+        self.assertNotIn("javascript:", result)
+        self.assertIn("#sanitized:", result)
+
+    def test_neutralizes_data_uri(self):
+        result = self._sanitize('<img src="data:text/html,<script>x</script>">')
+        self.assertNotIn("data:", result)
+
+    def test_preserves_safe_content(self):
+        safe = "# Hello\n\nSome **markdown** with [link](https://example.com)"
+        self.assertEqual(self._sanitize(safe), safe)
+
+    def test_empty_and_none(self):
+        self.assertEqual(self._sanitize(""), "")
+        self.assertIsNone(self._sanitize(None))
+
+
 if __name__ == "__main__":
     unittest.main()
