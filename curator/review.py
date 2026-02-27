@@ -299,7 +299,10 @@ def judge_and_ingest(
             continue
 
     result = _parse_judge_output(out, fallback_reason=f"judge_fail:{last_err}")
-    return result.to_pipeline_dict()
+    d = result.to_pipeline_dict()
+    # Structured degradation flag: True when LLM call failed (not a content rejection)
+    d["judge_degraded"] = out is None
+    return d
 
 
 def judge_and_pack(query: str, external_text: str):

@@ -311,6 +311,14 @@ def main():
     result = run_curator(q, auto_ingest=not review_mode)
     if review_mode:
         result["review_mode"] = True
+
+    # Surface degradation warnings on stderr so users know results may be incomplete
+    meta = result.get("meta", {})
+    if meta.get("degraded"):
+        print("[WARNING] Pipeline degraded — some steps failed:", file=sys.stderr)
+        for reason in meta.get("degraded_reasons", []):
+            print(f"  - {reason}", file=sys.stderr)
+
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

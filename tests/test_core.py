@@ -781,6 +781,56 @@ class TestCuratorPipeline(unittest.TestCase):
         self.assertEqual(result["coverage"], 0.0)
 
 
+class TestDegradationTracking(unittest.TestCase):
+    """Verify degradation flags surface when LLM/search calls fail."""
+
+    def _mock_pipeline_deps(self):
+        from unittest.mock import MagicMock
+
+        return {
+            "validate_config": MagicMock(),
+            "route_scope": MagicMock(return_value={"domain": "general", "need_fresh": False, "keywords": []}),
+            "backend_retrieve": MagicMock(
+                return_value={"all_items": [], "memories": [], "resources": [], "skills": []}
+            ),
+            "assess_coverage": MagicMock(return_value=(0.2, True, "coverage_low")),
+            "load_context": MagicMock(return_value=("some context", ["uri1"], "L0")),
+            "external_search": MagicMock(side_effect=RuntimeError("all providers failed")),
+            "judge_and_ingest": MagicMock(return_value={"pass": False, "reason": "no_response"}),
+            "cross_validate": MagicMock(return_value={"validated": "", "warnings": []}),
+            "capture_case": MagicMock(return_value=None),
+            "format_report": MagicMock(return_value=""),
+        }
+
+    def test_external_search_failure_sets_degraded(self):
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        patches = self._mock_pipeline_deps()
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            result = CuratorPipeline(backend=backend).run("test query")
+
+        self.assertTrue(result["meta"]["degraded"])
+        self.assertTrue(any("external_search" in r for r in result["meta"]["degraded_reasons"]))
+
+    def test_no_degradation_when_all_succeeds(self):
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+        patches = self._mock_pipeline_deps()
+        # Coverage sufficient → no external search needed → no degradation
+        patches["assess_coverage"] = MagicMock(return_value=(0.8, False, "local_sufficient"))
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            result = CuratorPipeline(backend=backend).run("test query")
+
+        self.assertFalse(result["meta"].get("degraded", False))
+        self.assertEqual(result["meta"].get("degraded_reasons", []), [])
+
+
 class TestSanitizeMarkdown(unittest.TestCase):
     """Tests for _sanitize_markdown HTML/XSS cleaning."""
 

@@ -113,6 +113,8 @@ def _do_judge_ingest(
         external_txt,
         cv_warnings=cv_warnings,
     )
+    # Structured degradation flag from judge (True when all LLM models failed)
+    judge_degraded = judge_result.get("judge_degraded", False)
     if trace is not None:
         trace["llm_calls"] += 1
     if m is not None:
@@ -199,7 +201,13 @@ def _do_judge_ingest(
                     source_urls=_extract_urls(external_txt),
                 )
 
-    return {"cv_warnings": cv_warnings, "conflict": conflict, "ingested": ingested, "external_text": external_txt}
+    return {
+        "cv_warnings": cv_warnings,
+        "conflict": conflict,
+        "ingested": ingested,
+        "external_text": external_txt,
+        "judge_degraded": judge_degraded,
+    }
 
 
 class CuratorPipeline:
@@ -337,6 +345,9 @@ def _run_impl_inner(
         "decision_report": "",
     }
 
+    # ── degradation tracking: 收集所有降级事件 ──
+    degradations: list[str] = []
+
     # ── decision_trace: 记录关键决策路径 ──
     trace = {
         "load_stage": "none",
@@ -354,6 +365,8 @@ def _run_impl_inner(
         except Exception as e:
             log.error("Backend 初始化失败: %s", e)
             result["meta"]["error"] = f"知识库服务不可用: {e}"
+            result["meta"]["degraded"] = True
+            result["meta"]["degraded_reasons"] = [f"backend: {backend.name} unavailable"]
             result["decision_report"] = format_report(result)
             return result
 
@@ -463,6 +476,9 @@ def _run_impl_inner(
 
                 if isinstance(e, CircuitOpenError):
                     m.flag("circuit_open", True)
+                    degradations.append("external_search: circuit breaker open, search skipped")
+                else:
+                    degradations.append(f"external_search: failed ({type(e).__name__}), using OV results only")
                 log.warning("STEP 4 外搜失败: %s", e)
                 m.step("external_search", False, {"error": str(e)})
 
@@ -522,6 +538,8 @@ def _run_impl_inner(
                 conflict = judge_out.get("conflict", conflict)
                 ingested = judge_out.get("ingested", False)
                 external_txt = judge_out.get("external_text", external_txt)
+                if judge_out.get("judge_degraded"):
+                    degradations.append("judge: LLM call failed, external content not reviewed/ingested")
     else:
         m.flag("external_triggered", False)
         m.flag("external_reason", cov_reason)
@@ -556,6 +574,8 @@ def _run_impl_inner(
         "async_ingest_pending": async_ingest_pending,
         "used_uris": used_uris,
         "warnings": cv_warnings,
+        "degraded": bool(degradations),
+        "degraded_reasons": degradations,
         "memories_count": len(retrieval_result["memories"]),
         "resources_count": len(retrieval_result["resources"]),
         "skills_count": len(retrieval_result["skills"]),
