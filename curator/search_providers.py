@@ -61,8 +61,11 @@ def _get_inflight_semaphore() -> threading.Semaphore | None:
     """Return the module-level inflight semaphore, creating it on first call.
 
     Returns None when CURATOR_SEARCH_MAX_INFLIGHT=0 (default = unlimited).
-    Tests may reset ``_inflight_sem = None`` and patch ``SEARCH_MAX_INFLIGHT``
-    to change the limit between calls.
+
+    Test reset: set ``curator.search_providers._inflight_sem = None`` and
+    patch ``curator.search_providers.SEARCH_MAX_INFLIGHT`` *before* the first
+    concurrent call.  Resetting while concurrent calls are in flight is not
+    supported and may yield inconsistent limits.
     """
     global _inflight_sem
     if _inflight_sem is not None:
@@ -388,11 +391,21 @@ def _call_provider(pname: str, query: str, scope: dict) -> str | list[WebSearchR
 
     sem = _get_inflight_semaphore()
     if sem is not None:
-        sem.acquire()
+        # Use a bounded acquire so that a zombie thread holding a slot (e.g. after
+        # search_concurrent times out) cannot permanently starve subsequent callers.
+        # On timeout we proceed without the semaphore rather than blocking forever.
+        acquired = sem.acquire(timeout=SEARCH_PROVIDER_TIMEOUT)
+        if not acquired:
+            log.warning(
+                "search: inflight semaphore acquire timed out (%.0fs), " "proceeding without limit for provider=%s",
+                SEARCH_PROVIDER_TIMEOUT,
+                pname,
+            )
         try:
             return fn(query, scope)
         finally:
-            sem.release()
+            if acquired:
+                sem.release()
     return fn(query, scope)
 
 
@@ -614,4 +627,7 @@ def search_concurrent(
 
         return result_holder.get("result", "")
     else:
+        # No running event loop: asyncio.run() blocks until _gather_search completes
+        # or its internal timeout fires.  Note that run_in_executor HTTP calls do not
+        # respect asyncio cancellation — worst-case wait is timeout + SEARCH_PROVIDER_TIMEOUT.
         return asyncio.run(_gather_search(query, scope, providers, timeout))
