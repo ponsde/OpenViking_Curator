@@ -78,6 +78,7 @@ def _do_judge_ingest(
     trace,
     *,
     async_mode: bool = False,
+    feedback_data: dict | None = None,
 ):
     """Execute cross_validate → judge → ingest. Shared by sync and async paths.
 
@@ -86,8 +87,16 @@ def _do_judge_ingest(
     Set *async_mode* to ``True`` so that ingest failures are persisted to
     ``async_ingest_failures.jsonl`` for observability.
 
+    Args:
+        feedback_data: Pre-loaded feedback dict for
+            :func:`_aggregate_local_signals`. ``None`` falls back to
+            loading from disk.
+
     Returns dict with ``cv_warnings``, ``conflict``, ``ingested`` keys.
     """
+    # Hot-path import: move to function entry so it is resolved once
+    from .review import ingest_markdown_v2
+
     cv_warnings: list[str] = []
     conflict: dict[str, Any] = {"has_conflict": False, "summary": "", "points": []}
     ingested = False
@@ -129,7 +138,7 @@ def _do_judge_ingest(
         )
 
     # Gather local feedback signals for bidirectional conflict resolution
-    local_signals = _aggregate_local_signals(used_uris)
+    local_signals = _aggregate_local_signals(used_uris, feedback_data=feedback_data)
 
     conflict = {
         "has_conflict": judge_result.get("has_conflict", False),
@@ -162,8 +171,6 @@ def _do_judge_ingest(
                 )
             elif auto_ingest:
                 try:
-                    from .review import ingest_markdown_v2
-
                     ing = ingest_markdown_v2(
                         backend,
                         query[:60],
@@ -329,6 +336,17 @@ def _run_impl_inner(
     run_id: str,
 ) -> dict:
     """Body of _run_impl, called after context binding."""
+    # ── Hot-path imports: resolve once at function entry ──
+    from curator import feedback_store
+
+    from . import search_cache
+
+    # ── Pre-load feedback data once for the entire run ──
+    try:
+        feedback_data: dict | None = feedback_store.load()
+    except Exception:
+        feedback_data = None
+
     m = Metrics()
 
     result: dict[str, Any] = {
@@ -381,7 +399,9 @@ def _run_impl_inner(
 
     # ── Step 2: 检索 ──
     log.info("STEP 2/4 检索...")
-    retrieval_result = backend_retrieve(backend, query, session_id=session_id, limit=RETRIEVE_LIMIT)
+    retrieval_result = backend_retrieve(
+        backend, query, session_id=session_id, limit=RETRIEVE_LIMIT, feedback_data=feedback_data
+    )
     all_items = retrieval_result["all_items"]
     m.step(
         "retrieve",
@@ -422,8 +442,6 @@ def _run_impl_inner(
     # Only adopt URIs with meaningful scores; weight top results higher.
     if used_uris:
         try:
-            from curator import feedback_store
-
             uri_scores = {it.get("uri", ""): it.get("score", 0) for it in all_items}
             adopted = 0
             for rank, uri in enumerate(used_uris):
@@ -455,8 +473,6 @@ def _run_impl_inner(
         log.info("STEP 4/4 外部搜索... reason=%s", cov_reason)
 
         # Check search cache first
-        from . import search_cache
-
         cached = search_cache.get(query, scope)
         if cached:
             external_txt = cached
@@ -498,6 +514,10 @@ def _run_impl_inner(
                     update_job(_jid, "running")
                     with _ingest_lock:
                         try:
+                            # Note: feedback_data is a snapshot from pipeline start.
+                            # May miss adopt events recorded earlier in this run,
+                            # but the impact on conflict scoring is negligible
+                            # (adopt adds ~0.3 to local_score; conflict margin is 2.0).
                             _do_judge_ingest(
                                 backend,
                                 query,
@@ -509,6 +529,7 @@ def _run_impl_inner(
                                 None,
                                 None,
                                 async_mode=True,
+                                feedback_data=feedback_data,
                             )
                             update_job(_jid, "success")
                         except Exception as e:
@@ -533,6 +554,7 @@ def _run_impl_inner(
                     auto_ingest,
                     m,
                     trace,
+                    feedback_data=feedback_data,
                 )
                 cv_warnings = judge_out.get("cv_warnings", cv_warnings)
                 conflict = judge_out.get("conflict", conflict)
@@ -760,28 +782,39 @@ def _verify_ingest(backend: KnowledgeBackend, query: str, new_uri: str, m: Metri
         m.step("ingest_verify", False, {"error": str(e)})
 
 
-def _aggregate_local_signals(used_uris: list | set) -> dict | None:
+def _aggregate_local_signals(used_uris: list | set, *, feedback_data: dict | None = None) -> dict | None:
     """Aggregate feedback signals for local URIs used in this run.
+
+    Args:
+        used_uris: URIs used in the current pipeline run.
+        feedback_data: Pre-loaded feedback dict. When provided, skips the
+            internal ``feedback_store.load()`` call. ``None`` preserves the
+            original behaviour (load on demand).
 
     Returns dict with adopt_count, up_count, down_count summed across
     all used URIs. Returns None if feedback_store is unavailable.
     """
     if not used_uris:
         return None
-    try:
-        from curator import feedback_store
 
-        data = feedback_store.load()
-        adopt = up = down = 0
-        for uri in used_uris:
-            item = data.get(uri, {})
-            adopt += item.get("adopt", 0)
-            up += item.get("up", 0)
-            down += item.get("down", 0)
-        return {"adopt_count": adopt, "up_count": up, "down_count": down}
-    except Exception as e:
-        log.debug("failed to load feedback signals for URIs %s: %s", used_uris, e)
-        return None
+    if feedback_data is not None:
+        data = feedback_data
+    else:
+        try:
+            from curator import feedback_store
+
+            data = feedback_store.load()
+        except Exception as e:
+            log.debug("failed to load feedback signals for URIs %s: %s", used_uris, e)
+            return None
+
+    adopt = up = down = 0
+    for uri in used_uris:
+        item = data.get(uri, {})
+        adopt += item.get("adopt", 0)
+        up += item.get("up", 0)
+        down += item.get("down", 0)
+    return {"adopt_count": adopt, "up_count": up, "down_count": down}
 
 
 def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) -> dict:

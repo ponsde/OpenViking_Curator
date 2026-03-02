@@ -1,7 +1,7 @@
 """检索：OV session search 为主力，find 为降级。
 
-重构后只有 3 个公开函数：
-- ov_retrieve(): 主力检索，返回三路结果
+公开函数：
+- backend_retrieve(): 主力检索，返回三路结果
 - load_context(): L0→L1→L2 严格按需下钻
 - assess_coverage(): 基于 OV score 评估覆盖率（简化版）
 
@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import math
 
 from .config import (
@@ -104,7 +105,7 @@ _COV_DISCOUNT_LOW = 0.8  # scale applied when coverage is low
 _COV_DISCOUNT_INSUFFICIENT = 0.5  # scale applied when coverage is insufficient
 
 
-def rerank_with_feedback(items: list) -> list:
+def rerank_with_feedback(items: list, *, feedback_data: dict | None = None) -> list:
     """用 feedback_store 的命中记录微调检索排名。
 
     当 FEEDBACK_DECAY_ENABLED=1 且记录含 stats_v2 时，使用时间衰减权重：
@@ -120,17 +121,27 @@ def rerank_with_feedback(items: list) -> list:
 
     delta 范围始终限制在 [-FEEDBACK_WEIGHT, +FEEDBACK_WEIGHT]，
     OV 原始分仍是排名主导因素。
+
+    Args:
+        items: List of search result dicts with ``uri`` and ``score``.
+        feedback_data: Pre-loaded feedback dict. When provided, skips the
+            internal ``feedback_store.load()`` call (avoids redundant I/O
+            when the caller already loaded the data). ``None`` preserves
+            the original behaviour (load on demand).
     """
     if not items:
         return items
 
-    try:
-        from curator import feedback_store as _fs
+    if feedback_data is not None:
+        fb = feedback_data
+    else:
+        try:
+            from curator import feedback_store as _fs
 
-        fb = _fs.load()
-    except Exception as e:
-        log.debug("feedback_store load failed: %s", e)
-        return items  # feedback_store 不可用时静默跳过，不影响检索
+            fb = _fs.load()
+        except Exception as e:
+            log.debug("feedback_store load failed: %s", e)
+            return items  # feedback_store 不可用时静默跳过，不影响检索
 
     if not fb:
         return items  # 没有任何 feedback 记录，直接返回
@@ -146,8 +157,10 @@ def rerank_with_feedback(items: list) -> list:
         stats = rec.get("stats_v2")
         if stats and FEEDBACK_DECAY_ENABLED:
             # Lazy decay at read time — clone to avoid mutating cached data
+            from curator.feedback_store import _apply_decay_to_stats
+
             stats_copy = dict(stats)
-            _fs._apply_decay_to_stats(stats_copy, FEEDBACK_HALF_LIFE_DAYS)
+            _apply_decay_to_stats(stats_copy, FEEDBACK_HALF_LIFE_DAYS)
 
             smooth = FEEDBACK_SMOOTH
             up_w = stats_copy.get("up_w", 0.0)
@@ -204,7 +217,14 @@ def _search_result_to_dict(r) -> dict:
     }
 
 
-def backend_retrieve(backend, query: str, session_id: str | None = None, limit: int = 10) -> dict:
+def backend_retrieve(
+    backend,
+    query: str,
+    session_id: str | None = None,
+    limit: int = 10,
+    *,
+    feedback_data: dict | None = None,
+) -> dict:
     """主力检索：通过 KnowledgeBackend 接口搜索，与后端无关。
 
     Args:
@@ -212,6 +232,9 @@ def backend_retrieve(backend, query: str, session_id: str | None = None, limit: 
         query: User query string.
         session_id: Optional session ID for context-aware search.
         limit: Maximum number of results to return.
+        feedback_data: Pre-loaded feedback dict passed through to
+            :func:`rerank_with_feedback`. ``None`` preserves the original
+            behaviour (load on demand).
 
     返回:
         {
@@ -247,7 +270,7 @@ def backend_retrieve(backend, query: str, session_id: str | None = None, limit: 
     all_items_raw = list(items)
 
     # feedback 微调排名（保守权重，原始 score 仍主导）
-    all_items = rerank_with_feedback(items)
+    all_items = rerank_with_feedback(items, feedback_data=feedback_data)
 
     return {
         "memories": memories,
@@ -259,57 +282,37 @@ def backend_retrieve(backend, query: str, session_id: str | None = None, limit: 
     }
 
 
-# Backward-compat alias — callers using the old OV-specific name still work.
-# Deprecated: use backend_retrieve() directly.
-def ov_retrieve(session_mgr_or_backend, query: str, limit: int = 10) -> dict:
-    """Deprecated alias for :func:`backend_retrieve`.
+def _parallel_fetch(
+    uris: list[str],
+    fetch_fn,  # Callable[[str], str]
+    min_parallel: int = 2,
+    max_workers: int = 5,
+) -> dict[str, str]:
+    """Fetch content for multiple URIs, auto-selecting parallel or serial mode.
 
-    Accepts either the old ``SessionManager`` (duck-typed: must have
-    ``.search(query, limit)``) or a :class:`KnowledgeBackend` instance.
-
-    New code should call ``backend_retrieve(backend, query, session_id)``
-    directly.
-
-    .. deprecated::
-        Use :func:`backend_retrieve` instead.
+    Returns {uri: result_text}. On error, maps uri to empty string.
     """
-    import warnings
+    results: dict[str, str] = {}
 
-    warnings.warn(
-        "ov_retrieve() is deprecated, use backend_retrieve() instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    from .backend import KnowledgeBackend
+    if len(uris) >= min_parallel:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_uri = {executor.submit(fetch_fn, uri): uri for uri in uris}
+            for future in concurrent.futures.as_completed(future_to_uri):
+                uri = future_to_uri[future]
+                try:
+                    results[uri] = future.result()
+                except Exception as e:
+                    log.debug("parallel fetch failed for %s: %s", uri, e)
+                    results[uri] = ""
+    else:
+        for uri in uris:
+            try:
+                results[uri] = fetch_fn(uri)
+            except Exception as e:
+                log.debug("serial fetch failed for %s: %s", uri, e)
+                results[uri] = ""
 
-    if isinstance(session_mgr_or_backend, KnowledgeBackend):
-        return backend_retrieve(session_mgr_or_backend, query, limit=limit)
-
-    # Legacy path: session_mgr duck-typed object with .search(query, limit)
-    result = session_mgr_or_backend.search(query, limit=limit)
-    memories = result.get("memories", []) or []
-    resources = result.get("resources", []) or []
-    skills = result.get("skills", []) or []
-    all_items = memories + resources + skills
-
-    log.info("OV 检索: memories=%d, resources=%d, skills=%d", len(memories), len(resources), len(skills))
-
-    if result.get("query_plan"):
-        qp = result["query_plan"]
-        queries = getattr(qp, "queries", []) if not isinstance(qp, dict) else qp.get("queries", [])
-        log.info("query_plan: %d 个子查询", len(queries))
-
-    all_items_raw = list(all_items)
-    all_items = rerank_with_feedback(all_items)
-
-    return {
-        "memories": memories,
-        "resources": resources,
-        "skills": skills,
-        "query_plan": result.get("query_plan"),
-        "all_items": all_items,
-        "all_items_raw": all_items_raw,
-    }
+    return results
 
 
 def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
@@ -382,21 +385,27 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     blocks = []
     used_uris = []
     l1_count = 0
-    for item in scored[:5]:
+
+    # Collect URIs that need overview loading (deduplicate to avoid redundant calls)
+    seen_l1: set[str] = set()
+    l1_candidates: list[tuple[int, dict]] = []
+    for i, item in enumerate(scored[:5]):
         uri = item.get("uri", "")
-        if not uri:
-            continue
+        if uri and uri not in seen_l1:
+            seen_l1.add(uri)
+            l1_candidates.append((i, item))
 
-        overview = ""
-        try:
-            overview = backend.overview(uri)
-        except Exception as e:
-            log.debug("L1 overview failed for %s: %s", uri, e)
+    # Collect URIs and fetch overviews (parallel or serial based on count)
+    l1_uris = [item.get("uri", "") for _, item in l1_candidates]
+    overview_results = _parallel_fetch(l1_uris, backend.overview)
 
+    # Process results in original order
+    for _, item in l1_candidates:
+        uri = item.get("uri", "")
+        overview = overview_results.get(uri, "")
         text = (overview or item.get("abstract", "") or "").strip()
         if len(text) < 20:
             continue
-
         blocks.append(f"[SOURCE: {uri}]\n{text[:1000]}")
         used_uris.append(uri)
         l1_count += 1
@@ -410,30 +419,33 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
     # ---------- Stage 3: L2 only when still insufficient ----------
     # L2 按原始 score 排序取 top N，不限制 used_uris，
     # 这样 L1 阶段因 overview 返回空而被跳过的高分 URI 也有机会被深度加载。
-    l2_count = 0
+    # Deduplicate L2 candidates by URI to avoid redundant read() calls
+    seen_l2: set[str] = set()
+    l2_candidates: list[dict] = []
     for item in scored[: max(3, max_l2)]:
-        if l2_count >= max_l2:
-            break
-
         uri = item.get("uri", "")
-        score = item.get("score", 0)
-        if not uri or score < THRESHOLD_L1_SUFFICIENT:
-            continue
+        if uri and uri not in seen_l2 and item.get("score", 0) >= THRESHOLD_L1_SUFFICIENT:
+            seen_l2.add(uri)
+            l2_candidates.append(item)
+            if len(l2_candidates) >= max_l2:
+                break
 
-        try:
-            content = backend.read(uri)
-            if content and len(str(content)) > 20:
-                if uri in used_uris:
-                    # 升级已有的 L1 块
-                    pos = used_uris.index(uri)
-                    blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
-                else:
-                    # L1 阶段被跳过的高分 URI，现在补上
-                    blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
-                    used_uris.append(uri)
-                l2_count += 1
-        except Exception as e:
-            log.debug("L2 read failed for %s: %s", uri, e)
+    # Fetch full content (parallel or serial based on count)
+    l2_uris = [item.get("uri", "") for item in l2_candidates]
+    read_results = _parallel_fetch(l2_uris, backend.read)
+
+    l2_count = 0
+    for item in l2_candidates:
+        uri = item.get("uri", "")
+        content = read_results.get(uri, "")
+        if content and len(str(content)) > 20:
+            if uri in used_uris:
+                pos = used_uris.index(uri)
+                blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
+            else:
+                blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
+                used_uris.append(uri)
+            l2_count += 1
 
     context_text = "\n\n".join(blocks)
     log.info(

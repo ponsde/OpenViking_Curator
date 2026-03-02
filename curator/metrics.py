@@ -11,7 +11,12 @@ class Metrics:
         self.data = {"started_at": time.time(), "steps": [], "flags": {}, "scores": {}}
 
     def step(self, name, ok=True, extra=None):
-        self.data["steps"].append({"ts": time.time(), "name": name, "ok": ok, "extra": extra or {}})
+        now = time.time()
+        steps = self.data["steps"]
+        prev_ts = steps[-1]["ts"] if steps else self.data["started_at"]
+        elapsed_ms = round((now - prev_ts) * 1000, 2)
+        merged_extra = {**(extra or {}), "elapsed_ms": elapsed_ms}
+        self.data["steps"].append({"ts": now, "name": name, "ok": ok, "extra": merged_extra})
 
     def flag(self, key, val):
         self.data["flags"][key] = val

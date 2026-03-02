@@ -155,7 +155,7 @@ def _mock_judge(*a, **kw):
 def _make_backend_retrieve_from_backend(backend):
     """Build a backend_retrieve mock that queries InMemoryBackend instead of real backend."""
 
-    def _mock_backend_retrieve(bk, query, session_id=None, limit=10):
+    def _mock_backend_retrieve(bk, query, session_id=None, limit=10, *, feedback_data=None):
         find_result = backend.find(query, limit=limit)
         resources = []
         for r in find_result.results:

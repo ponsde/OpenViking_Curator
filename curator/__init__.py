@@ -48,7 +48,7 @@ from .domain_filter import (
 )
 from .freshness import uri_freshness_score
 from .pipeline_v2 import run
-from .retrieval_v2 import assess_coverage, backend_retrieve, load_context, ov_retrieve
+from .retrieval_v2 import assess_coverage, backend_retrieve, load_context
 from .review import (
     JudgeResult,
     detect_conflict,

@@ -70,6 +70,12 @@ class KnowledgeBackend(ABC):
        ``list_resources``.
     3. **Session tracking** (optional, default no-op): ``create_session``,
        ``session_add_message``, ``session_used``, ``session_commit``.
+
+    .. note:: **Thread safety** — The pipeline may call ``overview()`` and
+       ``read()`` concurrently from multiple threads (via
+       ``ThreadPoolExecutor``).  Implementations must be safe for concurrent
+       read-only calls.  Write methods (``ingest``, ``delete``) are always
+       called from a single thread.
     """
 
     # ── Required: core CRUD + retrieval ──

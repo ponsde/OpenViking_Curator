@@ -21,8 +21,6 @@ from curator import (
     assess_coverage,
     feedback_store,
     load_context,
-    # v2 modules
-    ov_retrieve,
     route_scope,
     validate_config,
 )

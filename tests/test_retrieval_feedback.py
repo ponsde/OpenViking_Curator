@@ -367,3 +367,80 @@ class TestFeedbackStoreDecay:
         _ensure_stats_v2(rec)
 
         assert rec["stats_v2"]["up_w"] == 99.0  # unchanged
+
+
+class TestRerankWithFeedbackDataParam:
+    """Tests for the feedback_data parameter on rerank_with_feedback."""
+
+    def test_feedback_data_skips_load(self):
+        """When feedback_data is provided, feedback_store.load() is NOT called."""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        fb = {"b": {"up": 0, "down": 0, "adopt": 5}}
+        with patch("curator.feedback_store.load") as mock_load:
+            items = _make_items(("a", 0.80), ("b", 0.75))
+            result = rerank_with_feedback(items, feedback_data=fb)
+
+        mock_load.assert_not_called()
+        # b should still be boosted
+        assert result[0]["uri"] == "b"
+
+    def test_feedback_data_none_falls_back_to_load(self):
+        """When feedback_data is None, feedback_store.load() IS called."""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        with patch("curator.feedback_store.load", return_value={}) as mock_load:
+            items = _make_items(("a", 0.80))
+            rerank_with_feedback(items, feedback_data=None)
+
+        mock_load.assert_called_once()
+
+    def test_feedback_data_empty_dict_returns_unchanged(self):
+        """Empty feedback_data dict should return items in original order."""
+        from curator.retrieval_v2 import rerank_with_feedback
+
+        items = _make_items(("a", 0.9), ("b", 0.7))
+        result = rerank_with_feedback(items, feedback_data={})
+        assert [r["uri"] for r in result] == ["a", "b"]
+        assert result[0]["score"] == 0.9
+
+
+class TestFeedbackStorePreload:
+    """Tests for single feedback_store.load() per pipeline run."""
+
+    def test_feedback_load_called_once_per_pipeline_run(self, monkeypatch):
+        """feedback_store.load() should be called exactly once in a full pipeline run."""
+        from unittest.mock import MagicMock
+
+        from curator.backend_memory import InMemoryBackend
+        from curator.pipeline_v2 import CuratorPipeline
+
+        backend = InMemoryBackend()
+
+        patches = {
+            "validate_config": MagicMock(),
+            "route_scope": MagicMock(return_value={"domain": "general", "need_fresh": False, "keywords": []}),
+            "assess_coverage": MagicMock(return_value=(0.8, False, "local_sufficient")),
+            "load_context": MagicMock(return_value=("context", ["viking://a"], "L0")),
+            "capture_case": MagicMock(return_value=None),
+            "backend_retrieve": MagicMock(
+                return_value={
+                    "all_items": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "all_items_raw": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "memories": [],
+                    "resources": [{"uri": "a", "score": 0.8, "abstract": "good"}],
+                    "skills": [],
+                    "query_plan": None,
+                }
+            ),
+        }
+
+        load_mock = MagicMock(return_value={})
+
+        with patch.multiple("curator.pipeline_v2", **patches):
+            with patch("curator.feedback_store.load", load_mock):
+                pipeline = CuratorPipeline(backend=backend)
+                pipeline.run("test query")
+
+        # feedback_store.load() should be called exactly once (preload at entry)
+        assert load_mock.call_count == 1
