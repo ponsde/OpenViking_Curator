@@ -110,6 +110,24 @@ def format_report(report: dict) -> str:
     for ft, count in (flags.get("by_type") or {}).items():
         lines.append(_row(f"  {ft}", str(count)))
 
+    # Pending flags summary (top-N by severity)
+    pending_flags = report.get("pending_flags", [])
+    pending_total = report.get("pending_flags_total", 0)
+    if pending_flags:
+        lines.append(_section_header("Pending Flags"))
+        lines.append(_row("Pending Total", str(pending_total)))
+        for pf in pending_flags:
+            fid = pf.get("flag_id", "?")[-12:]
+            sev = pf.get("severity", "?")
+            ft = pf.get("flag_type", "?")[:14]
+            uri = pf.get("uri", "?")[:24]
+            reason = pf.get("reason", "")[:20]
+            lines.append(_row(f"  {fid} [{sev}]", f"{ft} {uri}"))
+            if reason:
+                lines.append(_row("", f"  ↳ {reason}"))
+    elif pending_total == 0:
+        lines.append(_row("Pending Flags", "无待处理 flag"))
+
     # Proactive
     lines.append(_section_header("Proactive Search"))
     if proactive.get("dry_run"):
@@ -196,6 +214,28 @@ def format_report_html(report: dict) -> str:
 
     for ft, count in (flags.get("by_type") or {}).items():
         rows.append(_tr(f"  {ft}", str(count)))
+
+    # Pending flags summary
+    pending_flags = report.get("pending_flags", [])
+    pending_total = report.get("pending_flags_total", 0)
+    if pending_flags:
+        rows.append(_section(f"Pending Flags (top {len(pending_flags)} of {pending_total})"))
+        for pf in pending_flags:
+            fid = _html.escape(pf.get("flag_id", "?")[-12:])
+            sev = _html.escape(pf.get("severity", "?"))
+            ft_val = _html.escape(pf.get("flag_type", "?"))
+            uri = _html.escape(pf.get("uri", "?")[:80])
+            reason = _html.escape(pf.get("reason", ""))
+            reason_html = f"<br/><small>{reason}</small>" if reason else ""
+            rows.append(
+                f"  <tr>"
+                f"<th style='text-align:left;padding:2px 8px'>"
+                f"<code>{fid}</code> [{sev}] {ft_val}</th>"
+                f"<td style='padding:2px 8px;font-size:11px'>{uri}{reason_html}</td>"
+                f"</tr>"
+            )
+    else:
+        rows.append(_tr("Pending Flags", "无待处理 flag"))
 
     rows.append(_section("Proactive Search"))
     if proactive.get("dry_run"):

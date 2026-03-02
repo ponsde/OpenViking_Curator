@@ -118,6 +118,10 @@ FAST_ROUTE = _settings.fast_route == "1"
 LOG_ROTATE_MB = _settings.log_rotate_mb
 LOG_ROTATE_KEEP = _settings.log_rotate_keep
 
+# ── Governance ──
+FLAG_EXPIRE_DAYS = _settings.flag_expire_days
+GOVERNANCE_REPORT_TOP_FLAGS = _settings.governance_report_top_flags
+
 # ── Dedup ──
 DEDUP_SIMILARITY = _settings.dedup_similarity
 DEDUP_MAX_ITEMS = _settings.dedup_max_items

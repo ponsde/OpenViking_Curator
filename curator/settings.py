@@ -103,6 +103,10 @@ class CuratorSettings(BaseSettings):
     chat_retry_max: int = Field(default=3, ge=1)
     chat_retry_backoff_sec: float = Field(default=0.6, ge=0.0)
 
+    # ── Governance ──
+    flag_expire_days: int = Field(default=90, ge=0)  # 0 = disabled
+    governance_report_top_flags: int = Field(default=5, ge=1)
+
     # ── Misc ──
     fast_route: str = "1"
     version: str = ""

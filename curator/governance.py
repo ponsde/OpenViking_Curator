@@ -36,8 +36,8 @@ AUDIT_FILE = "governance_log.jsonl"
 ASYNC_TRACE_FILE = "governance_async_traces.jsonl"
 
 FLAG_TYPES = frozenset({"stale_resource", "broken_url", "review_expired", "ttl_rebalance"})
-# Flag lifecycle: pending → keep / delete / adjust / ignore
-FLAG_STATUSES = frozenset({"pending", "keep", "delete", "adjust", "ignore"})
+# Flag lifecycle: pending → keep / delete / adjust / ignore / expired
+FLAG_STATUSES = frozenset({"pending", "keep", "delete", "adjust", "ignore", "expired"})
 SEVERITIES = frozenset({"low", "medium", "high"})
 
 # Async trace lifecycle: queued → done / failed → consumed
@@ -132,8 +132,14 @@ def write_audit(
     return entry
 
 
-def load_flags(data_path: str | None = None, status: str | None = None) -> list[dict]:
-    """Load governance flags, optionally filtered by status."""
+def load_flags(
+    data_path: str | None = None,
+    status: str | None = None,
+    flag_type: str | None = None,
+    severity: str | None = None,
+    cycle_id: str | None = None,
+) -> list[dict]:
+    """Load governance flags, optionally filtered by status, flag_type, severity, cycle_id."""
     _data = data_path or DATA_PATH
     path = _flags_path(_data)
     if not os.path.exists(path):
@@ -146,8 +152,15 @@ def load_flags(data_path: str | None = None, status: str | None = None) -> list[
                 continue
             try:
                 flag = json.loads(line)
-                if status is None or flag.get("status") == status:
-                    flags.append(flag)
+                if status is not None and flag.get("status") != status:
+                    continue
+                if flag_type is not None and flag.get("flag_type") != flag_type:
+                    continue
+                if severity is not None and flag.get("severity") != severity:
+                    continue
+                if cycle_id is not None and flag.get("cycle_id") != cycle_id:
+                    continue
+                flags.append(flag)
             except json.JSONDecodeError:
                 continue
     return flags
@@ -157,12 +170,19 @@ def update_flag_status(
     flag_id: str,
     new_status: str,
     data_path: str | None = None,
+    reason: str | None = None,
 ) -> bool:
     """Update a flag's status in the JSONL file.  Returns True if found.
 
     Uses the same sidecar lock (``path + ".lock"``) as ``create_flag`` /
     ``locked_append`` so that concurrent flag writes and updates are
     mutually exclusive.
+
+    Args:
+        flag_id:    Full flag ID to update.
+        new_status: New status value (must be in FLAG_STATUSES).
+        data_path:  Override data directory (for testing).
+        reason:     Optional decision reason recorded in ``resolution_reason``.
     """
     if new_status not in FLAG_STATUSES:
         raise ValueError(f"Invalid status: {new_status!r} (expected one of {sorted(FLAG_STATUSES)})")
@@ -173,6 +193,8 @@ def update_flag_status(
     path = _flags_path(_data)
     if not os.path.exists(path):
         return False
+
+    resolved_at = _now_iso() if new_status != "pending" else None
 
     # Use sidecar lock — same domain as locked_append / create_flag
     lock_path = path + ".lock"
@@ -194,6 +216,9 @@ def update_flag_status(
                     flag = json.loads(stripped)
                     if flag.get("flag_id") == flag_id:
                         flag["status"] = new_status
+                        if resolved_at is not None:
+                            flag["resolved_at"] = resolved_at
+                        flag["resolution_reason"] = reason  # None is valid (no reason given)
                         found = True
                     lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
                 except json.JSONDecodeError:
@@ -209,6 +234,139 @@ def update_flag_status(
 
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
+
+
+def expire_flags(
+    data_path: str | None = None,
+    expire_days: int = 90,
+) -> list[str]:
+    """Mark pending flags older than expire_days as 'expired'.
+
+    Returns list of expired flag_ids.  expire_days=0 disables (no-op).
+    """
+    if expire_days <= 0:
+        return []
+
+    from .file_lock import _HAS_FCNTL
+
+    _data = data_path or DATA_PATH
+    path = _flags_path(_data)
+    if not os.path.exists(path):
+        return []
+
+    now = datetime.now(timezone.utc)
+    expired_ids: list[str] = []
+    resolved_at = now.isoformat()
+
+    lock_path = path + ".lock"
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        lines: list[str] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    flag = json.loads(stripped)
+                    if flag.get("status") == "pending":
+                        ts_str = flag.get("timestamp", "")
+                        if ts_str:
+                            try:
+                                created_at = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                age_days = (now - created_at).total_seconds() / 86400
+                                if age_days > expire_days:
+                                    flag["status"] = "expired"
+                                    flag["resolved_at"] = resolved_at
+                                    flag["resolution_reason"] = f"auto-expired after {expire_days} days"
+                                    expired_ids.append(flag["flag_id"])
+                            except (ValueError, TypeError):
+                                pass
+                    lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
+                except json.JSONDecodeError:
+                    lines.append(line)
+
+        if expired_ids:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("".join(lines))
+    finally:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+    return expired_ids
+
+
+def batch_update_flags(
+    flag_ids: list[str],
+    new_status: str,
+    reason: str | None = None,
+    data_path: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Batch update multiple flags atomically in a single read-modify-write.
+
+    Returns (updated_ids, not_found_ids).
+    """
+    if new_status not in FLAG_STATUSES:
+        raise ValueError(f"Invalid status: {new_status!r} (expected one of {sorted(FLAG_STATUSES)})")
+    if not flag_ids:
+        return [], []
+
+    from .file_lock import _HAS_FCNTL
+
+    _data = data_path or DATA_PATH
+    path = _flags_path(_data)
+    if not os.path.exists(path):
+        return [], list(flag_ids)
+
+    target_ids = set(flag_ids)
+    resolved_at = _now_iso()
+    updated_ids: list[str] = []
+
+    lock_path = path + ".lock"
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        lines: list[str] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    flag = json.loads(stripped)
+                    if flag.get("flag_id") in target_ids:
+                        flag["status"] = new_status
+                        flag["resolved_at"] = resolved_at
+                        flag["resolution_reason"] = reason
+                        updated_ids.append(flag["flag_id"])
+                    lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
+                except json.JSONDecodeError:
+                    lines.append(line)
+
+        if updated_ids:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("".join(lines))
+    finally:
+        if _HAS_FCNTL:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+    not_found = [fid for fid in flag_ids if fid not in set(updated_ids)]
+    return updated_ids, not_found
 
 
 def _traces_path(data_path: str) -> str:
@@ -637,7 +795,25 @@ def _phase3_flag(
     """Phase 3: Soft flagging — create flags for issues found in audit.
 
     Deduplicates against existing pending flags (same URI + flag_type).
+    Runs expire_flags() first to clean up stale pending flags.
     """
+    from .config import FLAG_EXPIRE_DAYS
+
+    # Expire stale pending flags before creating new ones
+    expire_days = FLAG_EXPIRE_DAYS
+    if expire_days > 0:
+        expired = expire_flags(data_path=data_path, expire_days=expire_days)
+        if expired:
+            log.info("governance.phase3: expired %d stale pending flags", len(expired))
+            write_audit(
+                cycle_id=cycle_id,
+                phase="flag",
+                action="expire_flags",
+                outcome=f"expired_{len(expired)}",
+                mode=mode,
+                data_path=data_path,
+            )
+
     # Build set of (uri, flag_type) for existing unresolved flags
     existing_flags = load_flags(data_path=data_path)
     active_keys: set[tuple[str, str]] = {
@@ -1060,6 +1236,25 @@ def _phase5_report(
         by_type[ft] = by_type.get(ft, 0) + 1
     flags_section: dict = report["flags"]  # type: ignore[assignment]
     flags_section["by_type"] = by_type
+
+    # Load current pending flags for report embedding (top-N by severity)
+    from .config import GOVERNANCE_REPORT_TOP_FLAGS
+
+    _sev_order = {"high": 0, "medium": 1, "low": 2}
+    all_pending = load_flags(data_path=data_path, status="pending")
+    all_pending.sort(key=lambda f: _sev_order.get(f.get("severity", "low"), 2))
+    top_flags = all_pending[:GOVERNANCE_REPORT_TOP_FLAGS]
+    report["pending_flags"] = [
+        {
+            "flag_id": f.get("flag_id", ""),
+            "flag_type": f.get("flag_type", ""),
+            "severity": f.get("severity", ""),
+            "uri": f.get("uri", ""),
+            "reason": f.get("reason", ""),
+        }
+        for f in top_flags
+    ]
+    report["pending_flags_total"] = len(all_pending)
 
     # Team mode extras
     if mode == "team":
