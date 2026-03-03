@@ -1,4 +1,4 @@
-"""Tests for curator.governance — the weekly governance cycle."""
+"""Tests for curator.governance — cycle, phases, CLI, and report integration."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from curator.governance import (
     TRACE_QUEUED,
     batch_update_flags,
     create_flag,
-    expire_flags,
     harvest_async_results,
     load_audit_log,
     load_flags,
@@ -84,95 +83,6 @@ def _seed_data(data_dir: str) -> None:
     fb_path = os.path.join(data_dir, "feedback.json")
     with open(fb_path, "w") as f:
         json.dump({}, f)
-
-
-# ── Flag helpers ─────────────────────────────────────────────────────────────
-
-
-class TestFlags:
-    def test_create_and_load(self, tmp_path):
-        d = str(tmp_path)
-        flag = create_flag(
-            cycle_id="test_cycle",
-            uri="viking://test/1",
-            flag_type="stale_resource",
-            severity="high",
-            reason="score 0.1",
-            data_path=d,
-        )
-        assert flag["flag_id"].startswith("gov_")
-        assert flag["status"] == "pending"
-        assert flag["flag_type"] == "stale_resource"
-
-        flags = load_flags(data_path=d)
-        assert len(flags) == 1
-        assert flags[0]["uri"] == "viking://test/1"
-
-    def test_load_filtered_by_status(self, tmp_path):
-        d = str(tmp_path)
-        create_flag(cycle_id="c1", uri="a", flag_type="stale_resource", severity="high", reason="r1", data_path=d)
-        create_flag(cycle_id="c1", uri="b", flag_type="broken_url", severity="medium", reason="r2", data_path=d)
-        # Update first flag
-        flags = load_flags(data_path=d)
-        update_flag_status(flags[0]["flag_id"], "keep", data_path=d)
-
-        pending = load_flags(data_path=d, status="pending")
-        assert len(pending) == 1
-        assert pending[0]["uri"] == "b"
-
-        kept = load_flags(data_path=d, status="keep")
-        assert len(kept) == 1
-        assert kept[0]["uri"] == "a"
-
-    def test_update_nonexistent_flag(self, tmp_path):
-        d = str(tmp_path)
-        result = update_flag_status("nonexistent", "keep", data_path=d)
-        assert result is False
-
-    def test_multiple_flags_same_cycle(self, tmp_path):
-        d = str(tmp_path)
-        for i in range(5):
-            create_flag(
-                cycle_id="c1",
-                uri=f"uri_{i}",
-                flag_type="stale_resource",
-                severity="medium",
-                reason=f"reason_{i}",
-                data_path=d,
-            )
-        flags = load_flags(data_path=d)
-        assert len(flags) == 5
-
-
-# ── Audit log ────────────────────────────────────────────────────────────────
-
-
-class TestAuditLog:
-    def test_write_and_load(self, tmp_path):
-        d = str(tmp_path)
-        write_audit(cycle_id="c1", phase="collect", action="test", outcome="ok", mode="normal", data_path=d)
-        write_audit(cycle_id="c1", phase="audit", action="test2", outcome="ok", mode="normal", data_path=d)
-        write_audit(cycle_id="c2", phase="collect", action="test3", outcome="ok", mode="normal", data_path=d)
-
-        all_entries = load_audit_log(data_path=d)
-        assert len(all_entries) == 3
-
-        c1_entries = load_audit_log(data_path=d, cycle_id="c1")
-        assert len(c1_entries) == 2
-
-    def test_team_mode_extra_fields(self, tmp_path):
-        d = str(tmp_path)
-        entry = write_audit(
-            cycle_id="c1",
-            phase="audit",
-            action="test",
-            outcome="ok",
-            mode="team",
-            details={"latency_ms": 42, "backend_calls": 3},
-            data_path=d,
-        )
-        assert entry["mode"] == "team"
-        assert entry["details"]["latency_ms"] == 42
 
 
 # ── Full governance cycle ────────────────────────────────────────────────────
@@ -320,7 +230,7 @@ class TestGovernanceCycle:
         monkeypatch.setenv("CURATOR_FEEDBACK_FILE", fb_path)
         monkeypatch.setattr("curator.feedback_store.STORE", Path(fb_path))
         # Prevent picking up real curated directory
-        monkeypatch.setattr("curator.governance.CURATED_DIR", str(tmp_path / "empty_curated"))
+        monkeypatch.setattr("curator.governance_phases.CURATED_DIR", str(tmp_path / "empty_curated"))
         monkeypatch.setenv("CURATOR_CURATED_DIR", str(tmp_path / "empty_curated"))
 
         report = run_governance_cycle(
@@ -373,7 +283,7 @@ class TestGovernanceCycle:
 class TestPhase3Flagging:
     def test_flags_stale_resources(self, tmp_path):
         """Phase 3 creates flags for stale resources."""
-        from curator.governance import _phase3_flag
+        from curator.governance_phases import phase3_flag
 
         d = str(tmp_path)
         audit_data = {
@@ -389,7 +299,7 @@ class TestPhase3Flagging:
             "ttl_suggestions": [],
         }
 
-        flags = _phase3_flag(d, "test_cycle", "normal", audit_data)
+        flags = phase3_flag(d, "test_cycle", "normal", audit_data)
         assert len(flags) == 2
 
         # First should be high severity (score < 0.2)
@@ -400,7 +310,7 @@ class TestPhase3Flagging:
 
     def test_flags_broken_urls(self, tmp_path):
         """Phase 3 creates flags for broken URLs."""
-        from curator.governance import _phase3_flag
+        from curator.governance_phases import phase3_flag
 
         d = str(tmp_path)
         audit_data = {
@@ -414,13 +324,13 @@ class TestPhase3Flagging:
             "ttl_suggestions": [],
         }
 
-        flags = _phase3_flag(d, "test_cycle", "normal", audit_data)
+        flags = phase3_flag(d, "test_cycle", "normal", audit_data)
         assert len(flags) == 1
         assert flags[0]["flag_type"] == "broken_url"
 
     def test_flags_review_expired(self, tmp_path):
         """Phase 3 creates flags for review-expired resources."""
-        from curator.governance import _phase3_flag
+        from curator.governance_phases import phase3_flag
 
         d = str(tmp_path)
         audit_data = {
@@ -433,13 +343,13 @@ class TestPhase3Flagging:
             "ttl_suggestions": [],
         }
 
-        flags = _phase3_flag(d, "test_cycle", "normal", audit_data)
+        flags = phase3_flag(d, "test_cycle", "normal", audit_data)
         assert len(flags) == 1
         assert flags[0]["flag_type"] == "review_expired"
 
     def test_flags_ttl_rebalance(self, tmp_path):
         """Phase 3 creates flags for TTL rebalance suggestions."""
-        from curator.governance import _phase3_flag
+        from curator.governance_phases import phase3_flag
 
         d = str(tmp_path)
         audit_data = {
@@ -450,108 +360,9 @@ class TestPhase3Flagging:
             ],
         }
 
-        flags = _phase3_flag(d, "test_cycle", "normal", audit_data)
+        flags = phase3_flag(d, "test_cycle", "normal", audit_data)
         assert len(flags) == 1
         assert flags[0]["flag_type"] == "ttl_rebalance"
-
-
-# ── Async trace tests ───────────────────────────────────────────────────────
-
-
-class TestAsyncTraces:
-    def test_write_and_load_traces(self, tmp_path):
-        """Write trace events and load current state."""
-        d = str(tmp_path)
-        write_trace_event(d, "t1", TRACE_QUEUED, query="test query", topic="test")
-        write_trace_event(d, "t2", TRACE_QUEUED, query="another query", topic="other")
-
-        states = load_trace_states(d)
-        assert len(states) == 2
-        assert states["t1"]["status"] == TRACE_QUEUED
-        assert states["t1"]["query"] == "test query"
-        assert states["t2"]["status"] == TRACE_QUEUED
-
-    def test_trace_state_transitions(self, tmp_path):
-        """Trace events update state correctly (latest wins)."""
-        d = str(tmp_path)
-        write_trace_event(d, "t1", TRACE_QUEUED, query="q1")
-        write_trace_event(d, "t1", TRACE_DONE, result={"ingested": True, "coverage": 0.8})
-
-        states = load_trace_states(d)
-        assert states["t1"]["status"] == TRACE_DONE
-        assert states["t1"]["result"]["ingested"] is True
-        assert states["t1"]["query"] == "q1"  # preserved from queued event
-
-    def test_harvest_completed_traces(self, tmp_path):
-        """Harvest picks up done traces and marks them consumed."""
-        d = str(tmp_path)
-        write_trace_event(d, "t1", TRACE_QUEUED, query="q1")
-        write_trace_event(d, "t1", TRACE_DONE, result={"ingested": True, "coverage": 0.5})
-        write_trace_event(d, "t2", TRACE_QUEUED, query="q2")
-        write_trace_event(d, "t2", TRACE_FAILED, error="timeout")
-        write_trace_event(d, "t3", TRACE_QUEUED, query="q3")
-        write_trace_event(d, "t3", TRACE_DONE, result={"ingested": False, "coverage": 0.3})
-
-        harvested = harvest_async_results(d, consumed_by="test_cycle")
-        assert len(harvested) == 2  # t1 and t3 are done
-
-        # Verify they're now consumed
-        states = load_trace_states(d)
-        assert states["t1"]["status"] == TRACE_CONSUMED
-        assert states["t3"]["status"] == TRACE_CONSUMED
-        assert states["t2"]["status"] == TRACE_FAILED  # unchanged
-
-    def test_harvest_idempotent(self, tmp_path):
-        """Second harvest returns nothing (already consumed)."""
-        d = str(tmp_path)
-        write_trace_event(d, "t1", TRACE_QUEUED, query="q1")
-        write_trace_event(d, "t1", TRACE_DONE, result={"ingested": True})
-
-        first = harvest_async_results(d, consumed_by="cycle1")
-        assert len(first) == 1
-
-        second = harvest_async_results(d, consumed_by="cycle2")
-        assert len(second) == 0  # already consumed
-
-    def test_harvest_empty(self, tmp_path):
-        """Harvest on empty data returns empty list."""
-        d = str(tmp_path)
-        harvested = harvest_async_results(d, consumed_by="test")
-        assert harvested == []
-
-    def test_orphan_detection(self, tmp_path, monkeypatch):
-        """Queued traces older than threshold are marked failed."""
-        from datetime import timedelta
-
-        from curator import governance
-
-        d = str(tmp_path)
-        # Write a trace with an old timestamp
-        old_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
-        from curator.file_lock import locked_append
-
-        entry = json.dumps(
-            {
-                "timestamp": old_ts,
-                "trace_id": "t_old",
-                "event": TRACE_QUEUED,
-                "query": "old query",
-            }
-        )
-        locked_append(os.path.join(d, "governance_async_traces.jsonl"), entry + "\n")
-
-        # Also write a recent queued trace
-        write_trace_event(d, "t_new", TRACE_QUEUED, query="new query")
-
-        harvested = harvest_async_results(d, consumed_by="test")
-        assert len(harvested) == 0  # nothing done
-
-        # Old trace should now be failed
-        states = load_trace_states(d)
-        assert states["t_old"]["status"] == TRACE_FAILED
-        assert "orphaned" in states["t_old"].get("error", "")
-        # Recent trace still queued
-        assert states["t_new"]["status"] == TRACE_QUEUED
 
 
 # ── Hybrid sync + async Phase 4 tests ──────────────────────────────────────
@@ -698,12 +509,11 @@ class TestHybridPhase4:
         monkeypatch.setenv("CURATOR_GOVERNANCE_SYNC_BUDGET", "0")  # all async
 
         done_event = threading.Event()
-        original_batch = None
 
         # Wrap _run_async_governance_batch to signal when done
-        from curator import governance
+        from curator import governance_phases
 
-        original_batch = governance._run_async_governance_batch
+        original_batch = governance_phases._run_async_governance_batch
 
         def wrapped_batch(*args, **kwargs):
             try:
@@ -711,7 +521,7 @@ class TestHybridPhase4:
             finally:
                 done_event.set()
 
-        monkeypatch.setattr("curator.governance._run_async_governance_batch", wrapped_batch)
+        monkeypatch.setattr("curator.governance_phases._run_async_governance_batch", wrapped_batch)
 
         call_count = {"n": 0}
 
@@ -747,9 +557,9 @@ class TestHybridPhase4:
         monkeypatch.setenv("CURATOR_GOVERNANCE_SYNC_BUDGET", "0")
 
         done_event = threading.Event()
-        from curator import governance
+        from curator import governance_phases
 
-        original_batch = governance._run_async_governance_batch
+        original_batch = governance_phases._run_async_governance_batch
 
         def wrapped_batch(*args, **kwargs):
             try:
@@ -757,7 +567,7 @@ class TestHybridPhase4:
             finally:
                 done_event.set()
 
-        monkeypatch.setattr("curator.governance._run_async_governance_batch", wrapped_batch)
+        monkeypatch.setattr("curator.governance_phases._run_async_governance_batch", wrapped_batch)
 
         def failing_run(query, **kwargs):
             raise RuntimeError("simulated pipeline failure")
@@ -778,280 +588,7 @@ class TestHybridPhase4:
                 assert "simulated" in t.get("error", "")
 
 
-# ── Flag filtering tests (Task 7.1) ──────────────────────────────────────────
-
-
-class TestFlagFiltering:
-    def _create_flags(self, d: str) -> None:
-        create_flag(
-            cycle_id="c1",
-            uri="uri_stale_high",
-            flag_type="stale_resource",
-            severity="high",
-            reason="stale",
-            data_path=d,
-        )
-        create_flag(
-            cycle_id="c1",
-            uri="uri_broken_medium",
-            flag_type="broken_url",
-            severity="medium",
-            reason="broken",
-            data_path=d,
-        )
-        create_flag(
-            cycle_id="c2",
-            uri="uri_stale_low",
-            flag_type="stale_resource",
-            severity="low",
-            reason="low stale",
-            data_path=d,
-        )
-        create_flag(
-            cycle_id="c2",
-            uri="uri_ttl",
-            flag_type="ttl_rebalance",
-            severity="low",
-            reason="ttl",
-            data_path=d,
-        )
-
-    def test_filter_by_flag_type(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        stale = load_flags(data_path=d, flag_type="stale_resource")
-        assert len(stale) == 2
-        assert all(f["flag_type"] == "stale_resource" for f in stale)
-
-    def test_filter_by_severity(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        high = load_flags(data_path=d, severity="high")
-        assert len(high) == 1
-        assert high[0]["uri"] == "uri_stale_high"
-
-    def test_filter_by_cycle_id(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        c2_flags = load_flags(data_path=d, cycle_id="c2")
-        assert len(c2_flags) == 2
-        assert all(f["cycle_id"] == "c2" for f in c2_flags)
-
-    def test_combined_filter(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        result = load_flags(data_path=d, flag_type="stale_resource", severity="high")
-        assert len(result) == 1
-        assert result[0]["uri"] == "uri_stale_high"
-
-    def test_filter_with_status(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        # Mark one stale as keep
-        flags = load_flags(data_path=d, flag_type="stale_resource")
-        update_flag_status(flags[0]["flag_id"], "keep", data_path=d)
-
-        pending_stale = load_flags(data_path=d, flag_type="stale_resource", status="pending")
-        assert len(pending_stale) == 1
-
-    def test_filter_no_match(self, tmp_path):
-        d = str(tmp_path)
-        self._create_flags(d)
-        result = load_flags(data_path=d, flag_type="review_expired")
-        assert result == []
-
-
-# ── update_flag_status with reason tests (Task 7.2) ──────────────────────────
-
-
-class TestUpdateFlagStatusReason:
-    def test_reason_recorded(self, tmp_path):
-        d = str(tmp_path)
-        flag = create_flag(
-            cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="stale", data_path=d
-        )
-        ok = update_flag_status(flag["flag_id"], "delete", data_path=d, reason="content is outdated")
-        assert ok is True
-
-        flags = load_flags(data_path=d)
-        updated = flags[0]
-        assert updated["resolution_reason"] == "content is outdated"
-        assert updated["resolved_at"] is not None
-
-    def test_no_reason_is_none(self, tmp_path):
-        d = str(tmp_path)
-        flag = create_flag(
-            cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="stale", data_path=d
-        )
-        update_flag_status(flag["flag_id"], "keep", data_path=d)
-        flags = load_flags(data_path=d)
-        assert flags[0]["resolution_reason"] is None
-
-    def test_resolved_at_set_on_update(self, tmp_path):
-        d = str(tmp_path)
-        flag = create_flag(
-            cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d
-        )
-        update_flag_status(flag["flag_id"], "ignore", data_path=d)
-        flags = load_flags(data_path=d)
-        assert "resolved_at" in flags[0]
-        resolved_at = datetime.fromisoformat(flags[0]["resolved_at"])
-        assert resolved_at.tzinfo is not None
-
-
-# ── expire_flags tests (Task 7.3) ─────────────────────────────────────────────
-
-
-class TestExpireFlags:
-    def test_expire_old_pending_flags(self, tmp_path):
-        d = str(tmp_path)
-        # Create a flag with old timestamp (100 days ago)
-        flag = create_flag(
-            cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d
-        )
-        # Backdate the flag
-        path = os.path.join(d, "governance_flags.jsonl")
-        flags_data = load_flags(data_path=d)
-        old_ts = _ts(100)
-        flags_data[0]["timestamp"] = old_ts
-        with open(path, "w") as f:
-            for fl in flags_data:
-                f.write(json.dumps(fl) + "\n")
-
-        expired = expire_flags(data_path=d, expire_days=90)
-        assert flag["flag_id"] in expired
-
-        result = load_flags(data_path=d, status="expired")
-        assert len(result) == 1
-        assert result[0]["resolution_reason"].startswith("auto-expired")
-
-    def test_fresh_pending_flag_not_expired(self, tmp_path):
-        d = str(tmp_path)
-        create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-        expired = expire_flags(data_path=d, expire_days=90)
-        assert expired == []
-
-    def test_non_pending_flag_not_expired(self, tmp_path):
-        d = str(tmp_path)
-        flag = create_flag(
-            cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d
-        )
-        update_flag_status(flag["flag_id"], "keep", data_path=d)
-        # Backdate
-        path = os.path.join(d, "governance_flags.jsonl")
-        flags_data = load_flags(data_path=d)
-        flags_data[0]["timestamp"] = _ts(100)
-        with open(path, "w") as f:
-            for fl in flags_data:
-                f.write(json.dumps(fl) + "\n")
-
-        expired = expire_flags(data_path=d, expire_days=90)
-        assert expired == []  # keep status, not pending
-
-    def test_expire_days_zero_disables(self, tmp_path):
-        d = str(tmp_path)
-        create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-        # Backdate
-        path = os.path.join(d, "governance_flags.jsonl")
-        flags_data = load_flags(data_path=d)
-        flags_data[0]["timestamp"] = _ts(200)
-        with open(path, "w") as f:
-            for fl in flags_data:
-                f.write(json.dumps(fl) + "\n")
-
-        expired = expire_flags(data_path=d, expire_days=0)
-        assert expired == []  # disabled
-        still_pending = load_flags(data_path=d, status="pending")
-        assert len(still_pending) == 1
-
-    def test_load_flags_pending_excludes_expired(self, tmp_path):
-        d = str(tmp_path)
-        create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-        # Backdate and expire
-        path = os.path.join(d, "governance_flags.jsonl")
-        flags_data = load_flags(data_path=d)
-        flags_data[0]["timestamp"] = _ts(100)
-        with open(path, "w") as f:
-            for fl in flags_data:
-                f.write(json.dumps(fl) + "\n")
-        expire_flags(data_path=d, expire_days=90)
-
-        pending = load_flags(data_path=d, status="pending")
-        assert pending == []  # expired not included
-
-        all_flags = load_flags(data_path=d)
-        assert len(all_flags) == 1
-        assert all_flags[0]["status"] == "expired"
-
-
-# ── batch_update_flags tests (Task 7.4) ───────────────────────────────────────
-
-
-class TestBatchUpdateFlags:
-    def test_batch_update_multiple(self, tmp_path):
-        d = str(tmp_path)
-        f1 = create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-        f2 = create_flag(cycle_id="c1", uri="u2", flag_type="broken_url", severity="medium", reason="r", data_path=d)
-        f3 = create_flag(cycle_id="c1", uri="u3", flag_type="stale_resource", severity="low", reason="r", data_path=d)
-
-        updated, not_found = batch_update_flags(
-            [f1["flag_id"], f2["flag_id"]], "delete", reason="bulk cleanup", data_path=d
-        )
-        assert set(updated) == {f1["flag_id"], f2["flag_id"]}
-        assert not_found == []
-
-        deleted = load_flags(data_path=d, status="delete")
-        assert len(deleted) == 2
-        assert all(fl["resolution_reason"] == "bulk cleanup" for fl in deleted)
-
-        pending = load_flags(data_path=d, status="pending")
-        assert len(pending) == 1
-        assert pending[0]["flag_id"] == f3["flag_id"]
-
-    def test_batch_update_partial_invalid(self, tmp_path):
-        d = str(tmp_path)
-        f1 = create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-
-        updated, not_found = batch_update_flags([f1["flag_id"], "nonexistent_id"], "keep", data_path=d)
-        assert f1["flag_id"] in updated
-        assert "nonexistent_id" in not_found
-
-    def test_batch_update_with_reason(self, tmp_path):
-        d = str(tmp_path)
-        f1 = create_flag(cycle_id="c1", uri="u1", flag_type="stale_resource", severity="high", reason="r", data_path=d)
-        f2 = create_flag(cycle_id="c1", uri="u2", flag_type="broken_url", severity="medium", reason="r", data_path=d)
-
-        batch_update_flags([f1["flag_id"], f2["flag_id"]], "ignore", reason="no action needed", data_path=d)
-
-        flags = load_flags(data_path=d, status="ignore")
-        assert all(fl["resolution_reason"] == "no action needed" for fl in flags)
-
-    def test_batch_update_single_write(self, tmp_path):
-        """Batch update writes the file only once (not N times)."""
-        d = str(tmp_path)
-        ids = []
-        for i in range(5):
-            f = create_flag(
-                cycle_id="c1", uri=f"u{i}", flag_type="stale_resource", severity="low", reason="r", data_path=d
-            )
-            ids.append(f["flag_id"])
-
-        path = os.path.join(d, "governance_flags.jsonl")
-        mtime_before = os.path.getmtime(path)
-        import time as _time
-
-        _time.sleep(0.01)
-
-        batch_update_flags(ids, "keep", data_path=d)
-        mtime_after = os.path.getmtime(path)
-        # File was written (mtime changed)
-        assert mtime_after > mtime_before
-        # All flags updated
-        kept = load_flags(data_path=d, status="keep")
-        assert len(kept) == 5
-
-
-# ── CLI filtering tests (Task 7.5) ────────────────────────────────────────────
+# ── CLI filtering tests ────────────────────────────────────────────────────────
 
 
 class TestCLIFiltering:
@@ -1123,7 +660,7 @@ class TestCLIFiltering:
         assert "broken_url" in out
 
 
-# ── CLI batch operation tests (Task 7.6) ──────────────────────────────────────
+# ── CLI batch operation tests ──────────────────────────────────────────────────
 
 
 class TestCLIBatchOps:
@@ -1189,7 +726,7 @@ class TestCLIBatchOps:
         assert len(kept) == 1
 
 
-# ── Report flag summary tests (Task 7.7) ──────────────────────────────────────
+# ── Report flag summary tests ──────────────────────────────────────────────────
 
 
 class TestReportFlagSummary:
