@@ -4,7 +4,7 @@ Flags are advisory markers written to ``governance_flags.jsonl``.
 The full lifecycle is: pending -> keep / delete / adjust / ignore / expired.
 
 All writes use sidecar file-locking (``file_lock.locked_append`` /
-``_HAS_FCNTL``) for safe concurrency.
+``file_lock.locked_rw_jsonl``) for safe concurrency.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ def update_flag_status(
     if new_status not in FLAG_STATUSES:
         raise ValueError(f"Invalid status: {new_status!r} (expected one of {sorted(FLAG_STATUSES)})")
 
-    from .file_lock import _HAS_FCNTL
+    from .file_lock import locked_rw_jsonl
 
     _data = data_path or DATA_PATH
     path = _flags_path(_data)
@@ -139,44 +139,18 @@ def update_flag_status(
 
     resolved_at = _now_iso() if new_status != "pending" else None
 
-    # Use sidecar lock -- same domain as locked_append / create_flag
-    lock_path = path + ".lock"
-    lock_fd = open(lock_path, "w")  # noqa: SIM115
-    try:
-        if _HAS_FCNTL:
-            import fcntl
-
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-        lines: list[str] = []
+    def _update(items: list[dict]) -> bool:
         found = False
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    flag = json.loads(stripped)
-                    if flag.get("flag_id") == flag_id:
-                        flag["status"] = new_status
-                        if resolved_at is not None:
-                            flag["resolved_at"] = resolved_at
-                        flag["resolution_reason"] = reason  # None is valid (no reason given)
-                        found = True
-                    lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
-                except json.JSONDecodeError:
-                    lines.append(line)
-
-        if found:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("".join(lines))
+        for flag in items:
+            if flag.get("flag_id") == flag_id:
+                flag["status"] = new_status
+                if resolved_at is not None:
+                    flag["resolved_at"] = resolved_at
+                flag["resolution_reason"] = reason
+                found = True
         return found
-    finally:
-        if _HAS_FCNTL:
-            import fcntl
 
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        lock_fd.close()
+    return locked_rw_jsonl(path, _update)
 
 
 def expire_flags(
@@ -190,7 +164,7 @@ def expire_flags(
     if expire_days <= 0:
         return []
 
-    from .file_lock import _HAS_FCNTL
+    from .file_lock import locked_rw_jsonl
 
     _data = data_path or DATA_PATH
     path = _flags_path(_data)
@@ -198,53 +172,27 @@ def expire_flags(
         return []
 
     now = datetime.now(timezone.utc)
-    expired_ids: list[str] = []
     resolved_at = now.isoformat()
 
-    lock_path = path + ".lock"
-    lock_fd = open(lock_path, "w")  # noqa: SIM115
-    try:
-        if _HAS_FCNTL:
-            import fcntl
+    def _expire(items: list[dict]) -> list[str]:
+        expired_ids: list[str] = []
+        for flag in items:
+            if flag.get("status") == "pending":
+                ts_str = flag.get("timestamp", "")
+                if ts_str:
+                    try:
+                        created_at = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        age_days = (now - created_at).total_seconds() / 86400
+                        if age_days > expire_days:
+                            flag["status"] = "expired"
+                            flag["resolved_at"] = resolved_at
+                            flag["resolution_reason"] = f"auto-expired after {expire_days} days"
+                            expired_ids.append(flag["flag_id"])
+                    except (ValueError, TypeError):
+                        pass
+        return expired_ids
 
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-        lines: list[str] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    flag = json.loads(stripped)
-                    if flag.get("status") == "pending":
-                        ts_str = flag.get("timestamp", "")
-                        if ts_str:
-                            try:
-                                created_at = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                age_days = (now - created_at).total_seconds() / 86400
-                                if age_days > expire_days:
-                                    flag["status"] = "expired"
-                                    flag["resolved_at"] = resolved_at
-                                    flag["resolution_reason"] = f"auto-expired after {expire_days} days"
-                                    expired_ids.append(flag["flag_id"])
-                            except (ValueError, TypeError):
-                                pass
-                    lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
-                except json.JSONDecodeError:
-                    lines.append(line)
-
-        if expired_ids:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("".join(lines))
-    finally:
-        if _HAS_FCNTL:
-            import fcntl
-
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        lock_fd.close()
-
-    return expired_ids
+    return locked_rw_jsonl(path, _expire)
 
 
 def batch_update_flags(
@@ -262,7 +210,7 @@ def batch_update_flags(
     if not flag_ids:
         return [], []
 
-    from .file_lock import _HAS_FCNTL
+    from .file_lock import locked_rw_jsonl
 
     _data = data_path or DATA_PATH
     path = _flags_path(_data)
@@ -271,42 +219,17 @@ def batch_update_flags(
 
     target_ids = set(flag_ids)
     resolved_at = _now_iso()
-    updated_ids: list[str] = []
 
-    lock_path = path + ".lock"
-    lock_fd = open(lock_path, "w")  # noqa: SIM115
-    try:
-        if _HAS_FCNTL:
-            import fcntl
+    def _batch_update(items: list[dict]) -> list[str]:
+        updated_ids: list[str] = []
+        for flag in items:
+            if flag.get("flag_id") in target_ids:
+                flag["status"] = new_status
+                flag["resolved_at"] = resolved_at
+                flag["resolution_reason"] = reason
+                updated_ids.append(flag["flag_id"])
+        return updated_ids
 
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-        lines: list[str] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    flag = json.loads(stripped)
-                    if flag.get("flag_id") in target_ids:
-                        flag["status"] = new_status
-                        flag["resolved_at"] = resolved_at
-                        flag["resolution_reason"] = reason
-                        updated_ids.append(flag["flag_id"])
-                    lines.append(json.dumps(flag, ensure_ascii=False) + "\n")
-                except json.JSONDecodeError:
-                    lines.append(line)
-
-        if updated_ids:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("".join(lines))
-    finally:
-        if _HAS_FCNTL:
-            import fcntl
-
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        lock_fd.close()
-
+    updated_ids = locked_rw_jsonl(path, _batch_update)
     not_found = [fid for fid in flag_ids if fid not in set(updated_ids)]
     return updated_ids, not_found

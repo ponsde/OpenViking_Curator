@@ -75,6 +75,47 @@ def locked_write(path: str | os.PathLike, content: str) -> None:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def locked_rw_jsonl(path: str | os.PathLike, fn):
+    """Read-modify-write a JSONL file under an exclusive sidecar lock.
+
+    *fn* receives a list of parsed dicts (one per JSONL line) and may mutate
+    it in place.  The modified list is written back.  Returns whatever *fn*
+    returns.  Uses the same sidecar ``.lock`` file as ``locked_append`` to
+    ensure mutual exclusion.
+    """
+    path = str(path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    lock_path = path + ".lock"
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        if _HAS_FCNTL:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        items: list[dict] = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped:
+                        try:
+                            items.append(json.loads(stripped))
+                        except json.JSONDecodeError:
+                            pass
+
+        result = fn(items)
+
+        with open(path, "w", encoding="utf-8") as f:
+            for item in items:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+        return result
+    finally:
+        if _HAS_FCNTL:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
 def locked_rw_json(path: str | os.PathLike, fn):
     """Read-modify-write a JSON file under an exclusive lock.
 
