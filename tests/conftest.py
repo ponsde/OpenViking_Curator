@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -20,7 +21,14 @@ def memory_backend():
 
 @pytest.fixture
 def mock_llm(monkeypatch):
-    """Patch curator.config.chat with a controllable fake."""
+    """Patch LLM chat call sites with a controllable fake.
+
+    Besides ``curator.config.chat``, this fixture also patches already-imported
+    ``curator.*`` modules that bound ``chat`` at import time
+    (``from curator.config import chat``).
+    """
+    import curator.config as cfg
+
     state = {
         "response": '{"pass": false, "reason": "mock"}',
         "calls": [],
@@ -39,7 +47,22 @@ def mock_llm(monkeypatch):
         )
         return state["response"]
 
+    # Patch canonical source.
+    original_chat = cfg.chat
     monkeypatch.setattr("curator.config.chat", _fake_chat)
+
+    # Patch already-imported modules that captured old chat reference.
+    for name, mod in list(sys.modules.items()):
+        if not name.startswith("curator"):
+            continue
+        if mod is None or not hasattr(mod, "chat"):
+            continue
+        try:
+            if getattr(mod, "chat") is original_chat:
+                monkeypatch.setattr(mod, "chat", _fake_chat)
+        except Exception:
+            # Best-effort patching; ignore unusual module objects.
+            pass
 
     def _set_response(text: str):
         state["response"] = text
