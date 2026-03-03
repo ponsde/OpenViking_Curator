@@ -105,48 +105,7 @@ def _cycle_id() -> str:
 # ── Main entry point ─────────────────────────────────────────────────────────
 
 
-def run_governance_cycle(
-    backend: Any = None,
-    *,
-    data_path: str | None = None,
-    mode: str = "normal",
-    dry_run: bool = False,
-    _run_fn: Callable | None = None,
-) -> dict:
-    """Execute a complete governance cycle.
-
-    Args:
-        backend:    KnowledgeBackend instance (optional, for freshness scan).
-        data_path:  Override data directory (for testing).
-        mode:       "normal" or "team" (team adds full audit trail).
-        dry_run:    If True, skip Phase 4 (proactive search / writes).
-        _run_fn:    Override pipeline run function (for testing).
-
-    Returns:
-        Governance report dict.
-    """
-    _data = data_path or DATA_PATH
-    _mode = mode if mode in ("normal", "team") else "normal"
-    lookback = int(env("CURATOR_GOVERNANCE_LOOKBACK_DAYS", "30"))
-    max_proactive = int(env("CURATOR_GOVERNANCE_MAX_PROACTIVE", "5"))
-    use_llm_q = env("CURATOR_GOVERNANCE_USE_LLM_QUERIES", "").lower() in ("1", "true", "yes")
-
-    os.makedirs(_data, exist_ok=True)
-    cid = _cycle_id()
-
-    log.info("governance: starting cycle %s (mode=%s, dry_run=%s)", cid, _mode, dry_run)
-    t0 = time.time()
-
-    write_audit(
-        cycle_id=cid,
-        phase="start",
-        action="cycle_start",
-        outcome="started",
-        mode=_mode,
-        data_path=_data,
-    )
-
-    # Phase 0: Harvest async results from previous cycle(s)
+def _phase0_harvest(_data: str, cid: str, _mode: str) -> list[dict]:
     try:
         harvest_data = harvest_async_results(_data, consumed_by=cid)
         if harvest_data:
@@ -155,39 +114,44 @@ def run_governance_cycle(
                 phase="harvest",
                 action="harvest_async",
                 outcome=f"harvested_{len(harvest_data)}",
-                details={
-                    "ingested": sum(1 for h in harvest_data if (h.get("result") or {}).get("ingested")),
-                },
+                details={"ingested": sum(1 for h in harvest_data if (h.get("result") or {}).get("ingested"))},
                 mode=_mode,
                 data_path=_data,
             )
             log.info("governance.phase0: harvested %d async results", len(harvest_data))
+        return harvest_data
     except Exception as e:
         log.warning("governance.phase0: harvest failed: %s", e, exc_info=True)
-        harvest_data = []
+        return []
 
-    # Phase 1: Collect
+
+def _run_governance_phases(
+    _data: str,
+    cid: str,
+    _mode: str,
+    lookback: int,
+    backend: Any,
+    dry_run: bool,
+    _run_fn: Callable | None,
+    max_proactive: int,
+    use_llm_q: bool,
+) -> tuple[list[dict], dict, dict, list[dict], dict, dict]:
+    harvest_data = _phase0_harvest(_data, cid, _mode)
     try:
         collect_data = _phase1_collect(_data, lookback, cid, _mode)
     except Exception as e:
         log.warning("governance.phase1: failed: %s", e, exc_info=True)
         collect_data = {"weak_topics": [], "query_metrics": {}, "interests": []}
-
-    # Phase 2: Audit
     try:
         audit_data = _phase2_audit(_data, cid, _mode, backend)
     except Exception as e:
         log.warning("governance.phase2: failed: %s", e, exc_info=True)
         audit_data = {}
-
-    # Phase 3: Flag
     try:
         flags = _phase3_flag(_data, cid, _mode, audit_data)
     except Exception as e:
         log.warning("governance.phase3: failed: %s", e, exc_info=True)
         flags = []
-
-    # Phase 4: Proactive (hybrid sync + async)
     try:
         proactive_data = _phase4_proactive(
             _data,
@@ -204,34 +168,32 @@ def run_governance_cycle(
     except Exception as e:
         log.warning("governance.phase4: failed: %s", e, exc_info=True)
         proactive_data = {"searched": [], "async_queued": 0, "skipped_dry_run": False}
-
-    # Phase 5: Report
     try:
         report = _phase5_report(
-            _data,
-            cid,
-            _mode,
-            collect_data,
-            audit_data,
-            flags,
-            proactive_data,
-            harvest_data=harvest_data,
+            _data, cid, _mode, collect_data, audit_data, flags, proactive_data, harvest_data=harvest_data
         )
     except Exception as e:
         log.warning("governance.phase5: failed: %s", e, exc_info=True)
         report = {"cycle_id": cid, "mode": _mode, "error": str(e)}
-    report["duration_sec"] = round(time.time() - t0, 2)
+    return harvest_data, collect_data, audit_data, flags, proactive_data, report
 
-    # Save report to file (after duration_sec is set for consistency)
-    report_path = os.path.join(
-        _data,
-        f"governance_report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.json",
-    )
+
+def _finalize_cycle(
+    report: dict,
+    _data: str,
+    cid: str,
+    _mode: str,
+    t0: float,
+    flags: list[dict],
+    proactive_data: dict,
+    harvest_data: list[dict],
+) -> dict:
+    report["duration_sec"] = round(time.time() - t0, 2)
+    report_path = os.path.join(_data, f"governance_report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.json")
     from .file_lock import locked_write
 
     locked_write(report_path, json.dumps(report, ensure_ascii=False, indent=2))
     log.info("governance: report saved to %s", report_path)
-
     write_audit(
         cycle_id=cid,
         phase="end",
@@ -246,7 +208,6 @@ def run_governance_cycle(
         mode=_mode,
         data_path=_data,
     )
-
     log.info(
         "governance: cycle %s completed in %.1fs -- flags=%d sync=%d async_queued=%d harvested=%d",
         cid,
@@ -256,8 +217,31 @@ def run_governance_cycle(
         proactive_data.get("async_queued", 0),
         len(harvest_data),
     )
-
-    # Attach thread reference for callers that need to wait (e.g. CLI)
     report["_async_thread"] = proactive_data.get("_async_thread")
-
     return report
+
+
+def run_governance_cycle(
+    backend: Any = None,
+    *,
+    data_path: str | None = None,
+    mode: str = "normal",
+    dry_run: bool = False,
+    _run_fn: Callable | None = None,
+) -> dict:
+    """Execute a complete governance cycle."""
+    _data = data_path or DATA_PATH
+    _mode = mode if mode in ("normal", "team") else "normal"
+    lookback = int(env("CURATOR_GOVERNANCE_LOOKBACK_DAYS", "30"))
+    max_proactive = int(env("CURATOR_GOVERNANCE_MAX_PROACTIVE", "5"))
+    use_llm_q = env("CURATOR_GOVERNANCE_USE_LLM_QUERIES", "").lower() in ("1", "true", "yes")
+    os.makedirs(_data, exist_ok=True)
+    cid = _cycle_id()
+    log.info("governance: starting cycle %s (mode=%s, dry_run=%s)", cid, _mode, dry_run)
+    t0 = time.time()
+    write_audit(cycle_id=cid, phase="start", action="cycle_start", outcome="started", mode=_mode, data_path=_data)
+
+    harvest_data, _collect_data, _audit_data, flags, proactive_data, report = _run_governance_phases(
+        _data, cid, _mode, lookback, backend, dry_run, _run_fn, max_proactive, use_llm_q
+    )
+    return _finalize_cycle(report, _data, cid, _mode, t0, flags, proactive_data, harvest_data)
