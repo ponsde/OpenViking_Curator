@@ -30,7 +30,7 @@ def _aggregate_local_signals(used_uris: list | set, *, feedback_data: dict | Non
         data = feedback_data
     else:
         try:
-            from curator import feedback_store
+            from . import feedback_store
 
             data = feedback_store.load()
         except Exception as e:

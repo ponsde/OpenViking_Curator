@@ -167,7 +167,7 @@ class TestPipelineIntegration:
         monkeypatch.setattr("curator.search_cache.DATA_PATH", str(tmp_path))
 
         # Pre-populate cache
-        from curator import search_cache
+        import curator.search_cache as search_cache
 
         search_cache.put("redis deploy", {"domain": "devops"}, "cached external result")
 

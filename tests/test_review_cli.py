@@ -16,7 +16,7 @@ os.environ.setdefault("OAI_KEY", "test-key")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from curator import review_cli
+import curator.review_cli as review_cli
 from curator.backend_memory import InMemoryBackend
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

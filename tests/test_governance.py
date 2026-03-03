@@ -511,7 +511,7 @@ class TestHybridPhase4:
         done_event = threading.Event()
 
         # Wrap _run_async_governance_batch to signal when done
-        from curator import governance_phases
+        import curator.governance_phases as governance_phases
 
         original_batch = governance_phases._run_async_governance_batch
 
@@ -557,7 +557,7 @@ class TestHybridPhase4:
         monkeypatch.setenv("CURATOR_GOVERNANCE_SYNC_BUDGET", "0")
 
         done_event = threading.Event()
-        from curator import governance_phases
+        import curator.governance_phases as governance_phases
 
         original_batch = governance_phases._run_async_governance_batch
 

@@ -136,7 +136,7 @@ def rerank_with_feedback(items: list, *, feedback_data: dict | None = None) -> l
         fb = feedback_data
     else:
         try:
-            from curator import feedback_store as _fs
+            from . import feedback_store as _fs
 
             fb = _fs.load()
         except Exception as e:

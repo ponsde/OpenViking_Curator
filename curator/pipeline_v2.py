@@ -347,9 +347,7 @@ def _run_impl_inner(
 ) -> dict:
     """Body of _run_impl, called after context binding."""
     # ── Hot-path imports: resolve once at function entry ──
-    from curator import feedback_store
-
-    from . import search_cache
+    from . import feedback_store, search_cache
 
     # ── Pre-load feedback data once for the entire run ──
     try:

@@ -17,13 +17,10 @@ os.environ.setdefault("OAI_BASE", "http://localhost:8000/v1")
 os.environ.setdefault("OAI_KEY", "test-key")
 os.environ.setdefault("GROK_SEARCH_URL", "http://localhost:8788")
 
-from curator import (
-    assess_coverage,
-    feedback_store,
-    load_context,
-    route_scope,
-    validate_config,
-)
+from curator import feedback_store
+from curator.config import validate_config
+from curator.retrieval_v2 import assess_coverage, load_context
+from curator.router import route_scope
 from curator_query import should_route
 
 # ─── route_scope ─────────────────────────────────────────────

@@ -7,23 +7,28 @@ batch_ingest.py — 批量搜索并入库知识（v2, 适配 pipeline_v2）
   python3 batch_ingest.py --topic "Docker常见问题"  # 运行单个话题
   python3 batch_ingest.py --dry              # 只搜索不入库（打印结果）
 """
-import os, sys, json, time, argparse
+
+import argparse
+import json
+import os
+import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 加载 .env
-env_file = Path(__file__).parent / '.env'
+env_file = Path(__file__).parent / ".env"
 if env_file.exists():
     for line in env_file.read_text().splitlines():
         line = line.strip()
-        if line and not line.startswith('#') and '=' in line:
-            k, v = line.split('=', 1)
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
             k, v = k.strip(), v.strip()
             if v:
                 os.environ[k] = v
 
-from curator import validate_config, run, OAI_BASE, OAI_KEY
+from curator import run, validate_config
 
 TOPICS = [
     "Linux VPS 安全加固最佳实践（SSH、防火墙、自动更新）",
