@@ -34,7 +34,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .config import DATA_PATH
 

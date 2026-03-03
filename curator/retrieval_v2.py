@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import math
+import re
 
 from .config import (
     FEEDBACK_ADOPT_COEF,
@@ -459,8 +460,6 @@ def _keyword_overlap(query: str, items: list) -> float:
 
     Returns a ratio in [0.0, 1.0].  Higher = more keywords covered locally.
     """
-    import re
-
     if not query or not items:
         return 0.0
 

@@ -14,12 +14,11 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .config import DATA_PATH, env, log
+from .config import DATA_PATH, log
 from .feedback_store import load as load_feedback
-from .nlp_utils import extract_keywords
 from .nlp_utils import extract_topic_coarse as _coarse_topic
 
 

@@ -42,8 +42,6 @@ available when the package is installed.  An ImportError fallback is kept
 as a safety net.
 """
 
-import json
-import os
 import threading
 from typing import Callable
 
