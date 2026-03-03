@@ -12,7 +12,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -304,93 +304,6 @@ def judge_and_ingest(
     # Structured degradation flag: True when LLM call failed (not a content rejection)
     d["judge_degraded"] = out is None
     return d
-
-
-def judge_and_pack(query: str, external_text: str):
-    """Legacy: 单独审核（不含冲突检测）。仅供测试/兼容。"""
-    today = datetime.date.today().isoformat()
-    sys = (
-        "你是资料审核器。判断外部搜索结果是否值得入库。\n"
-        f"当前日期: {today}\n\n"
-        "输出严格JSON: pass(bool), reason(string), tags(array), trust(0-10), "
-        "freshness(string: current/recent/outdated/unknown), "
-        "summary(string), markdown(string)。只输出JSON。"
-    )
-
-    last_err = None
-    out = None
-    for jm in JUDGE_MODELS:
-        try:
-            out = chat(
-                OAI_BASE,
-                OAI_KEY,
-                jm,
-                [
-                    {"role": "system", "content": sys},
-                    {"role": "user", "content": f"用户问题:{query}\n候选资料:\n{external_text}"},
-                ],
-                timeout=90,
-            )
-            break
-        except Exception as e:
-            last_err = e
-            if not _is_transient_error(e):
-                log.warning("judge_and_pack: permanent error on model=%s: %s", jm, e)
-                break
-            log.debug("judge_and_pack: transient error on model=%s, trying next: %s", jm, e)
-            continue
-
-    if out is None:
-        return {
-            "pass": False,
-            "reason": f"judge_model_fail:{last_err}",
-            "tags": [],
-            "trust": 0,
-            "summary": "",
-            "markdown": "",
-        }
-
-    json_str = _extract_json(out)
-    if not json_str:
-        return {"pass": False, "reason": "bad_json", "tags": [], "trust": 0, "summary": "", "markdown": ""}
-    try:
-        return json.loads(json_str)
-    except Exception as e:
-        log.debug("judge_and_pack JSON parse failed: %s", e)
-        return {"pass": False, "reason": "json_parse_fail", "tags": [], "trust": 0, "summary": "", "markdown": ""}
-
-
-def detect_conflict(query: str, local_ctx: str, external_ctx: str):
-    """Legacy: 单独冲突检测。仅供测试/兼容。"""
-    if not external_ctx.strip():
-        return {"has_conflict": False, "summary": "", "points": []}
-
-    sys = (
-        "你是冲突检测器。比较本地上下文与外部补充是否存在结论冲突。"
-        "输出严格JSON：has_conflict(bool), summary(string), points(array of string)。"
-        "如果只是细节差异但不影响结论，has_conflict=false。只输出JSON。"
-    )
-    out = chat(
-        OAI_BASE,
-        OAI_KEY,
-        JUDGE_MODEL,
-        [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": f"问题:{query}\n\n本地:\n{local_ctx[:2500]}\n\n外部:\n{external_ctx[:2500]}"},
-        ],
-        timeout=60,
-    )
-    json_str = _extract_json(out)
-    if not json_str:
-        return {"has_conflict": False, "summary": "", "points": []}
-    try:
-        j = json.loads(json_str)
-        if "points" not in j or not isinstance(j.get("points"), list):
-            j["points"] = []
-        return j
-    except Exception as e:
-        log.debug("detect_conflict JSON parse failed: %s", e)
-        return {"has_conflict": False, "summary": "", "points": []}
 
 
 _UNSAFE_HTML_RE = re.compile(

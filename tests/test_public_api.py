@@ -53,11 +53,10 @@ def test_deprecated_symbols_import_fail():
 def test_submodule_paths_are_stable_and_match_top_level_object():
     from curator import JudgeResult as top_level_judge_result
     from curator.review import JudgeResult as review_judge_result
-    from curator.review import detect_conflict, judge_and_ingest
+    from curator.review import judge_and_ingest
 
     assert top_level_judge_result is review_judge_result
     assert callable(judge_and_ingest)
-    assert callable(detect_conflict)
 
 
 def test_all_matches_actual_exports():
