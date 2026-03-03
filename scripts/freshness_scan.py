@@ -24,14 +24,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from curator.freshness import uri_freshness_score
+from scripts.common import META_RE
 
 # ── Constants ──
 
 OV_BASE = os.environ.get("OV_BASE_URL", "http://127.0.0.1:9100")
 FRESH_THRESHOLD = 0.8
 AGING_THRESHOLD = 0.4
-
-META_RE = re.compile(r"<!--\s*curator_meta:\s*(.+?)\s*-->")
 REVIEW_RE = re.compile(r"<!--\s*review_after:\s*(\d{4}-\d{2}-\d{2})\s*-->")
 URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 

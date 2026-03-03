@@ -5,11 +5,10 @@
 """
 
 import json
-import os
 import re
 from pathlib import Path
 
-from .config import log
+from .config import ROUTER_CONFIG, log
 
 # ── Built-in defaults (used when config file is missing/invalid) ──────────────
 _DEFAULT_DOMAIN_MAP = {
@@ -100,7 +99,7 @@ def _load_router_config() -> tuple[dict[str, list[str]], list[str]]:
       3) curator/router_config.json (package default)
     """
     candidates = []
-    env_path = os.getenv("CURATOR_ROUTER_CONFIG", "").strip()
+    env_path = (ROUTER_CONFIG or "").strip()
     if env_path:
         candidates.append(Path(env_path))
     candidates.append(Path.cwd() / "router_config.json")

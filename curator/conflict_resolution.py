@@ -5,10 +5,10 @@ Extracted from pipeline_v2.py (D2 refactor). Internal module, not part of public
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from .config import log
+from .settings import CuratorSettings
 
 
 def _aggregate_local_signals(used_uris: list | set, *, feedback_data: dict | None = None) -> dict | None:
@@ -75,7 +75,7 @@ def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) 
     trust = judge_result.get("trust", 5)
     freshness = judge_result.get("freshness", "unknown")
 
-    strategy = os.environ.get("CURATOR_CONFLICT_STRATEGY", "auto")
+    strategy = CuratorSettings().conflict_strategy or "auto"
 
     if strategy == "local":
         return {

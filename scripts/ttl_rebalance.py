@@ -15,34 +15,18 @@ import argparse
 import datetime
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from curator.env_loader import load_env
+from scripts.common import META_RE, default_curated_dir, default_data_dir
+
 # ── Constants ──
 
-META_RE = re.compile(r"<!--\s*curator_meta:\s*(.+?)\s*-->")
-DEFAULT_CURATED_DIR = os.environ.get(
-    "CURATOR_CURATED_DIR",
-    str(Path(__file__).resolve().parent.parent / "curated"),
-)
-DEFAULT_DATA_DIR = os.environ.get(
-    "CURATOR_DATA_PATH",
-    str(Path(__file__).resolve().parent.parent / "data"),
-)
-
-
-def _load_env():
-    """Load .env for feedback store path etc."""
-    env_file = Path(__file__).resolve().parent.parent / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+DEFAULT_CURATED_DIR = default_curated_dir()
+DEFAULT_DATA_DIR = default_data_dir()
 
 
 def _parse_meta(content: str) -> dict:
@@ -163,7 +147,7 @@ def main():
     parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="报告输出目录")
     args = parser.parse_args()
 
-    _load_env()
+    load_env()
 
     results = scan(args.curated_dir, filter_tier=args.tier)
 

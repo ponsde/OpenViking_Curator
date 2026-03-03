@@ -37,7 +37,17 @@ except ImportError:
         pass
 
 
-from .config import ADOPT_MIN_SCORE, ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, RETRIEVE_LIMIT, log, validate_config
+from .config import (
+    ADOPT_MIN_SCORE,
+    ASYNC_INGEST,
+    CAPTURE_CASE,
+    CASE_DIR,
+    DATA_PATH,
+    MAX_L2_DEPTH,
+    RETRIEVE_LIMIT,
+    log,
+    validate_config,
+)
 from .conflict_resolution import _aggregate_local_signals, _resolve_conflict
 from .decision_report import format_report
 from .memory_capture import capture_case
@@ -583,8 +593,8 @@ def _run_impl_inner(
     report = m.finalize()
 
     case_path = None
-    if os.getenv("CURATOR_CAPTURE_CASE", "1") in ("1", "true"):
-        case_path = capture_case(query, scope, report, context_text, out_dir=os.getenv("CURATOR_CASE_DIR", "cases"))
+    if CAPTURE_CASE:
+        case_path = capture_case(query, scope, report, context_text, out_dir=CASE_DIR)
 
     result["meta"] = {
         "coverage": coverage,

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -40,7 +39,9 @@ def _load_judge_prompt() -> str | None:
         return _JUDGE_PROMPT_TEMPLATE
 
     candidates = []
-    env_path = os.getenv("CURATOR_JUDGE_PROMPT", "").strip()
+    from .config import JUDGE_PROMPT_FILE
+
+    env_path = (JUDGE_PROMPT_FILE or "").strip()
     if env_path:
         candidates.append(Path(env_path))
     candidates.append(Path(__file__).parent / "prompts" / "judge.prompt")

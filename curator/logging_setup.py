@@ -1,29 +1,31 @@
 """Structured logging configuration with structlog bridge.
 
 Provides a stdlib ``logging.Logger`` configured through structlog processors.
-Toggle JSON output via ``CURATOR_JSON_LOGGING=1``.
+Toggle JSON output via config settings.
 
 Falls back to plain stdlib formatting if structlog is not installed.
 """
 
 import logging
-import os
 
 
 def configure_logging() -> logging.Logger:
     """Set up and return the ``curator`` logger.
 
-    - ``CURATOR_JSON_LOGGING=1`` → JSON lines via structlog
-    - Default → colored console output via structlog (or plain stdlib fallback)
-    - ``CURATOR_DEBUG`` → DEBUG level
+    - JSON mode -> JSON lines via structlog
+    - Default -> colored console output via structlog (or plain stdlib fallback)
+    - Debug mode -> DEBUG level
     """
     logger = logging.getLogger("curator")
 
     if logger.handlers:
         return logger
 
-    debug = os.getenv("CURATOR_DEBUG", "") in ("1", "true", "yes", "on")
-    json_mode = os.getenv("CURATOR_JSON_LOGGING", "0") == "1"
+    from .settings import CuratorSettings
+
+    settings = CuratorSettings()
+    debug = settings.debug in ("1", "true", "yes", "on")
+    json_mode = settings.json_logging == "1"
 
     try:
         import structlog

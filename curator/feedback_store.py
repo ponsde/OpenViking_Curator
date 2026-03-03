@@ -3,8 +3,6 @@ import argparse
 import json
 import logging
 import math
-import os
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -63,16 +61,24 @@ try:
 except ImportError:
     _HAS_FCNTL = False  # Windows fallback
 
-STORE = Path(os.getenv("CURATOR_FEEDBACK_FILE", "./feedback.json"))
+# Module-level default — tests monkeypatch this directly.
+# Initialized from CURATOR_FEEDBACK_FILE env var (via config) at import time.
+try:
+    from .config import FEEDBACK_FILE as _fb_file
+
+    STORE = Path(_fb_file) if _fb_file else Path("./feedback.json")
+except Exception:
+    STORE = Path("./feedback.json")
 
 
 def _resolve_store() -> Path:
     """Return the active feedback store path.
 
-    Prefers the CURATOR_FEEDBACK_FILE env var (re-read each call so that
-    monkeypatch.setenv and runtime overrides take effect).  Falls back to the
-    module-level STORE, which may itself be monkey-patched in unit tests.
+    Re-reads env var each call so monkeypatch.setenv works at runtime.
+    Tests may also monkeypatch STORE directly.
     """
+    import os
+
     env_path = os.getenv("CURATOR_FEEDBACK_FILE")
     return Path(env_path) if env_path else STORE
 
@@ -98,7 +104,7 @@ def _locked_rw(fn):
                 fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def load(store_path: str | os.PathLike | None = None):
+def load(store_path: str | Path | None = None):
     store = Path(store_path) if store_path else _resolve_store()
     if store.exists():
         with open(store, "r", encoding="utf-8") as f:

@@ -14,17 +14,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DEFAULT_DATA_DIR = os.environ.get("CURATOR_DATA_PATH", str(Path(__file__).resolve().parent.parent / "data"))
+from curator.env_loader import load_env
+from scripts.common import default_data_dir
 
-
-def load_env():
-    env_file = Path(__file__).resolve().parent.parent / ".env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
+DEFAULT_DATA_DIR = default_data_dir()
 
 
 def strengthen(data_dir: str, top_n: int = 3, dry: bool = False) -> list[dict]:
@@ -68,14 +61,16 @@ def strengthen(data_dir: str, top_n: int = 3, dry: bool = False) -> list[dict]:
             external = r.get("meta", {}).get("external_triggered", False)
             ingested = r.get("meta", {}).get("ingested", False)
             print(f"  结果: coverage={coverage:.2f}, external={external}, ingested={ingested}")
-            results.append({
-                "topic": topic,
-                "query": query,
-                "coverage": coverage,
-                "external_triggered": external,
-                "ingested": ingested,
-                "status": "ok",
-            })
+            results.append(
+                {
+                    "topic": topic,
+                    "query": query,
+                    "coverage": coverage,
+                    "external_triggered": external,
+                    "ingested": ingested,
+                    "status": "ok",
+                }
+            )
         except Exception as e:
             print(f"  ERROR: {e}")
             results.append({"topic": topic, "query": query, "status": "error", "error": str(e)})

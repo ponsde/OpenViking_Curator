@@ -22,13 +22,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 # 加载 .env
-_env_file = Path(__file__).parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+from curator.env_loader import load_env
+
+load_env()
 
 # ── MCP Protocol Constants ──
 JSONRPC = "2.0"
@@ -138,20 +134,17 @@ def _tool_curator_ingest(args: dict) -> dict:
 
 
 def _tool_curator_status(args: dict) -> dict:
-    import json
-    import urllib.request
-
-    base = os.environ.get("OV_BASE_URL", "http://127.0.0.1:9100")
     try:
-        with urllib.request.urlopen(f"{base}/health", timeout=10) as r:
-            health = json.loads(r.read())
-        req = urllib.request.Request(
-            f"{base}/api/v1/fs/ls?uri=viking://resources/&simple=true",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            ls_result = json.loads(r.read()).get("result", [])
-        return {"health": health.get("status", "unknown"), "resource_count": len(ls_result), "base_url": base}
+        from curator.backend_ov import OpenVikingBackend
+
+        backend = OpenVikingBackend()
+        health = backend.health()
+        resources = backend.list_resources()
+        return {
+            "health": "ok" if health else "error",
+            "resource_count": len(resources) if resources else 0,
+            "backend": backend.name,
+        }
     except Exception as e:
         return {"error": str(e)}
 

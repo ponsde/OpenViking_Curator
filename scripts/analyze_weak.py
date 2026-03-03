@@ -15,9 +15,10 @@ from pathlib import Path
 # Ensure curator package is importable when running as a script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from curator.nlp_utils import extract_keywords, extract_topic  # noqa: E402
+from scripts.common import default_data_dir
 
 # 默认 data 目录
-DEFAULT_DATA_DIR = os.environ.get("CURATOR_DATA_PATH", str(Path(__file__).resolve().parent.parent / "data"))
+DEFAULT_DATA_DIR = default_data_dir()
 
 
 def analyze(data_dir: str, min_queries: int = 2) -> list[dict]:

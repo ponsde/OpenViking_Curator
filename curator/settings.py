@@ -111,6 +111,14 @@ class CuratorSettings(BaseSettings):
     fast_route: str = "1"
     version: str = ""
     debug: str = ""
+    search_oai_model: str = ""
+    capture_case: str = "1"
+    case_dir: str = "cases"
+    conflict_strategy: str = "auto"
+    judge_prompt_file: str = Field(default="", validation_alias="CURATOR_JUDGE_PROMPT")
+    router_config: str = Field(default="", validation_alias="CURATOR_ROUTER_CONFIG")
+    feedback_file: str = Field(default="./feedback.json", validation_alias="CURATOR_FEEDBACK_FILE")
+    llm_route: str = "1"
 
     # ── Log rotation ──
     log_rotate_mb: float = Field(default=5.0, ge=0.0)  # 0 = disable

@@ -48,6 +48,7 @@ GROK_MODEL = _settings.grok_model
 
 # Search providers: comma-separated, tried in order (fallback chain)
 SEARCH_PROVIDERS = _settings.search_providers
+SEARCH_OAI_MODEL = _settings.search_oai_model
 TAVILY_KEY = _settings.tavily_key
 
 # Domain filtering for external search results.
@@ -113,6 +114,15 @@ CHAT_RETRY_MAX = max(1, _settings.chat_retry_max)
 CHAT_RETRY_BACKOFF_SEC = max(0.0, _settings.chat_retry_backoff_sec)
 
 FAST_ROUTE = _settings.fast_route == "1"
+DEBUG = _settings.debug in ("1", "true", "yes", "on")
+JSON_LOGGING = _settings.json_logging == "1"
+LLM_ROUTE = _settings.llm_route == "1"
+CAPTURE_CASE = _settings.capture_case in ("1", "true", "yes")
+CASE_DIR = _settings.case_dir
+CONFLICT_STRATEGY = _settings.conflict_strategy
+JUDGE_PROMPT_FILE = _settings.judge_prompt_file
+ROUTER_CONFIG = _settings.router_config
+FEEDBACK_FILE = _settings.feedback_file
 
 # ── Log rotation ──
 LOG_ROTATE_MB = _settings.log_rotate_mb
@@ -142,7 +152,7 @@ def validate_config() -> None:
             missing.append("CURATOR_GROK_BASE")
         if not GROK_KEY:
             missing.append("CURATOR_GROK_KEY")
-    if first_provider == "oai" and not env("CURATOR_SEARCH_OAI_MODEL", ""):
+    if first_provider == "oai" and not SEARCH_OAI_MODEL:
         missing.append("CURATOR_SEARCH_OAI_MODEL")
     if first_provider == "tavily" and not TAVILY_KEY:
         missing.append("CURATOR_TAVILY_KEY")

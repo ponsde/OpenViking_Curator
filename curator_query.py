@@ -14,6 +14,8 @@ import re
 import sys
 from pathlib import Path
 
+from curator.env_loader import load_env
+
 # ── 路由门控：LLM 判断 + 规则兜底 ──
 
 # 绝对拦截（无论如何不路由）
@@ -51,21 +53,29 @@ _LLM_ROUTE_PROMPT = """你是一个路由判断器。判断用户的消息是否
 不要输出其他内容。"""
 
 
+def _settings():
+    from curator.settings import CuratorSettings
+
+    return CuratorSettings()
+
+
 def _llm_should_route(query: str) -> tuple[bool, str]:
     """用 LLM 判断是否需要路由到知识库。快速、低成本。"""
     import requests
 
+    settings = _settings()
+
     # 优先用 Grok（快+免费），fallback 到 OAI
     endpoints = []
-    grok_base = os.getenv("CURATOR_GROK_BASE", "")
-    grok_key = os.getenv("CURATOR_GROK_KEY", "")
+    grok_base = settings.grok_base
+    grok_key = settings.grok_key
     if grok_base and grok_key:
-        endpoints.append((grok_base, grok_key, os.getenv("CURATOR_GROK_MODEL", "grok-4-fast")))
+        endpoints.append((grok_base, grok_key, settings.grok_model or "grok-4-fast"))
 
-    oai_base = os.getenv("CURATOR_OAI_BASE", "")
-    oai_key = os.getenv("CURATOR_OAI_KEY", "")
+    oai_base = settings.oai_base
+    oai_key = settings.oai_key
     if oai_base and oai_key:
-        router_model = os.getenv("CURATOR_ROUTER_MODELS", "gpt-4o-mini").split(",")[0].strip() or "gpt-4o-mini"
+        router_model = (settings.router_models or "gpt-4o-mini").split(",")[0].strip() or "gpt-4o-mini"
         endpoints.append((oai_base, oai_key, router_model))
 
     for base, key, model in endpoints:
@@ -139,22 +149,13 @@ def should_route(query: str) -> tuple[bool, str]:
             return True, "hard_pass"
 
     # LLM 判断
-    use_llm = os.getenv("CURATOR_LLM_ROUTE", "1") == "1"
+    from curator.config import LLM_ROUTE
+
+    use_llm = LLM_ROUTE
     if use_llm:
         return _llm_should_route(q)
     else:
         return _rule_should_route(q)
-
-
-def load_env():
-    """Load .env file into os.environ."""
-    env_file = Path(__file__).parent / ".env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
 
 
 def run_status() -> dict:
