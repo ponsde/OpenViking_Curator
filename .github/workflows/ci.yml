@@ -24,7 +24,7 @@ jobs:
           CURATOR_OAI_BASE: http://localhost:8000/v1
           CURATOR_OAI_KEY: test-key
           CURATOR_GROK_KEY: test-key
-        run: uv run pytest tests/ -q --cov=curator --cov-report=term-missing --cov-fail-under=70 --cov-config=pyproject.toml
+        run: uv run pytest tests/ -q --cov=curator --cov-report=term-missing --cov-fail-under=80 --cov-config=pyproject.toml
       - name: Run smoke minimal
         env:
           CURATOR_OAI_BASE: http://localhost:8000/v1
