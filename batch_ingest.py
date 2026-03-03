@@ -13,20 +13,12 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# 加载 .env
-env_file = Path(__file__).parent / ".env"
-if env_file.exists():
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            k, v = k.strip(), v.strip()
-            if v:
-                os.environ[k] = v
+from curator.env_loader import load_env
+
+load_env()
 
 from curator import run, validate_config
 

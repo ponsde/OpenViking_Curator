@@ -21,20 +21,14 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Setup ──
-sys.path.insert(0, '/home/ponsde/OpenViking_Curator')
+sys.path.insert(0, "/home/ponsde/OpenViking_Curator")
 
-# 加载 .env
-from pathlib import Path as _Path
-_env_file = _Path('/home/ponsde/OpenViking_Curator/.env')
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith('#') and '=' in line:
-            k, v = line.split('=', 1)
-            os.environ.setdefault(k.strip(), v.strip())
+from curator.env_loader import load_env
 
-os.environ.setdefault('OPENVIKING_CONFIG_FILE', '/home/ponsde/OpenViking_test/ov.conf')
-os.environ.setdefault('CURATOR_DATA_PATH', '/home/ponsde/OpenViking_test/data')
+load_env()
+
+os.environ.setdefault("OPENVIKING_CONFIG_FILE", "/home/ponsde/OpenViking_test/ov.conf")
+os.environ.setdefault("CURATOR_DATA_PATH", "/home/ponsde/OpenViking_test/data")
 
 # ── 10 个固定测试 Query ──
 BENCHMARK_QUERIES = [
@@ -125,13 +119,14 @@ def run_raw_ov(query: str, limit: int = 5) -> dict:
     for path in ["/api/v1/search/search", "/api/v1/search/find"]:
         try:
             res = _post(path, {"query": query, "limit": limit}).get("result", {})
-            for x in (res.get("resources", []) or []):
+            for x in res.get("resources", []) or []:
                 u = x.get("uri", "")
                 if u and u not in seen:
                     seen.add(u)
                     try:
                         import urllib.parse
-                        enc = urllib.parse.quote(u, safe='/:')
+
+                        enc = urllib.parse.quote(u, safe="/:")
                         content = (_get(f"/api/v1/content/read?uri={enc}").get("result", "") or "")[:1000]
                     except Exception:
                         content = x.get("abstract", "") or ""
@@ -158,6 +153,7 @@ def run_curator(query: str) -> dict:
         old_handler = signal.signal(signal.SIGALRM, _handler)
         signal.alarm(120)
         from curator.pipeline_v2 import run
+
         result = run(query)
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
@@ -231,15 +227,21 @@ def run_benchmark():
                 "elapsed": cur.get("elapsed", 0),
                 "error": cur.get("error", ""),
             },
-            "winner": "curator" if cur_score["hit_rate"] > raw_score["hit_rate"]
-                      else "raw" if raw_score["hit_rate"] > cur_score["hit_rate"]
-                      else "tie",
+            "winner": "curator"
+            if cur_score["hit_rate"] > raw_score["hit_rate"]
+            else "raw"
+            if raw_score["hit_rate"] > cur_score["hit_rate"]
+            else "tie",
         }
         results.append(entry)
 
         # 实时输出
-        print(f"  裸 OV:    命中 {raw_score['hit_rate']:.0%} ({len(raw_score['hits'])}/{len(q['expected_topics'])})  {raw['elapsed']:.1f}s")
-        print(f"  Curator:  命中 {cur_score['hit_rate']:.0%} ({len(cur_score['hits'])}/{len(q['expected_topics'])})  {cur.get('elapsed', 0):.1f}s")
+        print(
+            f"  裸 OV:    命中 {raw_score['hit_rate']:.0%} ({len(raw_score['hits'])}/{len(q['expected_topics'])})  {raw['elapsed']:.1f}s"
+        )
+        print(
+            f"  Curator:  命中 {cur_score['hit_rate']:.0%} ({len(cur_score['hits'])}/{len(q['expected_topics'])})  {cur.get('elapsed', 0):.1f}s"
+        )
         print(f"  胜者: {entry['winner']}")
 
     # ── 汇总 ──

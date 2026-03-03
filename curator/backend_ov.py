@@ -14,12 +14,9 @@ import urllib.parse
 import urllib.request
 
 from .backend import KnowledgeBackend, SearchResponse, SearchResult
-from .config import CURATED_DIR, log
+from .config import CURATED_DIR, DATA_PATH, log
 
-_DEFAULT_DATA_PATH = os.environ.get(
-    "OV_DATA_PATH",
-    os.environ.get("CURATOR_DATA_PATH", "./data"),
-)
+_DEFAULT_DATA_PATH = os.environ.get("OV_DATA_PATH", DATA_PATH)
 
 
 class _HTTPClient:
