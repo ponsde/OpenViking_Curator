@@ -11,6 +11,7 @@ import re
 import threading
 import time
 import uuid
+import warnings
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -311,6 +312,13 @@ def run(query: str, client=None, auto_ingest: bool = True, backend: KnowledgeBac
     - 外搜（需验证时效） → 2 次（+cross_validate）
     """
     validate_config()
+
+    if client is not None:
+        warnings.warn(
+            "pipeline_v2.run(client=...) is deprecated and will be removed in a future version; use backend=... instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if backend is None:
         backend = _init_backend()

@@ -430,16 +430,16 @@ class TestSearchConcurrent:
         assert result == "fallback-ok"
 
 
-# ─── SearchResult + format_results ────────────────────────────────────────────
+# ─── WebSearchResult + format_results ───────────────────────────────────────
 
 
-class TestSearchResult:
+class TestWebSearchResult:
     def test_format_results_basic(self):
-        from curator.search_providers import SearchResult, format_results
+        from curator.search_providers import WebSearchResult, format_results
 
         results = [
-            SearchResult(title="Title 1", url="https://a.com", snippet="Snippet 1"),
-            SearchResult(title="Title 2", url="https://b.com", snippet="Snippet 2"),
+            WebSearchResult(title="Title 1", url="https://a.com", snippet="Snippet 1"),
+            WebSearchResult(title="Title 2", url="https://b.com", snippet="Snippet 2"),
         ]
         text = format_results(results)
         assert "**Title 1**" in text
@@ -458,9 +458,9 @@ class TestSearchResult:
         assert _provider_output_to_text("plain text") == "plain text"
 
     def test_provider_output_to_text_list(self):
-        from curator.search_providers import SearchResult, _provider_output_to_text
+        from curator.search_providers import WebSearchResult, _provider_output_to_text
 
-        results = [SearchResult(title="T", url="https://x.com", snippet="S")]
+        results = [WebSearchResult(title="T", url="https://x.com", snippet="S")]
         text = _provider_output_to_text(results)
         assert "**T**" in text
         assert "https://x.com" in text
