@@ -185,19 +185,19 @@ def run_status() -> dict:
 
     # OpenViking check
     try:
-        from curator.session_manager import OVClient
+        from curator.backend_ov import OpenVikingBackend
 
-        ov = OVClient()
-        healthy = ov.health()
+        backend = OpenVikingBackend()
+        healthy = backend.health()
         if healthy:
-            resources = ov.ls("viking://resources")
+            resources = backend.list_resources("viking://resources")
             result["openviking"] = {
                 "status": "✅ connected",
-                "mode": ov.mode,
+                "mode": backend.raw_client.mode,
                 "resources": len(resources) if resources else 0,
             }
         else:
-            result["openviking"] = {"status": "❌ not healthy", "mode": ov.mode}
+            result["openviking"] = {"status": "❌ not healthy", "mode": backend.raw_client.mode}
     except Exception as e:
         result["openviking"] = {"status": f"❌ {e}"}
 

@@ -389,15 +389,15 @@ class TestShouldRoute(unittest.TestCase):
         self.assertFalse(routed)
 
 
-# ─── OVClient.wait_processed ─────────────────────────────────
+# ─── OpenVikingBackend health path ──────────────────────────
 
 
-class TestOVClientWaitProcessed(unittest.TestCase):
-    def test_wait_processed_method_exists(self):
-        """OVClient should have wait_processed method."""
-        from curator.session_manager import OVClient
+class TestOpenVikingBackendHealth(unittest.TestCase):
+    def test_backend_has_health_method(self):
+        """OpenVikingBackend should expose health()."""
+        from curator.backend_ov import OpenVikingBackend
 
-        self.assertTrue(hasattr(OVClient, "wait_processed"))
+        self.assertTrue(hasattr(OpenVikingBackend, "health"))
 
 
 # ─── uri_freshness_score (restored) ──────────────────────────
