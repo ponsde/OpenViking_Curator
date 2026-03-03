@@ -6,13 +6,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -40,9 +38,11 @@ except ImportError:
 
 
 from .config import ADOPT_MIN_SCORE, ASYNC_INGEST, DATA_PATH, MAX_L2_DEPTH, RETRIEVE_LIMIT, log, validate_config
+from .conflict_resolution import _aggregate_local_signals, _resolve_conflict
 from .decision_report import format_report
 from .memory_capture import capture_case
 from .metrics import Metrics
+from .query_log import _log_async_failure, _log_query, _write_pending
 from .retrieval_v2 import assess_coverage, backend_retrieve, load_context
 from .review import judge_and_ingest
 from .router import route_scope
@@ -652,112 +652,6 @@ def _extract_urls(text: str) -> list[str]:
     return out
 
 
-def _log_async_failure(query: str, error: Exception) -> None:
-    """Persist async ingest failures to DATA_PATH/async_ingest_failures.jsonl.
-
-    This gives operators visibility into background judge+ingest failures
-    that would otherwise be silently swallowed.
-    """
-    try:
-        os.makedirs(DATA_PATH, exist_ok=True)
-        log_path = os.path.join(DATA_PATH, "async_ingest_failures.jsonl")
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "query": query,
-            "error": str(error),
-            "error_type": type(error).__name__,
-        }
-        from .file_lock import locked_append
-
-        locked_append(log_path, json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception as e:
-        log.warning("failed to write async failure log: %s", e)
-
-
-def _log_query(
-    query: str,
-    coverage: float,
-    need_external: bool,
-    reason: str,
-    used_uris: list,
-    trace: dict,
-    *,
-    ingested: bool = False,
-    async_ingest_pending: bool = False,
-    need_fresh: bool = False,
-    has_conflict: bool = False,
-    external_len: int = 0,
-    auto_ingest: bool = True,
-) -> None:
-    """写 query 日志到 data/query_log.jsonl（append 模式，失败不影响主流程）。
-
-    Schema v2: 增加 ingested/async/need_fresh/conflict/external_len/auto_ingest
-    字段，供 query_log_aggregate.py 分析使用。
-    """
-    try:
-        log_dir = DATA_PATH
-        os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, "query_log.jsonl")
-        entry = {
-            "schema_version": 2,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "query": query,
-            "coverage": round(coverage, 4),
-            "external_triggered": bool(need_external),
-            "reason": reason,
-            "used_uris": list(used_uris) if used_uris else [],
-            "load_stage": trace.get("load_stage", "unknown"),
-            "llm_calls": trace.get("llm_calls", 0),
-            "ingested": ingested,
-            "async_ingest_pending": async_ingest_pending,
-            "need_fresh": need_fresh,
-            "has_conflict": has_conflict,
-            "external_len": external_len,
-            "auto_ingest": auto_ingest,
-        }
-        from .file_lock import locked_append
-
-        locked_append(log_path, json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception as e:
-        log.warning("query log 写入失败（不影响主流程）: %s", e)
-
-
-def _write_pending(
-    query: str, judge_result: dict, conflict: dict, reason: str, source_urls: list[str] | None = None
-) -> None:
-    """待审核内容持久化到 DATA_PATH/pending_review.jsonl。
-
-    当内容通过 judge 但因冲突或审核模式未自动入库时调用。
-    append-only，每行一个 JSON 对象，包含完整 markdown + 决策上下文。
-
-    Args:
-        query: Original user query.
-        judge_result: Output from judge_and_ingest.
-        conflict: Conflict resolution dict from pipeline.
-        reason: Why ingest was blocked (e.g. 'conflict:human_review', 'review_mode').
-        source_urls: Extracted source URLs from external_txt (for review_cli approve).
-    """
-    pending_path = os.path.join(DATA_PATH, "pending_review.jsonl")
-    entry = {
-        "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "reason": reason,
-        "query": query,
-        "trust": judge_result.get("trust", 0),
-        "freshness": judge_result.get("freshness", "unknown"),
-        "conflict_summary": conflict.get("summary", ""),
-        "conflict_preferred": conflict.get("resolution", {}).get("preferred", ""),
-        "source_urls": source_urls or [],
-        "markdown": judge_result.get("markdown", ""),
-    }
-    try:
-        from .file_lock import locked_append
-
-        locked_append(pending_path, json.dumps(entry, ensure_ascii=False) + "\n")
-        log.info("pending review 已写入: %s (reason=%s)", pending_path, reason)
-    except Exception as e:
-        log.warning("pending review 写入失败: %s", e)
-
-
 def _verify_ingest(backend: KnowledgeBackend, query: str, new_uri: str, m: Metrics):
     """C1: 入库后轻量验证 — 检查新 URI 是否出现在检索结果中。
 
@@ -780,133 +674,3 @@ def _verify_ingest(backend: KnowledgeBackend, query: str, new_uri: str, m: Metri
             log.debug("入库验证未命中（OV 索引尚未就绪，属正常现象）: %s", new_uri)
     except Exception as e:
         m.step("ingest_verify", False, {"error": str(e)})
-
-
-def _aggregate_local_signals(used_uris: list | set, *, feedback_data: dict | None = None) -> dict | None:
-    """Aggregate feedback signals for local URIs used in this run.
-
-    Args:
-        used_uris: URIs used in the current pipeline run.
-        feedback_data: Pre-loaded feedback dict. When provided, skips the
-            internal ``feedback_store.load()`` call. ``None`` preserves the
-            original behaviour (load on demand).
-
-    Returns dict with adopt_count, up_count, down_count summed across
-    all used URIs. Returns None if feedback_store is unavailable.
-    """
-    if not used_uris:
-        return None
-
-    if feedback_data is not None:
-        data = feedback_data
-    else:
-        try:
-            from curator import feedback_store
-
-            data = feedback_store.load()
-        except Exception as e:
-            log.debug("failed to load feedback signals for URIs %s: %s", used_uris, e)
-            return None
-
-    adopt = up = down = 0
-    for uri in used_uris:
-        item = data.get(uri, {})
-        adopt += item.get("adopt", 0)
-        up += item.get("up", 0)
-        down += item.get("down", 0)
-    return {"adopt_count": adopt, "up_count": up, "down_count": down}
-
-
-def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) -> dict:
-    """Conflict resolution strategy — bidirectional scoring.
-
-    Scores both external and local knowledge to decide which to prefer.
-    External score is based on judge trust + freshness.
-    Local score is based on feedback signals (adopt/up/down).
-
-    When neither side is clearly stronger, defers to human review.
-
-    Args:
-        judge_result: Output from judge_and_ingest (has trust, freshness, etc.)
-        local_signals: Optional dict with ``adopt_count``, ``up_count``,
-            ``down_count`` from feedback_store. ``None`` means no data.
-
-    Returns:
-        Dict with ``strategy``, ``preferred``, ``reason``, and ``scores``.
-    """
-    no_conflict = {
-        "strategy": "no_conflict",
-        "preferred": "none",
-        "reason": "",
-        "scores": {"external": 0, "local": 0},
-    }
-    if not judge_result.get("has_conflict"):
-        return no_conflict
-
-    trust = judge_result.get("trust", 5)
-    freshness = judge_result.get("freshness", "unknown")
-
-    strategy = os.environ.get("CURATOR_CONFLICT_STRATEGY", "auto")
-
-    if strategy == "local":
-        return {
-            "strategy": "local_always",
-            "preferred": "local",
-            "reason": "config: always prefer local",
-            "scores": {"external": 0, "local": 0},
-        }
-    elif strategy == "external":
-        return {
-            "strategy": "external_always",
-            "preferred": "external",
-            "reason": "config: always prefer external",
-            "scores": {"external": 0, "local": 0},
-        }
-    elif strategy == "human":
-        return {
-            "strategy": "human_always",
-            "preferred": "human_review",
-            "reason": "config: always human review",
-            "scores": {"external": 0, "local": 0},
-        }
-
-    # ── Score external source ──
-    # trust: 0-10 from judge LLM
-    # freshness bonus: current=+2, recent=+1, stale=-2, outdated=-3
-    freshness_bonus = {"current": 2, "recent": 1, "unknown": 0, "stale": -2, "outdated": -3}
-    ext_score = trust + freshness_bonus.get(freshness, 0)
-
-    # ── Score local knowledge ──
-    # Based on feedback signals: adopt is strongest (used by pipeline),
-    # up/down are explicit user feedback
-    local_score = 5.0  # neutral baseline
-    if local_signals is not None:
-        adopt = local_signals.get("adopt_count", 0)
-        up = local_signals.get("up_count", 0)
-        down = local_signals.get("down_count", 0)
-        # adopt is weighted higher (objective signal from pipeline)
-        local_score = 5.0 + min(adopt * 0.3, 3.0) + min(up * 0.5, 2.0) - min(down * 0.7, 3.0)
-        local_score = max(0, min(12, local_score))
-    else:
-        # No feedback data → local score stays at neutral
-        local_score = 5.0
-
-    scores = {"external": round(ext_score, 2), "local": round(local_score, 2)}
-
-    # ── Decision ──
-    margin = 2.0  # minimum gap to make a confident decision
-    diff = ext_score - local_score
-
-    if diff >= margin:
-        preferred = "external"
-        reason = f"external stronger (ext={ext_score:.1f} vs local={local_score:.1f}, diff={diff:+.1f})"
-    elif diff <= -margin:
-        preferred = "local"
-        reason = f"local stronger (local={local_score:.1f} vs ext={ext_score:.1f}, diff={diff:+.1f})"
-    else:
-        preferred = "human_review"
-        reason = (
-            f"scores too close (ext={ext_score:.1f} vs local={local_score:.1f}, diff={diff:+.1f}), needs human judgment"
-        )
-
-    return {"strategy": "auto", "preferred": preferred, "reason": reason, "scores": scores}
