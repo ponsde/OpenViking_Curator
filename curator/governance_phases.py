@@ -472,86 +472,54 @@ def _run_async_governance_batch(
     log.info("governance.async_batch: completed %d items for cycle %s", len(items), cycle_id)
 
 
-def phase4_proactive(
-    data_path: str,
-    cycle_id: str,
-    mode: str,
-    interests: list,
-    retryable_jobs: list,
-    dry_run: bool,
-    run_fn: Callable | None,
-    backend: Any = None,
-    max_proactive: int = 5,
-    use_llm_queries: bool = False,
-) -> dict:
-    """Phase 4: Proactive search -- hybrid sync + async."""
-    from .interest_analyzer import generate_proactive_queries
+def _resolve_run_fn(run_fn: Callable | None) -> Callable:
+    if run_fn is not None:
+        return run_fn
+    from .pipeline_v2 import run as _pipeline_run
 
-    result: dict[str, Any] = {
-        "searched": [],
-        "replayed": [],
-        "async_queued": 0,
-        "skipped_dry_run": False,
-    }
+    return _pipeline_run
 
-    if dry_run:
-        result["skipped_dry_run"] = True
-        write_audit(
-            cycle_id=cycle_id,
-            phase="proactive",
-            action="skip_dry_run",
-            outcome="skipped",
-            mode=mode,
-            data_path=data_path,
-        )
-        return result
 
-    # Resolve pipeline run function
-    if run_fn is None:
-        from .pipeline_v2 import run as _pipeline_run
-
-        _fn: Callable = _pipeline_run
-    else:
-        _fn = run_fn
-
+def _get_sync_budget() -> int:
     try:
-        sync_budget = max(0, int(env("CURATOR_GOVERNANCE_SYNC_BUDGET", "0")))
+        return max(0, int(env("CURATOR_GOVERNANCE_SYNC_BUDGET", "0")))
     except (ValueError, TypeError):
-        sync_budget = 0
+        return 0
 
-    # Generate proactive queries from interests
+
+def _load_existing_queries(data_path: str) -> set[str]:
     existing: set[str] = set()
     ql_path = os.path.join(data_path, "query_log.jsonl")
-    if os.path.exists(ql_path):
-        with open(ql_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    existing.add(entry.get("query", "").lower())
-                except json.JSONDecodeError:
-                    continue
+    if not os.path.exists(ql_path):
+        return existing
+    with open(ql_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                existing.add(entry.get("query", "").lower())
+            except json.JSONDecodeError:
+                continue
+    return existing
 
-    queries = generate_proactive_queries(
-        interests,
-        existing_queries=existing,
-        max_queries=max_proactive,
-        use_llm=use_llm_queries,
-    )
 
-    # Split proactive queries: sync (budget) + async (rest)
-    sync_queries = queries[:sync_budget]
-    async_queries = queries[sync_budget:]
-
-    # -- Sync: run budget-limited proactive searches --
+def _run_sync_proactive_queries(
+    sync_queries: list,
+    fn: Callable,
+    result: dict[str, Any],
+    cycle_id: str,
+    mode: str,
+    data_path: str,
+    backend: Any = None,
+) -> None:
     for pq in sync_queries:
         try:
             kwargs: dict[str, Any] = {"auto_ingest": True}
             if backend is not None:
                 kwargs["backend"] = backend
-            pipeline_result = _fn(pq.query, **kwargs)
+            pipeline_result = fn(pq.query, **kwargs)
             ingested = (pipeline_result.get("meta") or {}).get("ingested", False)
             coverage = (pipeline_result.get("meta") or {}).get("coverage", 0)
             result["searched"].append(
@@ -576,17 +544,12 @@ def phase4_proactive(
         except Exception as e:
             log.warning("governance.phase4: proactive search error: %s", e)
             result["searched"].append(
-                {
-                    "query": pq.query,
-                    "topic": pq.topic,
-                    "reason": pq.reason,
-                    "error": str(e)[:200],
-                }
+                {"query": pq.query, "topic": pq.topic, "reason": pq.reason, "error": str(e)[:200]}
             )
 
-    # -- Async: queue remaining proactive + ALL retryable replays --
-    async_items: list[dict] = []
 
+def _build_async_items(async_queries: list, retryable_jobs: list, data_path: str, cycle_id: str) -> list[dict]:
+    async_items: list[dict] = []
     for pq in async_queries:
         trace_id = f"gov_trace_{uuid.uuid4().hex[:10]}"
         write_trace_event(
@@ -599,15 +562,7 @@ def phase4_proactive(
             job_type="proactive",
             cycle_id=cycle_id,
         )
-        async_items.append(
-            {
-                "trace_id": trace_id,
-                "query": pq.query,
-                "topic": pq.topic,
-                "job_type": "proactive",
-            }
-        )
-
+        async_items.append({"trace_id": trace_id, "query": pq.query, "topic": pq.topic, "job_type": "proactive"})
     for job in retryable_jobs:
         query = job.get("query", "")
         if not query:
@@ -622,43 +577,97 @@ def phase4_proactive(
             job_type="replay",
             cycle_id=cycle_id,
         )
-        async_items.append(
-            {
-                "trace_id": trace_id,
-                "query": query,
-                "job_id": job.get("job_id"),
-                "job_type": "replay",
-            }
-        )
+        async_items.append({"trace_id": trace_id, "query": query, "job_id": job.get("job_id"), "job_type": "replay"})
+    return async_items
 
-    result["async_queued"] = len(async_items)
-    result["_async_thread"] = None  # will be set if thread is launched
 
-    if async_items:
+def _start_async_governance_thread(
+    async_items: list[dict],
+    data_path: str,
+    cycle_id: str,
+    mode: str,
+    fn: Callable,
+    sync_queries: list,
+    async_queries: list,
+    retryable_jobs: list,
+    result: dict[str, Any],
+    backend: Any = None,
+) -> None:
+    if not async_items:
+        return
+    write_audit(
+        cycle_id=cycle_id,
+        phase="proactive",
+        action="async_queue",
+        outcome=f"queued_{len(async_items)}",
+        details={"proactive": len(async_queries), "replays": len(retryable_jobs)},
+        mode=mode,
+        data_path=data_path,
+    )
+    thread = threading.Thread(
+        target=_run_async_governance_batch,
+        args=(async_items, data_path, cycle_id, mode, fn, backend),
+        daemon=True,
+        name=f"gov-async-{cycle_id[:20]}",
+    )
+    thread.start()
+    result["_async_thread"] = thread
+    log.info("governance.phase4: sync=%d async=%d (thread=%s)", len(sync_queries), len(async_items), thread.name)
+
+
+def phase4_proactive(
+    data_path: str,
+    cycle_id: str,
+    mode: str,
+    interests: list,
+    retryable_jobs: list,
+    dry_run: bool,
+    run_fn: Callable | None,
+    backend: Any = None,
+    max_proactive: int = 5,
+    use_llm_queries: bool = False,
+) -> dict:
+    """Phase 4: Proactive search -- hybrid sync + async."""
+    from .interest_analyzer import generate_proactive_queries
+
+    result: dict[str, Any] = {"searched": [], "replayed": [], "async_queued": 0, "skipped_dry_run": False}
+    if dry_run:
+        result["skipped_dry_run"] = True
         write_audit(
             cycle_id=cycle_id,
             phase="proactive",
-            action="async_queue",
-            outcome=f"queued_{len(async_items)}",
-            details={"proactive": len(async_queries), "replays": len(retryable_jobs)},
+            action="skip_dry_run",
+            outcome="skipped",
             mode=mode,
             data_path=data_path,
         )
-        thread = threading.Thread(
-            target=_run_async_governance_batch,
-            args=(async_items, data_path, cycle_id, mode, _fn, backend),
-            daemon=True,
-            name=f"gov-async-{cycle_id[:20]}",
-        )
-        thread.start()
-        result["_async_thread"] = thread
-        log.info(
-            "governance.phase4: sync=%d async=%d (thread=%s)",
-            len(sync_queries),
-            len(async_items),
-            thread.name,
-        )
+        return result
 
+    fn = _resolve_run_fn(run_fn)
+    sync_budget = _get_sync_budget()
+    existing = _load_existing_queries(data_path)
+    queries = generate_proactive_queries(
+        interests, existing_queries=existing, max_queries=max_proactive, use_llm=use_llm_queries
+    )
+    sync_queries = queries[:sync_budget]
+    async_queries = queries[sync_budget:]
+
+    _run_sync_proactive_queries(sync_queries, fn, result, cycle_id, mode, data_path, backend=backend)
+    async_items = _build_async_items(async_queries, retryable_jobs, data_path, cycle_id)
+    result["async_queued"] = len(async_items)
+    result["_async_thread"] = None
+    _start_async_governance_thread(
+        async_items,
+        data_path,
+        cycle_id,
+        mode,
+        fn,
+        sync_queries,
+        async_queries,
+        retryable_jobs,
+        result,
+        backend=backend,
+    )
     return result
 
 
