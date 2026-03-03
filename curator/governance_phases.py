@@ -78,10 +78,8 @@ def _aggregate_query_metrics(data_path: str) -> dict:
 
 def _freshness_scan_backend(backend: Any) -> dict[str, list[dict]]:
     """Backend-agnostic freshness scan.  Returns {fresh, aging, stale} lists."""
+    from .config import AGING_THRESHOLD, FRESH_THRESHOLD
     from .freshness import uri_freshness_score
-
-    FRESH_THRESHOLD = 0.8
-    AGING_THRESHOLD = 0.4
 
     cats: dict[str, list[dict]] = {"fresh": [], "aging": [], "stale": []}
     if not hasattr(backend, "list_resources"):

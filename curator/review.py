@@ -158,24 +158,10 @@ from .config import (
 
 
 def _is_transient_error(err: Exception) -> bool:
-    """Return True for transient errors worth retrying (timeout, 429, 5xx).
+    """Return True for transient errors worth retrying — delegates to config."""
+    from .config import _should_retry_chat_error
 
-    Permanent errors (4xx auth/validation) should not be retried.
-    Mirrors the classification in config._should_retry_chat_error.
-    """
-    import requests
-
-    if isinstance(err, requests.HTTPError):
-        resp = getattr(err, "response", None)
-        if resp is None:
-            return True
-        code = getattr(resp, "status_code", 0) or 0
-        return code == 429 or code >= 500
-    if isinstance(err, (requests.Timeout, requests.ConnectionError)):
-        return True
-    if isinstance(err, requests.RequestException):
-        return True
-    return False  # unknown exceptions (programming errors etc.) are not retried
+    return _should_retry_chat_error(err)
 
 
 def _parse_judge_output(raw_text: str | None, fallback_reason: str = "") -> JudgeResult:
