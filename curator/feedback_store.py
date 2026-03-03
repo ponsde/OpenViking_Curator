@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from .config import log
 
 _SCHEMA_VERSION = 2
 

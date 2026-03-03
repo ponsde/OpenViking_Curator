@@ -113,9 +113,6 @@ class WebSearchResult:
     source_type: str = "web"  # "web" | "llm_generated"
 
 
-# Backward-compatible alias — remove in next major version
-SearchResult = WebSearchResult
-
 _LLM_GENERATED_NOTICE = (
     "> ⚠️ **Unverified (LLM-generated)**: "
     "The following results were synthesised by an LLM, not retrieved from live web pages. "
@@ -251,13 +248,6 @@ def _search_grok(query: str, scope: dict) -> list[WebSearchResult] | str:
     return _LLM_GENERATED_NOTICE + raw if raw else raw
 
 
-# Keep legacy name for backward compatibility
-def grok_search(query: str, scope: dict, **kwargs) -> str:
-    """Legacy entry point — delegates to _search_grok, returns text."""
-    result = _search_grok(query, scope)
-    return format_results(result) if isinstance(result, list) else result
-
-
 # ── Provider: OAI-compatible ──
 def _search_oai(query: str, scope: dict) -> list[WebSearchResult] | str:
     """Search via any OAI-compatible chat endpoint with internet access.
@@ -286,12 +276,6 @@ def _search_oai(query: str, scope: dict) -> list[WebSearchResult] | str:
         return parsed
     # Raw text fallback: still LLM-generated, prepend unverified notice
     return _LLM_GENERATED_NOTICE + raw if raw else raw
-
-
-def oai_search(query: str, scope: dict, **kwargs) -> str:
-    """Legacy entry point — delegates to _search_oai, returns text."""
-    result = _search_oai(query, scope)
-    return format_results(result) if isinstance(result, list) else result
 
 
 # ── Provider: DuckDuckGo ──
@@ -371,12 +355,6 @@ _PROVIDERS = {
     "tavily": "_search_tavily",
 }
 
-# Legacy alias (kept for any code importing PROVIDERS directly)
-PROVIDERS = {
-    "grok": grok_search,
-    "oai": oai_search,
-}
-
 
 def _call_provider(pname: str, query: str, scope: dict) -> str | list[WebSearchResult]:
     """Resolve and call the provider function by name, honouring the global
@@ -418,7 +396,7 @@ def _provider_output_to_text(result: Any) -> str:
     if isinstance(result, list):
         structured: list[WebSearchResult] = []
         for item in result:
-            if isinstance(item, SearchResult):
+            if isinstance(item, WebSearchResult):
                 structured.append(item)
         return format_results(structured)
     if isinstance(result, str):
