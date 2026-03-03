@@ -1771,8 +1771,8 @@ wheels = [
 
 [[package]]
 name = "openviking"
-version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.2.2"
+source = { git = "https://github.com/volcengine/OpenViking.git?rev=v0.2.2#913bc75fb71c3375230b4391a4a3c4e416e4fa2b" }
 dependencies = [
     { name = "apscheduler" },
     { name = "ebooklib" },
@@ -1797,6 +1797,7 @@ dependencies = [
     { name = "requests" },
     { name = "tabulate" },
     { name = "tree-sitter" },
+    { name = "tree-sitter-c-sharp" },
     { name = "tree-sitter-cpp" },
     { name = "tree-sitter-go" },
     { name = "tree-sitter-java" },
@@ -1811,22 +1812,6 @@ dependencies = [
     { name = "volcengine" },
     { name = "volcengine-python-sdk", extra = ["ark"] },
     { name = "xxhash" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/25/05/29dd3d1785d555e9f422c2395b5dc61663a38e63136b1a5c2ebb5efed27e/openviking-0.2.1.tar.gz", hash = "sha256:8d8a819e76ae36807e052340e5a26547b3911827214364d7490f4bc93174a1df", size = 25730947, upload-time = "2026-02-28T12:49:20.976Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/37/df3db5d21cf225863888e099483165252b11398ee2053d6bd199f496fc0e/openviking-0.2.1-cp310-cp310-macosx_15_0_universal2.whl", hash = "sha256:c39e5051647d2eb45ddd684280cc6085f2e6ca3151ba39cb728a2c728041b98b", size = 28657911, upload-time = "2026-02-28T11:50:24.699Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/29/853734a89ba52e7e6db50a45da454c2ab844f48ec26a1c6604ddab7b956c/openviking-0.2.1-cp310-cp310-macosx_15_0_x86_64.whl", hash = "sha256:41f82aa703a360b5bf73ddc3a2472786c219b2fd5d12c133e2c4fa48fe2f0f8d", size = 30987481, upload-time = "2026-02-28T11:50:32.21Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/b2/52977f21916e68fb47541a0e173bd1f3299ddd3273f22fd20163295a75ee/openviking-0.2.1-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:8b6a28040acc12fa531e8b8e0a7c91e27e5ae681552885d3de736335f1b90d4a", size = 37499440, upload-time = "2026-02-28T11:50:35.687Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/d8/d5b04f0fcb749cc2cdfaefca388d2cba72eb4f37c6e9412d92d27f307f9e/openviking-0.2.1-cp310-cp310-win_amd64.whl", hash = "sha256:34310f10fe8e0ead4107d1c1a2944382e3bfb77b0a8c63bd9e25b3b43c0d4829", size = 39181991, upload-time = "2026-02-28T11:50:40.573Z" },
-    { url = "https://files.pythonhosted.org/packages/55/7f/fa6be12079cd7f9c23c7276990cbce29795ba1ebc1c6e74bd8b17066e0d6/openviking-0.2.1-cp311-cp311-macosx_15_0_universal2.whl", hash = "sha256:35a53470828d51981e77884bd5920edf71aefc108653faf3ad042ac8d92891f6", size = 30988816, upload-time = "2026-02-28T12:32:56.463Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/90/3a43055c74aaf0bada11b43b6dbafa4843b569692c2567cd7f97f3ba94fb/openviking-0.2.1-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:e9f67a7e1726e0e915ffcf6bde790315b39b7b8fa0a139e7ab5b26dd9515e910", size = 37500367, upload-time = "2026-02-28T12:32:59.148Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/c8/2ea682599ee74261aa16ea94d58cebbf98e8c180daccb20026f717fa7475/openviking-0.2.1-cp311-cp311-win_amd64.whl", hash = "sha256:c82ca6fb91acd7830adaa09435f4b09ee017003ca3b36ff7c4a27dc39a83b38c", size = 39182635, upload-time = "2026-02-28T12:33:01.945Z" },
-    { url = "https://files.pythonhosted.org/packages/26/fa/e0256c52a25b4549b43062e6a59b4a908881c1e7d3ae781ea8c53df7bf38/openviking-0.2.1-cp312-cp312-macosx_15_0_universal2.whl", hash = "sha256:e9868e3e679f217a2669457225cb7ce1cb84ed742810d4c8d0cad2f92a6f2bad", size = 28658889, upload-time = "2026-02-28T12:48:56.031Z" },
-    { url = "https://files.pythonhosted.org/packages/48/bd/98ff10e7731c8f018afc79759708eca3b93767c2130c2b92d5ae1d7f5357/openviking-0.2.1-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:a7d88bfc7414628a8721c1df113a2d4c2c0a748ca92ff26aeaa95a9ef6032934", size = 37501340, upload-time = "2026-02-28T12:49:00.451Z" },
-    { url = "https://files.pythonhosted.org/packages/23/5c/484dc883d50ca0db6ce98e728f6652d09f76c54726550498b256122ac973/openviking-0.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:118471e32242bb1984fead12f5f0d231950e2270bb11b673024825b6200feb12", size = 39186082, upload-time = "2026-02-28T12:49:05.095Z" },
-    { url = "https://files.pythonhosted.org/packages/84/a0/be1f2c521ddf6e8e10b0350558127b5cd0ca59e35c284f0f0c731a5ee666/openviking-0.2.1-cp313-cp313-macosx_15_0_universal2.whl", hash = "sha256:bc293a2df162fdf56b40fe0c8a7ea6d10fd514617c3801aa850468ec9ffeb52a", size = 28658831, upload-time = "2026-02-28T12:49:08.786Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/27/898863ec57e163137f0c03fe6a0bd57de07736e3e88bb603fc808db17efa/openviking-0.2.1-cp313-cp313-manylinux_2_31_x86_64.whl", hash = "sha256:13c97cf9bb4bcc8c6ab8ed830b6b860573f37e639cdac3858c90f925c48abb91", size = 37501371, upload-time = "2026-02-28T12:49:12.909Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/4f/15077badf9eb429cdce56ea6f5a577df457d76f3f716e178e8e1e7fc8c58/openviking-0.2.1-cp313-cp313-win_amd64.whl", hash = "sha256:000d6616da570c8cbb73ad15091b67708871b1b6d9e8224f74ae7dab8cb8f94d", size = 39186157, upload-time = "2026-02-28T12:49:17.496Z" },
 ]
 
 [[package]]
@@ -1853,7 +1838,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
-    { name = "openviking", specifier = ">=0.2.1,!=0.2.2" },
+    { name = "openviking", git = "https://github.com/volcengine/OpenViking.git?rev=v0.2.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
@@ -2184,13 +2169,9 @@ wheels = [
 [[package]]
 name = "pyagfs"
 version = "1.4.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/volcengine/OpenViking.git?subdirectory=third_party%2Fagfs%2Fagfs-sdk%2Fpython&rev=v0.2.2#913bc75fb71c3375230b4391a4a3c4e416e4fa2b" }
 dependencies = [
     { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/a4/b13bd3eca0f37129bfa97c7b103e92792e95b3bd3739a5529e7a0606068d/pyagfs-1.4.0.tar.gz", hash = "sha256:e4c942298f069bee0e910bd011d09b37b1a60e051ef4595c403f86e06f58440a", size = 67674, upload-time = "2025-12-11T08:40:17.702Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/eb/1cab816f496d24909bebf7bee4de93d4d82b9e92d0ecd9cdcb72215d713e/pyagfs-1.4.0-py3-none-any.whl", hash = "sha256:8b1e33186ce094031e247be773a7203889e927b8e067b348d1a6f9556979ca03", size = 12390, upload-time = "2025-12-11T08:40:16.785Z" },
 ]
 
 [[package]]
@@ -3204,6 +3185,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/57/e2/d42d55bf56360987c32bc7b16adb06744e425670b823fb8a5786a1cea991/tree_sitter-0.25.2-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:7d2ee1acbacebe50ba0f85fff1bc05e65d877958f00880f49f9b2af38dce1af0", size = 631522, upload-time = "2025-09-25T17:37:55.833Z" },
     { url = "https://files.pythonhosted.org/packages/03/87/af9604ebe275a9345d88c3ace0cf2a1341aa3f8ef49dd9fc11662132df8a/tree_sitter-0.25.2-cp314-cp314-win_amd64.whl", hash = "sha256:4973b718fcadfb04e59e746abfbb0288694159c6aeecd2add59320c03368c721", size = 130864, upload-time = "2025-09-25T17:37:57.453Z" },
     { url = "https://files.pythonhosted.org/packages/a6/6e/e64621037357acb83d912276ffd30a859ef117f9c680f2e3cb955f47c680/tree_sitter-0.25.2-cp314-cp314-win_arm64.whl", hash = "sha256:b8d4429954a3beb3e844e2872610d2a4800ba4eb42bb1990c6a4b1949b18459f", size = 117470, upload-time = "2025-09-25T17:37:58.431Z" },
+]
+
+[[package]]
+name = "tree-sitter-c-sharp"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/85/a61c782afbb706a47d990eaee6977e7c2bd013771c5bf5c81c617684f286/tree_sitter_c_sharp-0.23.1.tar.gz", hash = "sha256:322e2cfd3a547a840375276b2aea3335fa6458aeac082f6c60fec3f745c967eb", size = 1317728, upload-time = "2024-11-11T05:25:32.535Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/04/f6c2df4c53a588ccd88d50851155945cff8cd887bd70c175e00aaade7edf/tree_sitter_c_sharp-0.23.1-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:2b612a6e5bd17bb7fa2aab4bb6fc1fba45c94f09cb034ab332e45603b86e32fd", size = 372235, upload-time = "2024-11-11T05:25:19.424Z" },
+    { url = "https://files.pythonhosted.org/packages/99/10/1aa9486f1e28fc22810fa92cbdc54e1051e7f5536a5e5b5e9695f609b31e/tree_sitter_c_sharp-0.23.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:1a8b98f62bc53efcd4d971151950c9b9cd5cbe3bacdb0cd69fdccac63350d83e", size = 419046, upload-time = "2024-11-11T05:25:20.679Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/21/13df29f8fcb9ba9f209b7b413a4764b673dfd58989a0dd67e9c7e19e9c2e/tree_sitter_c_sharp-0.23.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:986e93d845a438ec3c4416401aa98e6a6f6631d644bbbc2e43fcb915c51d255d", size = 415999, upload-time = "2024-11-11T05:25:22.359Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/72/fc6846795bcdae2f8aa94cc8b1d1af33d634e08be63e294ff0d6794b1efc/tree_sitter_c_sharp-0.23.1-cp39-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a8024e466b2f5611c6dc90321f232d8584893c7fb88b75e4a831992f877616d2", size = 402830, upload-time = "2024-11-11T05:25:24.198Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/3a/b6028c5890ce6653807d5fa88c72232c027c6ceb480dbeb3b186d60e5971/tree_sitter_c_sharp-0.23.1-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7f9bf876866835492281d336b9e1f9626ab668737f74e914c31d285261507da7", size = 397880, upload-time = "2024-11-11T05:25:25.937Z" },
+    { url = "https://files.pythonhosted.org/packages/47/d2/4facaa34b40f8104d8751746d0e1cd2ddf0beb9f1404b736b97f372bd1f3/tree_sitter_c_sharp-0.23.1-cp39-abi3-win_amd64.whl", hash = "sha256:ae9a9e859e8f44e2b07578d44f9a220d3fa25b688966708af6aa55d42abeebb3", size = 377562, upload-time = "2024-11-11T05:25:27.539Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/88/3cf6bd9959d94d1fec1e6a9c530c5f08ff4115a474f62aedb5fedb0f7241/tree_sitter_c_sharp-0.23.1-cp39-abi3-win_arm64.whl", hash = "sha256:c81548347a93347be4f48cb63ec7d60ef4b0efa91313330e69641e49aa5a08c5", size = 375157, upload-time = "2024-11-11T05:25:30.839Z" },
 ]
 
 [[package]]
