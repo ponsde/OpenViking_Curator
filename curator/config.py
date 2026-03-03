@@ -132,6 +132,10 @@ LOG_ROTATE_KEEP = _settings.log_rotate_keep
 FLAG_EXPIRE_DAYS = _settings.flag_expire_days
 GOVERNANCE_REPORT_TOP_FLAGS = _settings.governance_report_top_flags
 
+# Freshness scoring thresholds (float, 0.0-1.0)
+FRESH_THRESHOLD = float(env("CURATOR_FRESH_THRESHOLD", "0.8"))
+AGING_THRESHOLD = float(env("CURATOR_AGING_THRESHOLD", "0.4"))
+
 # ── Dedup ──
 DEDUP_SIMILARITY = _settings.dedup_similarity
 DEDUP_MAX_ITEMS = _settings.dedup_max_items

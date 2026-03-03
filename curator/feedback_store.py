@@ -83,24 +83,13 @@ def _resolve_store() -> Path:
 
 
 def _locked_rw(fn):
-    """Read-modify-write with exclusive file lock (Unix) or no-lock fallback (Windows)."""
+    """Read-modify-write with exclusive file lock — delegates to file_lock."""
+    from .file_lock import locked_rw_json
+
     store = _resolve_store()
     store.parent.mkdir(parents=True, exist_ok=True)
     store.touch(exist_ok=True)
-    with open(store, "r+", encoding="utf-8") as f:
-        if _HAS_FCNTL:
-            fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            raw = f.read().strip()
-            data = json.loads(raw) if raw else {}
-            result = fn(data)
-            f.seek(0)
-            f.truncate()
-            f.write(json.dumps(data, ensure_ascii=False, indent=2))
-            return result
-        finally:
-            if _HAS_FCNTL:
-                fcntl.flock(f, fcntl.LOCK_UN)
+    return locked_rw_json(str(store), fn)
 
 
 def load(store_path: str | Path | None = None):

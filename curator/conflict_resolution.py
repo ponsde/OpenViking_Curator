@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import log
-from .settings import CuratorSettings
+from .config import CONFLICT_STRATEGY, log
 
 
 def _aggregate_local_signals(used_uris: list | set, *, feedback_data: dict | None = None) -> dict | None:
@@ -75,7 +74,7 @@ def _resolve_conflict(judge_result: dict, *, local_signals: dict | None = None) 
     trust = judge_result.get("trust", 5)
     freshness = judge_result.get("freshness", "unknown")
 
-    strategy = CuratorSettings().conflict_strategy or "auto"
+    strategy = CONFLICT_STRATEGY or "auto"
 
     if strategy == "local":
         return {
