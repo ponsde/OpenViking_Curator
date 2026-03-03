@@ -316,35 +316,91 @@ def _parallel_fetch(
     return results
 
 
+def _load_l0(scored: list) -> tuple:
+    """L0 abstract 加载和初步评分。"""
+    blocks = []
+    uris = []
+    for item in scored[:4]:
+        uri = item.get("uri", "")
+        abstract = (item.get("abstract", "") or "").strip()
+        if not uri or len(abstract) < 20:
+            continue
+        blocks.append(f"[SOURCE: {uri}]\n{abstract[:350]}")
+        uris.append(uri)
+
+    top_score = scored[0].get("score", 0) if scored else 0
+    enough = top_score >= THRESHOLD_L0_SUFFICIENT and len(blocks) >= 2
+    return blocks, uris, top_score, enough
+
+
+def _load_l1(scored: list, backend) -> tuple:
+    """L1 overview 加载和评分。"""
+    blocks = []
+    used_uris = []
+    seen_l1: set[str] = set()
+    l1_candidates: list[dict] = []
+    for item in scored[:5]:
+        uri = item.get("uri", "")
+        if uri and uri not in seen_l1:
+            seen_l1.add(uri)
+            l1_candidates.append(item)
+
+    l1_uris = [item.get("uri", "") for item in l1_candidates]
+    overview_results = _parallel_fetch(l1_uris, backend.overview)
+
+    for item in l1_candidates:
+        uri = item.get("uri", "")
+        overview = overview_results.get(uri, "")
+        text = (overview or item.get("abstract", "") or "").strip()
+        if len(text) < 20:
+            continue
+        blocks.append(f"[SOURCE: {uri}]\n{text[:1000]}")
+        used_uris.append(uri)
+
+    return blocks, used_uris, len(used_uris)
+
+
+def _load_l2(scored: list, backend, blocks: list, used_uris: list, max_l2: int) -> tuple:
+    """L2 full text 加载。"""
+    seen_l2: set[str] = set()
+    l2_candidates: list[dict] = []
+    for item in scored[: max(3, max_l2)]:
+        uri = item.get("uri", "")
+        if uri and uri not in seen_l2 and item.get("score", 0) >= THRESHOLD_L1_SUFFICIENT:
+            seen_l2.add(uri)
+            l2_candidates.append(item)
+            if len(l2_candidates) >= max_l2:
+                break
+
+    l2_uris = [item.get("uri", "") for item in l2_candidates]
+    read_results = _parallel_fetch(l2_uris, backend.read)
+
+    l2_count = 0
+    for item in l2_candidates:
+        uri = item.get("uri", "")
+        content = read_results.get(uri, "")
+        if content and len(str(content)) > 20:
+            if uri in used_uris:
+                pos = used_uris.index(uri)
+                blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
+            else:
+                blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
+                used_uris.append(uri)
+            l2_count += 1
+
+    return blocks, used_uris, l2_count
+
+
 def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
-    """严格按需 L0→L1→L2 分层加载。
-
-    Args:
-        backend: A :class:`KnowledgeBackend` instance (or any object with
-                 ``overview(uri)`` and ``read(uri)`` methods).
-        items: List of search result dicts with ``uri``, ``score``, ``abstract``.
-        query: Original user query (for logging).
-        max_l2: Maximum number of items to load at L2 (full read).
-
-    Returns:
-        Tuple of ``(context_text, used_uris, stage)``.
-
-    默认行为：
-    - 先只用 L0（abstract）构造上下文；
-    - 仅当 L0 不足时，才取 L1（overview）；
-    - 仅当 L1 仍不足时，才取 L2（read，最多 max_l2）。
-    """
+    """严格按需 L0→L1→L2 分层加载。"""
     if not items:
         return "", [], "none"
 
     scored = sorted(items, key=lambda x: float(x.get("score") or 0), reverse=True)
 
-    # Backends without tiered loading (no abstract/overview) skip L0/L1
     tiered = getattr(backend, "supports_tiered_loading", True)
     if not tiered:
-        # Direct L2: search results already have abstracts embedded; just read top items
-        blocks = []
-        used_uris = []
+        blocks, used_uris = [], []
         for item in scored[: max_l2 if max_l2 > 0 else 2]:
             uri = item.get("uri", "")
             if not uri:
@@ -364,90 +420,20 @@ def load_context(backend, items: list, query: str, max_l2: int = 2) -> tuple:
         )
         return context_text, used_uris, "L2"
 
-    # ---------- Stage 1: L0 only ----------
-    l0_blocks = []
-    l0_uris = []
-    for item in scored[:4]:
-        uri = item.get("uri", "")
-        abstract = (item.get("abstract", "") or "").strip()
-        if not uri or len(abstract) < 20:
-            continue
-        l0_blocks.append(f"[SOURCE: {uri}]\n{abstract[:350]}")
-        l0_uris.append(uri)
-
-    top_score = scored[0].get("score", 0) if scored else 0
-    l0_enough = top_score >= THRESHOLD_L0_SUFFICIENT and len(l0_blocks) >= 2
+    l0_blocks, l0_uris, top_score, l0_enough = _load_l0(scored)
     if l0_enough:
         context_text = "\n\n".join(l0_blocks)
         log.info("context 加载: stage=L0 only, sources=%d, chars=%d", len(l0_uris), len(context_text))
         return context_text, l0_uris, "L0"
 
-    # ---------- Stage 2: L1 on demand ----------
-    blocks = []
-    used_uris = []
-    l1_count = 0
-
-    # Collect URIs that need overview loading (deduplicate to avoid redundant calls)
-    seen_l1: set[str] = set()
-    l1_candidates: list[tuple[int, dict]] = []
-    for i, item in enumerate(scored[:5]):
-        uri = item.get("uri", "")
-        if uri and uri not in seen_l1:
-            seen_l1.add(uri)
-            l1_candidates.append((i, item))
-
-    # Collect URIs and fetch overviews (parallel or serial based on count)
-    l1_uris = [item.get("uri", "") for _, item in l1_candidates]
-    overview_results = _parallel_fetch(l1_uris, backend.overview)
-
-    # Process results in original order
-    for _, item in l1_candidates:
-        uri = item.get("uri", "")
-        overview = overview_results.get(uri, "")
-        text = (overview or item.get("abstract", "") or "").strip()
-        if len(text) < 20:
-            continue
-        blocks.append(f"[SOURCE: {uri}]\n{text[:1000]}")
-        used_uris.append(uri)
-        l1_count += 1
-
+    blocks, used_uris, l1_count = _load_l1(scored, backend)
     l1_enough = top_score >= THRESHOLD_L1_SUFFICIENT and l1_count >= 2
     if l1_enough or max_l2 <= 0:
         context_text = "\n\n".join(blocks)
         log.info("context 加载: stage=L1, sources=%d, L2=0, chars=%d", len(used_uris), len(context_text))
         return context_text, used_uris, "L1"
 
-    # ---------- Stage 3: L2 only when still insufficient ----------
-    # L2 按原始 score 排序取 top N，不限制 used_uris，
-    # 这样 L1 阶段因 overview 返回空而被跳过的高分 URI 也有机会被深度加载。
-    # Deduplicate L2 candidates by URI to avoid redundant read() calls
-    seen_l2: set[str] = set()
-    l2_candidates: list[dict] = []
-    for item in scored[: max(3, max_l2)]:
-        uri = item.get("uri", "")
-        if uri and uri not in seen_l2 and item.get("score", 0) >= THRESHOLD_L1_SUFFICIENT:
-            seen_l2.add(uri)
-            l2_candidates.append(item)
-            if len(l2_candidates) >= max_l2:
-                break
-
-    # Fetch full content (parallel or serial based on count)
-    l2_uris = [item.get("uri", "") for item in l2_candidates]
-    read_results = _parallel_fetch(l2_uris, backend.read)
-
-    l2_count = 0
-    for item in l2_candidates:
-        uri = item.get("uri", "")
-        content = read_results.get(uri, "")
-        if content and len(str(content)) > 20:
-            if uri in used_uris:
-                pos = used_uris.index(uri)
-                blocks[pos] = f"[SOURCE: {uri}]\n{str(content)[:1500]}"
-            else:
-                blocks.append(f"[SOURCE: {uri}]\n{str(content)[:1500]}")
-                used_uris.append(uri)
-            l2_count += 1
-
+    blocks, used_uris, l2_count = _load_l2(scored, backend, blocks, used_uris, max_l2)
     context_text = "\n\n".join(blocks)
     log.info(
         "context 加载: stage=L2 fallback, sources=%d, L2=%d, chars=%d", len(used_uris), l2_count, len(context_text)
