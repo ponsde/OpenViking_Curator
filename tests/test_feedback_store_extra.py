@@ -27,16 +27,15 @@ def test_feedback_store_load_corrupt_returns_empty(tmp_path, monkeypatch):
 
 
 def test_feedback_store_apply_invalid_action(tmp_path, monkeypatch):
+    import pytest
+
     from curator import feedback_store
 
     fb_path = tmp_path / "fb.json"
     monkeypatch.setenv("CURATOR_FEEDBACK_FILE", str(fb_path))
 
-    try:
+    with pytest.raises(ValueError):
         feedback_store.apply("viking://x", "bad")
-        assert False, "should raise"
-    except ValueError:
-        pass
 
 
 def test_feedback_store_decay_factor_bad_timestamp():
