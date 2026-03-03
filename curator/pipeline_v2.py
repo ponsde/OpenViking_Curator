@@ -133,6 +133,60 @@ def _attempt_ingest(
         return False
 
 
+def _cross_validate_step(query, external_txt, scope, m, trace):
+    """Run cross-validation when scope requires freshness check."""
+    if scope.get("need_fresh"):
+        cv = cross_validate(query, external_txt, scope)
+        external_txt = cv.get("validated", external_txt)
+        cv_warnings = cv.get("warnings", [])
+        if trace is not None:
+            trace["llm_calls"] += 1
+        if m is not None:
+            m.step("cross_validate", True, {"warnings": len(cv_warnings)})
+        return external_txt, cv_warnings
+    if m is not None:
+        m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
+    return external_txt, []
+
+
+def _decide_ingest(
+    judge_result,
+    conflict,
+    query,
+    external_txt,
+    used_uris,
+    backend,
+    auto_ingest,
+    m,
+    async_mode,
+):
+    """Decide whether to ingest, block on conflict, or defer to review."""
+    if not (judge_result.get("pass") and judge_result.get("markdown")):
+        return False
+    if judge_result.get("freshness", "unknown") == "outdated":
+        return False
+    preferred = conflict.get("resolution", {}).get("preferred", "none")
+    if preferred in ("human_review", "local"):
+        if m is not None:
+            m.step(
+                "ingest",
+                False,
+                {"reason": f"conflict_blocked:{preferred}", "conflict_summary": conflict.get("summary", "")},
+            )
+        log.info("冲突阻止入库: preferred=%s, summary=%s", preferred, conflict.get("summary", ""))
+        _write_pending(
+            query, judge_result, conflict, reason=f"conflict:{preferred}", source_urls=_extract_urls(external_txt)
+        )
+        return False
+    if auto_ingest:
+        return _attempt_ingest(backend, query, judge_result, external_txt, used_uris, m, async_mode=async_mode)
+    if m is not None:
+        m.step("ingest", False, {"reason": "review_mode_pending"})
+    log.info("审核模式: 内容待人工确认，未自动入库")
+    _write_pending(query, judge_result, conflict, reason="review_mode", source_urls=_extract_urls(external_txt))
+    return False
+
+
 def _do_judge_ingest(
     backend,
     query,
@@ -147,112 +201,40 @@ def _do_judge_ingest(
     async_mode: bool = False,
     feedback_data: dict | None = None,
 ):
-    """Execute cross_validate → judge → ingest. Shared by sync and async paths.
+    """Execute cross_validate → judge → ingest. Shared by sync and async paths."""
+    external_txt, cv_warnings = _cross_validate_step(query, external_txt, scope, m, trace)
 
-    When called from the async path, *m* and *trace* are ``None`` (metrics
-    are not recorded for background work — the pipeline already returned).
-    Set *async_mode* to ``True`` so that ingest failures are persisted to
-    ``async_ingest_failures.jsonl`` for observability.
-
-    Args:
-        feedback_data: Pre-loaded feedback dict for
-            :func:`_aggregate_local_signals`. ``None`` falls back to
-            loading from disk.
-
-    Returns dict with ``cv_warnings``, ``conflict``, ``ingested`` keys.
-    """
-    cv_warnings: list[str] = []
-    conflict: dict[str, Any] = {"has_conflict": False, "summary": "", "points": []}
-    ingested = False
-
-    # B3: cross_validate 只在 need_fresh 时跑
-    if scope.get("need_fresh"):
-        cv = cross_validate(query, external_txt, scope)
-        external_txt = cv.get("validated", external_txt)
-        cv_warnings = cv.get("warnings", [])
-        if trace is not None:
-            trace["llm_calls"] += 1
-        if m is not None:
-            m.step("cross_validate", True, {"warnings": len(cv_warnings)})
-    else:
-        if m is not None:
-            m.step("cross_validate", False, {"reason": "skipped_not_fresh"})
-
-    # B2: judge + conflict 合并为一次 LLM 调用
-    judge_result = judge_and_ingest(
-        backend,
-        query,
-        context_text,
-        external_txt,
-        cv_warnings=cv_warnings,
-    )
-    # Structured degradation flag from judge (True when all LLM models failed)
+    judge_result = judge_and_ingest(backend, query, context_text, external_txt, cv_warnings=cv_warnings)
     judge_degraded = judge_result.get("judge_degraded", False)
     if trace is not None:
         trace["llm_calls"] += 1
     if m is not None:
+        jr = judge_result
         m.step(
             "judge_and_conflict",
             True,
-            {
-                "pass": judge_result.get("pass"),
-                "trust": judge_result.get("trust"),
-                "has_conflict": judge_result.get("has_conflict"),
-            },
+            {"pass": jr.get("pass"), "trust": jr.get("trust"), "has_conflict": jr.get("has_conflict")},
         )
 
     conflict = _resolve_judge_conflict(judge_result, used_uris, feedback_data)
-
-    if judge_result.get("pass") and judge_result.get("markdown"):
-        freshness = judge_result.get("freshness", "unknown")
-        if freshness != "outdated":
-            conflict_preferred = conflict.get("resolution", {}).get("preferred", "none")
-            if conflict_preferred in ("human_review", "local"):
-                if m is not None:
-                    m.step(
-                        "ingest",
-                        False,
-                        {
-                            "reason": f"conflict_blocked:{conflict_preferred}",
-                            "conflict_summary": conflict.get("summary", ""),
-                        },
-                    )
-                log.info("冲突阻止入库: preferred=%s, summary=%s", conflict_preferred, conflict.get("summary", ""))
-                _write_pending(
-                    query,
-                    judge_result,
-                    conflict,
-                    reason=f"conflict:{conflict_preferred}",
-                    source_urls=_extract_urls(external_txt),
-                )
-            elif auto_ingest:
-                ingested = _attempt_ingest(
-                    backend,
-                    query,
-                    judge_result,
-                    external_txt,
-                    used_uris,
-                    m,
-                    async_mode=async_mode,
-                )
-            else:
-                if m is not None:
-                    m.step("ingest", False, {"reason": "review_mode_pending"})
-                log.info("审核模式: 内容待人工确认，未自动入库")
-                _write_pending(
-                    query,
-                    judge_result,
-                    conflict,
-                    reason="review_mode",
-                    source_urls=_extract_urls(external_txt),
-                )
-
+    ingested = _decide_ingest(
+        judge_result,
+        conflict,
+        query,
+        external_txt,
+        used_uris,
+        backend,
+        auto_ingest,
+        m,
+        async_mode,
+    )
     return {
         "cv_warnings": cv_warnings,
         "conflict": conflict,
         "ingested": ingested,
         "external_text": external_txt,
         "judge_degraded": judge_degraded,
+        "async_ingest_pending": False,
     }
 
 
@@ -407,6 +389,25 @@ def _route_query(
     return scope
 
 
+def _record_feedback_adopt(used_uris: list[str], all_items: list[dict]) -> None:
+    """Record adopt feedback for used URIs with meaningful scores."""
+    from . import feedback_store
+
+    try:
+        uri_scores = {it.get("uri", ""): it.get("score", 0) for it in all_items}
+        adopted = 0
+        for rank, uri in enumerate(used_uris):
+            score = uri_scores.get(uri, 0)
+            if score < ADOPT_MIN_SCORE:
+                continue
+            for _ in range(2 if rank == 0 else 1):
+                feedback_store.apply(uri, "adopt")
+            adopted += 1
+        log.debug("feedback adopt: %d/%d uris (min_score=%.2f)", adopted, len(used_uris), ADOPT_MIN_SCORE)
+    except Exception as _fb_err:
+        log.debug("feedback_store 不可用，跳过: %s", _fb_err)
+
+
 def _retrieve_context(
     backend: KnowledgeBackend,
     query: str,
@@ -417,23 +418,18 @@ def _retrieve_context(
     feedback_data: dict | None,
 ) -> dict[str, Any]:
     """Step 2+3: retrieve (L0/L1/L2), load context, assess coverage."""
-    from . import feedback_store
-
     log.info("STEP 2/4 检索...")
     retrieval_result = backend_retrieve(
-        backend, query, session_id=session_id, limit=RETRIEVE_LIMIT, feedback_data=feedback_data
+        backend,
+        query,
+        session_id=session_id,
+        limit=RETRIEVE_LIMIT,
+        feedback_data=feedback_data,
     )
     all_items = retrieval_result["all_items"]
-    m.step(
-        "retrieve",
-        True,
-        {
-            "memories": len(retrieval_result["memories"]),
-            "resources": len(retrieval_result["resources"]),
-            "skills": len(retrieval_result["skills"]),
-            "total": len(all_items),
-        },
-    )
+    counts = {k: len(retrieval_result[k]) for k in ("memories", "resources", "skills")}
+    counts["total"] = len(all_items)
+    m.step("retrieve", True, counts)
     result["ov_results"] = retrieval_result
 
     log.info("STEP 3/4 加载内容...")
@@ -445,25 +441,11 @@ def _retrieve_context(
 
     m.step("load_context", True, {"coverage": coverage, "used_uris": len(used_uris), "reason": cov_reason})
     m.score("coverage_before_external", round(coverage, 3))
-    log.info(
-        "STEP 3 完成: coverage=%.2f, reason=%s, stage=%s, used=%d", coverage, cov_reason, load_stage, len(used_uris)
-    )
+    log.info("STEP 3 完成: cov=%.2f reason=%s stage=%s used=%d", coverage, cov_reason, load_stage, len(used_uris))
     trace["load_stage"], trace["external_reason"] = load_stage, cov_reason
 
     if used_uris:
-        try:
-            uri_scores = {it.get("uri", ""): it.get("score", 0) for it in all_items}
-            adopted = 0
-            for rank, uri in enumerate(used_uris):
-                score = uri_scores.get(uri, 0)
-                if score < ADOPT_MIN_SCORE:
-                    continue
-                for _ in range(2 if rank == 0 else 1):
-                    feedback_store.apply(uri, "adopt")
-                adopted += 1
-            log.debug("feedback adopt: %d/%d uris (min_score=%.2f)", adopted, len(used_uris), ADOPT_MIN_SCORE)
-        except Exception as _fb_err:
-            log.debug("feedback_store 不可用，跳过: %s", _fb_err)
+        _record_feedback_adopt(used_uris, all_items)
 
     result["context_text"], result["coverage"] = context_text, coverage
     return {
@@ -477,133 +459,185 @@ def _retrieve_context(
     }
 
 
+def _fetch_external_text(query: str, scope: dict, m: Metrics, cov_reason: str, degradations: list[str]) -> str:
+    """Execute external search with cache and circuit breaker."""
+    from . import search_cache
+
+    cached = search_cache.get(query, scope)
+    if cached:
+        m.flag("cache_hit", True)
+        m.step("external_search", True, {"len": len(cached), "reason": cov_reason, "cache": "hit"})
+        log.info("STEP 4a 缓存命中: %d chars", len(cached))
+        return cached
+    m.flag("cache_hit", False)
+    try:
+        txt = external_search(query, scope)
+        m.step("external_search", True, {"len": len(txt), "reason": cov_reason, "cache": "miss"})
+        log.info("STEP 4a 外搜完成: %d chars", len(txt))
+        if txt:
+            search_cache.put(query, scope, txt)
+        return txt
+    except Exception as e:
+        from .circuit_breaker import CircuitOpenError
+
+        degradations.append(
+            "external_search: circuit breaker open, search skipped"
+            if isinstance(e, CircuitOpenError)
+            else f"external_search: failed ({type(e).__name__}), using OV results only"
+        )
+        m.flag("circuit_open", isinstance(e, CircuitOpenError))
+        log.warning("STEP 4 外搜失败: %s", e)
+        m.step("external_search", False, {"error": str(e)})
+        return ""
+
+
+def _launch_async_ingest(
+    backend,
+    query,
+    context_text,
+    external_txt,
+    scope,
+    used_uris,
+    auto_ingest,
+    m,
+    feedback_data,
+) -> None:
+    """Spawn background thread for async judge+ingest."""
+    from .async_jobs import create_job, update_job
+
+    job_id = create_job(query, scope=scope)
+
+    def _bg_judge_ingest(_jid=job_id):
+        update_job(_jid, "running")
+        with _ingest_lock:
+            try:
+                _do_judge_ingest(
+                    backend,
+                    query,
+                    context_text,
+                    external_txt,
+                    scope,
+                    used_uris,
+                    auto_ingest,
+                    None,
+                    None,
+                    async_mode=True,
+                    feedback_data=feedback_data,
+                )
+                update_job(_jid, "success")
+            except Exception as e:
+                log.warning("async judge+ingest failed: %s", e)
+                _log_async_failure(query, e)
+                update_job(_jid, "failed", error=str(e))
+
+    import contextvars as _cv
+
+    _ctx = _cv.copy_context()
+    threading.Thread(target=_ctx.run, args=(_bg_judge_ingest,), daemon=True).start()
+    log.info("async ingest: job %s deferred to background thread", job_id)
+    m.step("judge_and_conflict", False, {"reason": "async_deferred", "job_id": job_id})
+
+
+_EMPTY_SEARCH: dict[str, Any] = {
+    "external_text": "",
+    "conflict": {"has_conflict": False, "summary": "", "points": []},
+    "ingested": False,
+    "cv_warnings": [],
+    "async_ingest_pending": False,
+}
+
+
 def _search_external(
     query: str,
     backend: KnowledgeBackend,
     auto_ingest: bool,
     scope: dict[str, Any],
-    need_external: bool,
-    cov_reason: str,
-    context_text: str,
-    used_uris: list[str],
+    rctx: dict[str, Any],
     m: Metrics,
     trace: dict[str, Any],
     feedback_data: dict | None,
     degradations: list[str],
 ) -> dict[str, Any]:
     """Step 4: external search + optional cross-validate/judge/ingest."""
-    from . import search_cache
-
-    external_txt, ingested, async_ingest_pending = "", False, False
-    cv_warnings: list[str] = []
-    conflict: dict[str, Any] = {"has_conflict": False, "summary": "", "points": []}
-    if not need_external:
-        m.flag("external_triggered", False)
-        m.flag("external_reason", cov_reason)
-        log.info("STEP 4/4 跳过外搜+冲突检测: %s", cov_reason)
-        return {
-            "external_text": external_txt,
-            "conflict": conflict,
-            "ingested": ingested,
-            "cv_warnings": cv_warnings,
-            "async_ingest_pending": async_ingest_pending,
-        }
-
-    m.flag("external_triggered", True)
+    need_external, cov_reason = rctx["need_external"], rctx["cov_reason"]
+    m.flag("external_triggered", need_external)
     m.flag("external_reason", cov_reason)
+    if not need_external:
+        log.info("STEP 4/4 跳过外搜+冲突检测: %s", cov_reason)
+        return dict(_EMPTY_SEARCH)
+
+    context_text, used_uris = rctx["context_text"], rctx["used_uris"]
     log.info("STEP 4/4 外部搜索... reason=%s", cov_reason)
-    cached = search_cache.get(query, scope)
-    if cached:
-        external_txt = cached
-        m.flag("cache_hit", True)
-        m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason, "cache": "hit"})
-        log.info("STEP 4a 缓存命中: %d chars", len(external_txt))
-    else:
-        m.flag("cache_hit", False)
-        try:
-            external_txt = external_search(query, scope)
-            m.step("external_search", True, {"len": len(external_txt), "reason": cov_reason, "cache": "miss"})
-            log.info("STEP 4a 外搜完成: %d chars", len(external_txt))
-            if external_txt:
-                search_cache.put(query, scope, external_txt)
-        except Exception as e:
-            from .circuit_breaker import CircuitOpenError
+    external_txt = _fetch_external_text(query, scope, m, cov_reason, degradations)
+    if not external_txt:
+        return dict(_EMPTY_SEARCH)
+    if ASYNC_INGEST and auto_ingest:
+        _launch_async_ingest(
+            backend, query, context_text, external_txt, scope, used_uris, auto_ingest, m, feedback_data
+        )
+        return dict(_EMPTY_SEARCH) | {"external_text": external_txt, "async_ingest_pending": True}
 
-            degradations.append(
-                "external_search: circuit breaker open, search skipped"
-                if isinstance(e, CircuitOpenError)
-                else f"external_search: failed ({type(e).__name__}), using OV results only"
-            )
-            m.flag("circuit_open", isinstance(e, CircuitOpenError))
-            log.warning("STEP 4 外搜失败: %s", e)
-            m.step("external_search", False, {"error": str(e)})
+    judge_out = _do_judge_ingest(
+        backend,
+        query,
+        context_text,
+        external_txt,
+        scope,
+        used_uris,
+        auto_ingest,
+        m,
+        trace,
+        feedback_data=feedback_data,
+    )
+    if judge_out.pop("judge_degraded", False):
+        degradations.append("judge: LLM call failed, external content not reviewed/ingested")
+    return judge_out
 
-    if external_txt:
-        use_async = ASYNC_INGEST and auto_ingest
 
-        if use_async:
-            async_ingest_pending = True
-
-            from .async_jobs import create_job, update_job
-
-            _job_id = create_job(query, scope=scope)
-
-            def _bg_judge_ingest(_jid=_job_id):
-                update_job(_jid, "running")
-                with _ingest_lock:
-                    try:
-                        _do_judge_ingest(
-                            backend,
-                            query,
-                            context_text,
-                            external_txt,
-                            scope,
-                            used_uris,
-                            auto_ingest,
-                            None,
-                            None,
-                            async_mode=True,
-                            feedback_data=feedback_data,
-                        )
-                        update_job(_jid, "success")
-                    except Exception as e:
-                        log.warning("async judge+ingest failed: %s", e)
-                        _log_async_failure(query, e)
-                        update_job(_jid, "failed", error=str(e))
-
-            import contextvars as _cv
-
-            _ctx = _cv.copy_context()
-            threading.Thread(target=_ctx.run, args=(_bg_judge_ingest,), daemon=True).start()
-            log.info("async ingest: job %s deferred to background thread", _job_id)
-            m.step("judge_and_conflict", False, {"reason": "async_deferred", "job_id": _job_id})
-        else:
-            judge_out = _do_judge_ingest(
-                backend,
-                query,
-                context_text,
-                external_txt,
-                scope,
-                used_uris,
-                auto_ingest,
-                m,
-                trace,
-                feedback_data=feedback_data,
-            )
-            cv_warnings = judge_out.get("cv_warnings", cv_warnings)
-            conflict = judge_out.get("conflict", conflict)
-            ingested = judge_out.get("ingested", False)
-            external_txt = judge_out.get("external_text", external_txt)
-            if judge_out.get("judge_degraded"):
-                degradations.append("judge: LLM call failed, external content not reviewed/ingested")
-
+def _build_meta(
+    rctx: dict[str, Any],
+    sout: dict[str, Any],
+    report: dict,
+    degradations: list[str],
+    trace: dict[str, Any],
+) -> dict[str, Any]:
+    """Assemble the meta dict from retrieve/search context."""
+    retrieval_result = rctx["retrieval_result"]
     return {
-        "external_text": external_txt,
-        "conflict": conflict,
-        "ingested": ingested,
-        "cv_warnings": cv_warnings,
-        "async_ingest_pending": async_ingest_pending,
+        "coverage": rctx["coverage"],
+        "coverage_reason": rctx["cov_reason"],
+        "external_triggered": report["flags"].get("external_triggered", False),
+        "external_reason": rctx["cov_reason"],
+        "has_conflict": sout["conflict"].get("has_conflict", False),
+        "ingested": sout["ingested"],
+        "async_ingest_pending": sout["async_ingest_pending"],
+        "used_uris": rctx["used_uris"],
+        "warnings": sout["cv_warnings"],
+        "degraded": bool(degradations),
+        "degraded_reasons": degradations,
+        "memories_count": len(retrieval_result["memories"]),
+        "resources_count": len(retrieval_result["resources"]),
+        "skills_count": len(retrieval_result["skills"]),
+        "decision_trace": trace,
     }
+
+
+def _log_pipeline_result(query: str, scope: dict, rctx: dict, sout: dict, auto_ingest: bool, trace: dict) -> None:
+    """Write pipeline run to query_log.jsonl."""
+    _log_query(
+        query,
+        rctx["coverage"],
+        rctx["need_external"],
+        rctx["cov_reason"],
+        rctx["used_uris"],
+        trace,
+        ingested=sout["ingested"],
+        async_ingest_pending=sout["async_ingest_pending"],
+        need_fresh=scope.get("need_fresh", False),
+        has_conflict=bool(sout["conflict"].get("has_conflict", False)),
+        external_len=len(sout["external_text"]),
+        auto_ingest=auto_ingest,
+    )
 
 
 def _build_response(
@@ -613,24 +647,18 @@ def _build_response(
     backend: KnowledgeBackend,
     session_id: str | None,
     m: Metrics,
-    coverage: float,
-    cov_reason: str,
-    need_external: bool,
-    used_uris: list[str],
-    retrieval_result: dict[str, Any],
-    conflict: dict[str, Any],
-    ingested: bool,
-    async_ingest_pending: bool,
-    cv_warnings: list[str],
+    rctx: dict[str, Any],
+    sout: dict[str, Any],
     degradations: list[str],
     trace: dict[str, Any],
-    external_txt: str,
     auto_ingest: bool,
 ) -> dict:
     """Finalize feedback/session/meta/metrics and return result dict."""
-    m.flag("has_conflict", conflict.get("has_conflict", False))
-    result["external_text"], result["conflict"] = external_txt, conflict
-    summary = f"检索完成: coverage={coverage:.2f}, sources={len(used_uris)}, external={'是' if need_external else '否'}"
+    coverage, used_uris = rctx["coverage"], rctx["used_uris"]
+    m.flag("has_conflict", sout["conflict"].get("has_conflict", False))
+    result["external_text"], result["conflict"] = sout["external_text"], sout["conflict"]
+
+    summary = f"检索完成: coverage={coverage:.2f}, sources={len(used_uris)}, external={'是' if rctx['need_external'] else '否'}"
     if session_id and backend.supports_sessions:
         backend.session_add_message(session_id, "assistant", summary)
         backend.session_used(session_id, list(used_uris))
@@ -638,50 +666,39 @@ def _build_response(
     m.step("feedback", True)
 
     report = m.finalize()
-    case_path = capture_case(query, scope, report, result["context_text"], out_dir=CASE_DIR) if CAPTURE_CASE else None
-    result["meta"] = {
-        "coverage": coverage,
-        "coverage_reason": cov_reason,
-        "external_triggered": report["flags"].get("external_triggered", False),
-        "external_reason": cov_reason,
-        "has_conflict": conflict.get("has_conflict", False),
-        "ingested": ingested,
-        "async_ingest_pending": async_ingest_pending,
-        "used_uris": used_uris,
-        "warnings": cv_warnings,
-        "degraded": bool(degradations),
-        "degraded_reasons": degradations,
-        "memories_count": len(retrieval_result["memories"]),
-        "resources_count": len(retrieval_result["resources"]),
-        "skills_count": len(retrieval_result["skills"]),
-        "decision_trace": trace,
-    }
+    result["meta"] = _build_meta(rctx, sout, report, degradations, trace)
     result["metrics"] = {"duration_sec": report["duration_sec"], "flags": report["flags"], "scores": report["scores"]}
-    result["case_path"] = case_path
+    result["case_path"] = (
+        capture_case(query, scope, report, result["context_text"], out_dir=CASE_DIR) if CAPTURE_CASE else None
+    )
     result["decision_report"] = format_report(result)
 
     log.info(
-        "完成: %.1fs, coverage=%.2f, external=%s, llm_calls=%d",
+        "完成: %.1fs, cov=%.2f, ext=%s, llm=%d",
         report["duration_sec"],
         coverage,
         report["flags"].get("external_triggered"),
         trace["llm_calls"],
     )
-    _log_query(
-        query,
-        coverage,
-        need_external,
-        cov_reason,
-        used_uris,
-        trace,
-        ingested=ingested,
-        async_ingest_pending=async_ingest_pending,
-        need_fresh=scope.get("need_fresh", False),
-        has_conflict=bool(conflict.get("has_conflict", False)),
-        external_len=len(external_txt),
-        auto_ingest=auto_ingest,
-    )
+    _log_pipeline_result(query, scope, rctx, sout, auto_ingest, trace)
     return result
+
+
+def _empty_result(query: str, run_id: str) -> dict[str, Any]:
+    """Create an empty pipeline result template."""
+    return {
+        "query": query,
+        "run_id": run_id,
+        "ov_results": {},
+        "context_text": "",
+        "external_text": "",
+        "coverage": 0.0,
+        "conflict": {},
+        "meta": {},
+        "metrics": {},
+        "case_path": None,
+        "decision_report": "",
+    }
 
 
 def _run_impl_inner(
@@ -701,19 +718,7 @@ def _run_impl_inner(
         feedback_data = None
 
     m = Metrics()
-    result: dict[str, Any] = {
-        "query": query,
-        "run_id": run_id,
-        "ov_results": {},
-        "context_text": "",
-        "external_text": "",
-        "coverage": 0.0,
-        "conflict": {},
-        "meta": {},
-        "metrics": {},
-        "case_path": None,
-        "decision_report": "",
-    }
+    result = _empty_result(query, run_id)
     degradations: list[str] = []
     trace = {"load_stage": "none", "llm_calls": 0, "external_reason": "not_evaluated"}
 
@@ -722,41 +727,8 @@ def _run_impl_inner(
         return result
 
     rctx = _retrieve_context(backend, query, session_id, m, result, trace, feedback_data)
-    sout = _search_external(
-        query,
-        backend,
-        auto_ingest,
-        scope,
-        rctx["need_external"],
-        rctx["cov_reason"],
-        rctx["context_text"],
-        rctx["used_uris"],
-        m,
-        trace,
-        feedback_data,
-        degradations,
-    )
-    return _build_response(
-        query,
-        scope,
-        result,
-        backend,
-        session_id,
-        m,
-        rctx["coverage"],
-        rctx["cov_reason"],
-        rctx["need_external"],
-        rctx["used_uris"],
-        rctx["retrieval_result"],
-        sout["conflict"],
-        sout["ingested"],
-        sout["async_ingest_pending"],
-        sout["cv_warnings"],
-        degradations,
-        trace,
-        sout["external_text"],
-        auto_ingest,
-    )
+    sout = _search_external(query, backend, auto_ingest, scope, rctx, m, trace, feedback_data, degradations)
+    return _build_response(query, scope, result, backend, session_id, m, rctx, sout, degradations, trace, auto_ingest)
 
 
 def _extract_urls(text: str) -> list[str]:
