@@ -12,9 +12,8 @@ class TestResolveConflict(unittest.TestCase):
         """Call _resolve_conflict with optional local signals and env overrides."""
         from curator.pipeline_v2 import _resolve_conflict
 
-        env = {"CURATOR_CONFLICT_STRATEGY": "auto"}
-        env.update(env_overrides)
-        with patch.dict(os.environ, env):
+        strategy = env_overrides.get("CURATOR_CONFLICT_STRATEGY", "auto")
+        with patch("curator.conflict_resolution.CONFLICT_STRATEGY", strategy):
             return _resolve_conflict(judge_result, local_signals=local_signals)
 
     # ── No conflict ──
