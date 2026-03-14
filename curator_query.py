@@ -284,6 +284,7 @@ HELP_TEXT = """OpenViking Curator — Knowledge-governed Q&A with retrieval + ex
 
 Usage:
   python3 curator_query.py "your question"     Query with auto routing + auto ingest
+  python3 curator_query.py --force "question"   Query without routing (skip should_route check)
   python3 curator_query.py --review "question"  Query but don't auto-ingest (human review mode)
   python3 curator_query.py --status             Health check (config + OpenViking + stats)
   python3 curator_query.py --help               Show this help
@@ -316,12 +317,15 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(0)
 
+    force_mode = "--force" in args
     review_mode = "--review" in args or "--no-ingest" in args
     q = " ".join(a for a in args if not a.startswith("--")).strip()
-    route, reason = should_route(q)
-    if not route:
-        print(json.dumps({"routed": False, "reason": reason}, ensure_ascii=False))
-        sys.exit(0)
+
+    if not force_mode:
+        route, reason = should_route(q)
+        if not route:
+            print(json.dumps({"routed": False, "reason": reason}, ensure_ascii=False))
+            sys.exit(0)
 
     result = run_curator(q, auto_ingest=not review_mode)
     if review_mode:

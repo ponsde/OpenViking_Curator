@@ -386,6 +386,78 @@ class TestShouldRoute(unittest.TestCase):
         self.assertFalse(routed)
 
 
+# ─── --force flag (curator_query CLI) ────────────────────────
+
+
+class TestForceFlag(unittest.TestCase):
+    """curator_query.py --force should bypass should_route()."""
+
+    def test_force_bypasses_routing(self):
+        """--force on a normally-blocked query should still call run_curator."""
+        import curator_query as cq
+
+        captured = {}
+
+        def fake_run_curator(query, auto_ingest=True):
+            captured["query"] = query
+            captured["auto_ingest"] = auto_ingest
+            return {"routed": True, "context": "test", "meta": {}}
+
+        with (
+            unittest.mock.patch.object(cq, "run_curator", fake_run_curator),
+            unittest.mock.patch("sys.argv", ["curator_query.py", "--force", "ok"]),
+            unittest.mock.patch("builtins.print"),
+        ):
+            try:
+                cq.main()
+            except SystemExit:
+                pass
+
+        self.assertEqual(captured["query"], "ok")
+        self.assertTrue(captured["auto_ingest"])
+
+    def test_force_with_review(self):
+        """--force --review should bypass routing and disable auto_ingest."""
+        import curator_query as cq
+
+        captured = {}
+
+        def fake_run_curator(query, auto_ingest=True):
+            captured["query"] = query
+            captured["auto_ingest"] = auto_ingest
+            return {"routed": True, "context": "test", "meta": {}}
+
+        with (
+            unittest.mock.patch.object(cq, "run_curator", fake_run_curator),
+            unittest.mock.patch("sys.argv", ["curator_query.py", "--force", "--review", "ok"]),
+            unittest.mock.patch("builtins.print"),
+        ):
+            try:
+                cq.main()
+            except SystemExit:
+                pass
+
+        self.assertEqual(captured["query"], "ok")
+        self.assertFalse(captured["auto_ingest"])
+
+    def test_without_force_still_routes(self):
+        """Without --force, 'ok' should be blocked by should_route()."""
+        import curator_query as cq
+
+        printed = []
+
+        with (
+            unittest.mock.patch("sys.argv", ["curator_query.py", "ok"]),
+            unittest.mock.patch("builtins.print", lambda *a, **kw: printed.append(a)),
+        ):
+            try:
+                cq.main()
+            except SystemExit:
+                pass
+
+        self.assertTrue(any('"routed": false' in str(p) for p in printed))
+
+
 # ─── OpenVikingBackend health path ──────────────────────────
 
 
