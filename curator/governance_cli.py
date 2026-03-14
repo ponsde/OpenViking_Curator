@@ -34,7 +34,12 @@ from .config import DATA_PATH
 
 def cmd_report(args: argparse.Namespace) -> int:
     """Display the latest governance report."""
-    from .governance_report import format_report, format_report_html, format_report_json
+    from .governance_report import (
+        format_report,
+        format_report_html,
+        format_report_json,
+        format_report_markdown,
+    )
 
     data_dir = args.data_path or DATA_PATH
     pattern = os.path.join(data_dir, "governance_report_*.json")
@@ -53,6 +58,8 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(format_report_json(report))
     elif fmt == "html":
         print(format_report_html(report))
+    elif fmt == "markdown":
+        print(format_report_markdown(report))
     else:
         print(format_report(report))
 
@@ -340,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # report
     p_report = sub.add_parser("report", help="Show latest governance report.")
-    p_report.add_argument("--format", choices=["ascii", "json", "html"], default="ascii")
+    p_report.add_argument("--format", choices=["ascii", "json", "html", "markdown"], default="ascii")
 
     # flags
     p_flags = sub.add_parser("flags", help="List governance flags.")

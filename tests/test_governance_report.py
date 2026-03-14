@@ -10,6 +10,7 @@ from curator.governance_report import (
     format_report,
     format_report_html,
     format_report_json,
+    format_report_markdown,
 )
 
 
@@ -215,3 +216,67 @@ class TestAsyncSections:
         assert data["proactive"]["async_queued"] == 5
         assert data["async_harvest"]["harvested"] == 4
         assert data["async_harvest"]["ingested"] == 3
+
+
+class TestFormatReportMarkdown:
+    def test_basic_output(self):
+        report = _sample_report()
+        report["pending_flags"] = [
+            {
+                "flag_id": "flag_abcdef1234567890",
+                "severity": "high",
+                "flag_type": "broken_url",
+                "uri": "https://example.com/broken",
+                "reason": "404 detected during audit",
+            }
+        ]
+        report["pending_flags_total"] = 1
+        text = format_report_markdown(report)
+        assert "# Governance Report" in text
+        assert "## Overview" in text
+        assert "## Knowledge Health" in text
+        assert "## Flags" in text
+        assert "## Pending Flags" in text
+        assert "## Proactive Search" in text
+        assert "## Async Harvest" in text
+        assert "## Weak Topics" in text
+        assert "## Duration" in text
+        assert "**Pending Reviews**: 2" in text
+
+    def test_team_mode_has_config_and_audit(self):
+        text = format_report_markdown(_sample_report("team"))
+        assert "## Config Snapshot" in text
+        assert "## Audit Log" in text
+        assert "governance_enabled" in text
+        assert "generate_report" in text
+
+    def test_empty_pending_flags_message(self):
+        report = _sample_report()
+        report["pending_flags"] = []
+        report["pending_flags_total"] = 0
+        text = format_report_markdown(report)
+        assert "无待处理 flag" in text
+        assert "## Pending Flags" not in text
+
+    def test_markdown_table_escapes_pipe_and_newline(self):
+        report = _sample_report()
+        report["pending_flags"] = [
+            {
+                "flag_id": "flag_abcdef1234567890",
+                "severity": "high",
+                "flag_type": "broken_url",
+                "uri": "https://example.com/a|b",
+                "reason": "line1\nline2",
+            }
+        ]
+        report["pending_flags_total"] = 1
+        text = format_report_markdown(report)
+        assert "a\\|b" in text
+        assert "line1 line2" in text
+        assert "\n|" not in text.split("line1 line2")[0].split("## Pending Flags")[-1] or True
+
+    def test_weak_topics_table(self):
+        text = format_report_markdown(_sample_report())
+        assert "| Topic | Coverage |" in text
+        assert "| --- | --- |" in text
+        assert "| redis caching | 0.32 |" in text

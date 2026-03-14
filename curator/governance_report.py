@@ -168,6 +168,150 @@ def format_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _escape_md_cell(value: str) -> str:
+    """Escape pipe and newline characters for Markdown table cells."""
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    sep = "| " + " | ".join(headers) + " |"
+    divider = "| " + " | ".join(["---"] * len(headers)) + " |"
+    body = ["| " + " | ".join(_escape_md_cell(c) for c in row) + " |" for row in rows]
+    return [sep, divider, *body]
+
+
+def format_report_markdown(report: dict) -> str:
+    """Return governance report as Markdown text."""
+    overview = report.get("overview", {})
+    health = report.get("knowledge_health", {})
+    flags = report.get("flags", {})
+    proactive = report.get("proactive", {})
+    mode = report.get("mode", "normal")
+
+    hs = overview.get("health_score", -1)
+    health_label = f"{hs}/100" if hs >= 0 else "unknown"
+    cov_mean = health.get("coverage_mean")
+
+    lines = [
+        "# Governance Report",
+        "",
+        "## Overview",
+        f"**Cycle ID**: {report.get('cycle_id', '?')}",
+        f"**Date**: {report.get('timestamp', '?')[:19]}",
+        f"**Mode**: {mode}",
+        f"**Total Resources**: {overview.get('total_resources', 0)}",
+        f"**Health Score**: {health_label}",
+        "",
+        "## Knowledge Health",
+        f"**Fresh**: {health.get('fresh', 0)}",
+        f"**Aging**: {health.get('aging', 0)}",
+        f"**Stale**: {health.get('stale', 0)}",
+        f"**Coverage (mean)**: {cov_mean:.3f}" if cov_mean is not None else "**Coverage (mean)**: N/A",
+        "",
+        "## Flags",
+        f"**Total Flags**: {flags.get('total', 0)}",
+    ]
+
+    for ft, count in (flags.get("by_type") or {}).items():
+        lines.append(f"**{ft}**: {count}")
+
+    pending_flags = report.get("pending_flags", [])
+    pending_total = report.get("pending_flags_total", 0)
+    if pending_flags:
+        lines.append("")
+        lines.append("## Pending Flags")
+        lines.append(f"**Pending Total**: {pending_total}")
+        lines.append("")
+        rows = []
+        for pf in pending_flags:
+            rows.append(
+                [
+                    pf.get("flag_id", "?")[-12:],
+                    pf.get("severity", "?"),
+                    pf.get("flag_type", "?"),
+                    pf.get("uri", "?")[:80],
+                    pf.get("reason", "")[:80],
+                ]
+            )
+        lines.extend(_markdown_table(["Flag ID", "Severity", "Type", "URI", "Reason"], rows))
+    else:
+        lines.append("")
+        lines.append("**Pending Flags**: 无待处理 flag")
+
+    lines.extend(
+        [
+            "",
+            "## Proactive Search",
+        ]
+    )
+    if proactive.get("dry_run"):
+        lines.append("**Status**: SKIPPED (dry run)")
+    else:
+        lines.append(f"**Sync Queries**: {proactive.get('queries_run', 0)}")
+        lines.append(f"**Sync Ingested**: {proactive.get('ingested', 0)}")
+        async_q = proactive.get("async_queued", 0)
+        lines.append(f"**Async Queued**: {async_q}")
+
+    async_harvest = report.get("async_harvest", {})
+    harvested = async_harvest.get("harvested", 0)
+    if harvested:
+        lines.extend(
+            [
+                "",
+                "## Async Harvest",
+                f"**Harvested**: {harvested}",
+                f"**Ingested**: {async_harvest.get('ingested', 0)}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            f"**Pending Reviews**: {report.get('pending_review_count', 0)}",
+        ]
+    )
+
+    weak = report.get("weak_topics", [])
+    if weak:
+        lines.extend(["", "## Weak Topics"])
+        rows = []
+        for topic in weak[:5]:
+            rows.append(
+                [
+                    topic.get("topic", "?"),
+                    f"{topic.get('avg_coverage', 0):.2f}",
+                ]
+            )
+        lines.extend(_markdown_table(["Topic", "Coverage"], rows))
+
+    dur = report.get("duration_sec")
+    if dur is not None:
+        lines.extend(["", "## Duration", f"**Elapsed**: {dur:.1f}s"])
+
+    if mode == "team":
+        config = report.get("config_snapshot", {})
+        if config:
+            lines.extend(["", "## Config Snapshot"])
+            for key, value in config.items():
+                lines.append(f"**{key}**: {value}")
+
+        audit = report.get("audit_log", [])
+        if audit:
+            lines.extend(["", "## Audit Log"])
+            rows = []
+            for entry in audit[:20]:
+                rows.append(
+                    [
+                        entry.get("phase", "?"),
+                        entry.get("action", "?"),
+                        entry.get("outcome", ""),
+                    ]
+                )
+            lines.extend(_markdown_table(["Phase", "Action", "Outcome"], rows))
+
+    return "\n".join(lines)
+
+
 def format_report_json(report: dict) -> str:
     """Return governance report as formatted JSON string."""
     return json.dumps(report, ensure_ascii=False, indent=2)
